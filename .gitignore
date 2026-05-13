@@ -43,6 +43,8 @@ Thumbs.db
 # Data files (keep structure but ignore content)
 data/vector_index/*.index
 data/vector_index/*.pkl
+data/*.db
+data/*.sqlite
 
 # VitePress build
 docs/.vitepress/cache/

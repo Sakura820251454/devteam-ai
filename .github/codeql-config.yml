@@ -1,0 +1,22 @@
+# CodeQL Configuration
+name: "CodeQL Configuration"
+
+paths:
+  - backend/app
+  - frontend/src
+  - docs
+
+paths-ignore:
+  - '**/node_modules'
+  - '**/venv'
+  - '**/.venv'
+  - '**/__pycache__'
+  - '**/tests'
+  - '**/*.test.tsx'
+  - '**/*.spec.ts'
+
+query-filters:
+  - exclude:
+      id:
+        - js/unused-import
+        - py/unused-import
