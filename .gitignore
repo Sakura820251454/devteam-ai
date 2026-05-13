@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.db
+*.sqlite
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment files (keep .env.example)
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node
+node_modules/
+dist/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data files (keep structure but ignore content)
+data/vector_index/*.index
+data/vector_index/*.pkl
+
+# VitePress build
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+
+# Trae
+.trae/

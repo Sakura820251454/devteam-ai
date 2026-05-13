@@ -1,0 +1,204 @@
+{
+  "_comment": "代码文件与文档的映射配置 - 修改代码后自动关联对应文档",
+
+  "mappings": {
+    "backend/app/services/agent/": {
+      "docs": ["docs/04-modules/backend/agent-service.md"],
+      "description": "Agent 服务",
+      "check_patterns": ["class AgentService", "async def create_agent", "async def execute_task"]
+    },
+
+    "backend/app/services/memory/": {
+      "docs": ["docs/04-modules/backend/memory-service.md"],
+      "description": "记忆服务",
+      "check_patterns": ["class MemoryService", "def add_memory", "def search_memory"]
+    },
+
+    "backend/app/services/llm/": {
+      "docs": ["docs/04-modules/backend/llm-service.md"],
+      "description": "LLM 服务",
+      "check_patterns": ["class LLMService", "async def chat", "async def complete"]
+    },
+
+    "backend/app/services/equipment/": {
+      "docs": ["docs/04-modules/backend/equipment-service.md"],
+      "description": "装备服务",
+      "check_patterns": ["class GearManager", "def register_gear", "def assign_gear"]
+    },
+
+    "backend/app/services/knowledge/": {
+      "docs": ["docs/04-modules/backend/knowledge-service.md"],
+      "description": "知识服务",
+      "check_patterns": ["class KnowledgeService", "def add_knowledge", "def search_knowledge"]
+    },
+
+    "backend/app/services/learning/": {
+      "docs": ["docs/04-modules/backend/learning-service.md"],
+      "description": "学习服务",
+      "check_patterns": ["class SkillManager", "class TrajectoryRecorder", "def create_skill"]
+    },
+
+    "backend/app/services/collaboration/": {
+      "docs": ["docs/04-modules/backend/collaboration-service.md"],
+      "description": "协作服务",
+      "check_patterns": ["class CollaborationService", "async def collaborate"]
+    },
+
+    "backend/app/services/message_bus.py": {
+      "docs": ["docs/04-modules/backend/message-bus.md"],
+      "description": "消息总线服务",
+      "check_patterns": ["class Message", "async def broadcast", "async def send_private"]
+    },
+
+    "backend/app/services/speaking_controller.py": {
+      "docs": ["docs/04-modules/backend/speaking-controller.md"],
+      "description": "发言控制器服务",
+      "check_patterns": ["class SpeakingController", "class SpeakingMode", "async def request_speak"]
+    },
+
+    "backend/app/services/task_board.py": {
+      "docs": ["docs/04-modules/backend/task-board.md"],
+      "description": "任务看板服务",
+      "check_patterns": ["class TaskBoard", "class TaskStatus", "def create_task", "def change_status"]
+    },
+
+    "backend/app/services/pipeline_orchestrator.py": {
+      "docs": ["docs/04-modules/backend/pipeline-orchestrator.md"],
+      "description": "Pipeline 编排服务",
+      "check_patterns": ["class PipelineOrchestrator", "class PipelineStage", "async def start_pipeline"]
+    },
+
+    "backend/app/services/agent_executor.py": {
+      "docs": ["docs/04-modules/backend/agent-executor.md"],
+      "description": "Agent 执行器服务",
+      "check_patterns": ["class AgentExecutor", "class ExecutionStatus", "async def assign_task"]
+    },
+
+    "backend/app/services/project_service.py": {
+      "docs": ["docs/04-modules/backend/project-service.md"],
+      "description": "项目管理服务",
+      "check_patterns": ["class ProjectService", "class ProjectStatus", "def create_project"]
+    },
+
+    "backend/app/services/agent_context.py": {
+      "docs": ["docs/04-modules/backend/agent-context.md"],
+      "description": "Agent 上下文服务",
+      "check_patterns": ["class AgentContext", "def get_context", "def update_context"]
+    },
+
+    "backend/app/models/agent.py": {
+      "docs": ["docs/04-modules/backend/models/agent.md"],
+      "description": "Agent 数据模型",
+      "check_patterns": ["class Agent", "class AgentStatus"]
+    },
+
+    "backend/app/models/memory_db.py": {
+      "docs": ["docs/04-modules/backend/models/memory.md"],
+      "description": "记忆数据模型",
+      "check_patterns": ["class Memory", "class MemoryLevel"]
+    },
+
+    "backend/app/models/task.py": {
+      "docs": ["docs/04-modules/backend/models/task.md"],
+      "description": "任务数据模型",
+      "check_patterns": ["class Task", "class TaskStatus"]
+    },
+
+    "backend/app/models/session.py": {
+      "docs": ["docs/04-modules/backend/models/session.md"],
+      "description": "会话数据模型",
+      "check_patterns": ["class Session", "class SessionStatus"]
+    },
+
+    "backend/app/models/gear_db.py": {
+      "docs": ["docs/04-modules/backend/models/gear.md"],
+      "description": "装备数据模型",
+      "check_patterns": ["class Gear", "class GearType"]
+    },
+
+    "backend/app/api/agents.py": {
+      "docs": ["docs/05-api/agents.md"],
+      "description": "Agent API",
+      "check_patterns": ["@router.get", "@router.post", "@router.put", "@router.delete"]
+    },
+
+    "backend/app/api/tasks.py": {
+      "docs": ["docs/05-api/tasks.md"],
+      "description": "Task API",
+      "check_patterns": ["@router.get", "@router.post", "@router.put", "@router.delete"]
+    },
+
+    "backend/app/api/memory.py": {
+      "docs": ["docs/05-api/memory.md"],
+      "description": "Memory API",
+      "check_patterns": ["@router.get", "@router.post"]
+    },
+
+    "backend/app/api/sessions.py": {
+      "docs": ["docs/05-api/sessions.md"],
+      "description": "Session API",
+      "check_patterns": ["@router.get", "@router.post"]
+    },
+
+    "backend/app/api/messages.py": {
+      "docs": ["docs/05-api/messages.md"],
+      "description": "Message API",
+      "check_patterns": ["@router.get", "@router.post"]
+    },
+
+    "backend/app/api/skills.py": {
+      "docs": ["docs/05-api/skills.md"],
+      "description": "Skill API",
+      "check_patterns": ["@router.get", "@router.post"]
+    },
+
+    "backend/app/api/pipelines.py": {
+      "docs": ["docs/05-api/pipelines.md"],
+      "description": "Pipeline API",
+      "check_patterns": ["@router.get", "@router.post"]
+    },
+
+    "backend/app/api/projects.py": {
+      "docs": ["docs/05-api/projects.md"],
+      "description": "Project API",
+      "check_patterns": ["@router.get", "@router.post"]
+    },
+
+    "frontend/src/components/CollaborationView.tsx": {
+      "docs": ["docs/04-modules/frontend/collaboration-view.md"],
+      "description": "协作界面组件",
+      "check_patterns": ["export default function CollaborationView", "publicMessages", "privateMessages"]
+    },
+
+    "frontend/src/components/AgentConfigModal.tsx": {
+      "docs": ["docs/04-modules/frontend/agent-config-modal.md"],
+      "description": "Agent 配置弹窗组件",
+      "check_patterns": ["export default function AgentConfigModal", "agent", "onSave"]
+    },
+
+    "frontend/src/components/AgentPoolModal.tsx": {
+      "docs": ["docs/04-modules/frontend/agent-pool-modal.md"],
+      "description": "Agent 池管理弹窗组件",
+      "check_patterns": ["export default function AgentPoolModal", "agents", "onSelect"]
+    },
+
+    "frontend/src/components/PipelineView.tsx": {
+      "docs": ["docs/04-modules/frontend/pipeline-view.md"],
+      "description": "流水线视图组件",
+      "check_patterns": ["export default function PipelineView", "pipeline", "stages"]
+    },
+
+    "frontend/src/components/TaskAssignmentCard.tsx": {
+      "docs": ["docs/04-modules/frontend/task-assignment.md"],
+      "description": "任务分配卡片组件",
+      "check_patterns": ["export default function TaskAssignmentCard", "task", "onAssign"]
+    }
+  },
+
+  "sync_rules": {
+    "auto_sync": true,
+    "require_confirmation": true,
+    "update_api_docs": true,
+    "update_module_docs": true
+  }
+}
