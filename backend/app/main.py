@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from app.api import agents_router, chat_router, sessions_router, messages_router, speaking_router, tasks_router, projects_router, pipelines_router, memories_router, skills_router, equipment_router, knowledge_router, llm_router
+from app.api import agents_router, chat_router, sessions_router, messages_router, speaking_router, tasks_router, projects_router, pipelines_router, memories_router, skills_router, equipment_router, knowledge_router, llm_router, security_router, arbitration_router
 from app.core import get_settings
 from app.database import init_db
 from app.services.equipment.equipment_init import init_default_tools
@@ -46,7 +46,9 @@ def create_app() -> FastAPI:
     app.include_router(equipment_router)
     app.include_router(knowledge_router)
     app.include_router(llm_router)
-    
+    app.include_router(security_router)
+    app.include_router(arbitration_router)
+
     @app.get("/")
     async def root():
         return {

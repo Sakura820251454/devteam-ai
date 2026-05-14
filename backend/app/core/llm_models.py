@@ -92,13 +92,13 @@ AVAILABLE_MODELS = {
         input_cost_per_1k=0.0,
         output_cost_per_1k=0.0,
         max_tokens=10000,
-        description="Mock模型，用于开发测试"
+        description="Mock模型，仅用于开发测试"
     ),
 }
 
 
 def get_model_info(model_name: str) -> LLMModelInfo:
-    return AVAILABLE_MODELS.get(model_name, AVAILABLE_MODELS["mock-model"])
+    return AVAILABLE_MODELS.get(model_name, AVAILABLE_MODELS["deepseek-chat"])
 
 
 def calculate_cost(model_name: str, prompt_tokens: int, completion_tokens: int) -> float:

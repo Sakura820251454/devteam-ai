@@ -31,5 +31,6 @@ async def get_db():
 async def init_db():
     """初始化数据库，创建所有表"""
     from app.models.memory_db import MemoryEntryModel, AgentContextModel, TrajectoryModel, SkillModel, AgentSkillModel
+    from app.models.gear_db import GearModel  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

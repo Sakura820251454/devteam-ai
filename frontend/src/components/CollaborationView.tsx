@@ -51,6 +51,7 @@ export default function CollaborationView() {
   const [publicInput, setPublicInput] = useState('')
   const [privateInput, setPrivateInput] = useState('')
   const [isRunning, setIsRunning] = useState(false)
+  const isRunningRef = useRef(false)
   const [showInterventionPanel, setShowInterventionPanel] = useState(false)
   const [interventionType, setInterventionType] = useState<string>('broadcast')
   const [interventionContent, setInterventionContent] = useState('')
@@ -147,6 +148,7 @@ export default function CollaborationView() {
         content = '[强制终止] 用户终止了讨论'
         addPublicMessage({ sender: 'system', senderName: '系统', content, type: 'action' })
         setAgents(prev => prev.map(a => ({ ...a, status: 'idle' })))
+        isRunningRef.current = false
         setIsRunning(false)
         break
       case 'broadcast':
@@ -257,7 +259,8 @@ export default function CollaborationView() {
   }
 
   const startSimulation = async () => {
-    if (isRunning) return
+    if (isRunningRef.current) return
+    isRunningRef.current = true
     setIsRunning(true)
     setPublicMessages([])
 
@@ -274,7 +277,7 @@ export default function CollaborationView() {
     ].filter(d => d.agent && activeAgents.find(a => a.id === d.agent))
 
     for (const topic of discussionTopics) {
-      if (!isRunning) break
+      if (!isRunningRef.current) break
       updateAgentStatus(topic.agent!, 'speaking')
       addPublicMessage({ sender: topic.agent!, senderName: topic.name!, content: topic.msg, type: 'text' })
       await sleep(3000)
@@ -282,9 +285,11 @@ export default function CollaborationView() {
       await sleep(1000)
     }
 
-    if (isRunning) {
+    if (isRunningRef.current) {
       addPublicMessage({ sender: 'system', senderName: '系统', content: '✅ 初始讨论完成，开始执行任务。', type: 'system' })
     }
+    isRunningRef.current = false
+    setIsRunning(false)
   }
 
   const AgentAvatar = ({ agent, size = 'md', showStatus = true }: { agent: Agent; size?: 'sm' | 'md' | 'lg'; showStatus?: boolean }) => {
@@ -396,7 +401,7 @@ export default function CollaborationView() {
             {isRunning ? '⏳ 运行中...' : '🚀 启动讨论'}
           </button>
           <button
-            onClick={() => setIsRunning(false)}
+            onClick={() => { isRunningRef.current = false; setIsRunning(false) }}
             disabled={!isRunning}
             className="w-full py-2 bg-red-600/80 hover:bg-red-700 disabled:bg-gray-600 disabled:opacity-50 rounded-lg font-medium transition-colors"
           >

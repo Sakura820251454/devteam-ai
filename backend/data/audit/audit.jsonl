@@ -1,0 +1,3 @@
+{"seq": 1, "timestamp": "2026-05-14T14:16:46.047153", "action": "emergency_reset", "actor": "demo", "agent_id": null, "operation": null, "risk_level": null, "target": null, "detail": "紧急状态已解除", "outcome": "success", "metadata": {}, "hash": "29ae8d81b189235a"}
+{"seq": 2, "timestamp": "2026-05-14T14:17:11.395673", "action": "emergency_stop", "actor": "demo", "agent_id": null, "operation": null, "risk_level": null, "target": null, "detail": "测试紧急停止", "outcome": "success", "metadata": {}, "hash": "728a825e36c999eb"}
+{"seq": 3, "timestamp": "2026-05-14T14:17:11.911303", "action": "emergency_reset", "actor": "demo", "agent_id": null, "operation": null, "risk_level": null, "target": null, "detail": "紧急状态已解除", "outcome": "success", "metadata": {}, "hash": "4b9c00b1b4e15b55"}

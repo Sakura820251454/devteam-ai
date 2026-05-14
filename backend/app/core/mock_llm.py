@@ -2,9 +2,10 @@ import asyncio
 import random
 from typing import AsyncIterator, Optional, List, Dict, Any
 from app.core.llm import Message, LLMResponse
+from app.core.llm_providers import BaseLLMProvider
 
 
-class MockLLMProvider:
+class MockLLMProvider(BaseLLMProvider):
     """Mock LLM Provider，用于开发和测试"""
 
     MOCK_RESPONSES = {

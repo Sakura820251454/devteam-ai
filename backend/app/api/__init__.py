@@ -11,6 +11,8 @@ from app.api.skills import router as skills_router
 from app.api.equipment import router as equipment_router
 from app.api.knowledge import router as knowledge_router
 from app.api.llm import router as llm_router
+from app.api.security import router as security_router
+from app.api.arbitration import router as arbitration_router
 
 __all__ = [
     "agents_router",
@@ -26,4 +28,6 @@ __all__ = [
     "equipment_router",
     "knowledge_router",
     "llm_router",
+    "security_router",
+    "arbitration_router",
 ]

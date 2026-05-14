@@ -44,7 +44,7 @@ function TasksTab() {
 
   const fetchBoard = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/tasks/board/all')
+      const res = await fetch('/api/tasks/board/all')
       if (res.ok) setBoard(await res.json())
     } catch (err) { console.error('Failed to fetch board:', err) }
   }
@@ -53,7 +53,7 @@ function TasksTab() {
     if (!newTaskTitle.trim()) return
     setIsCreating(true)
     try {
-      await fetch('http://localhost:8000/api/tasks/', {
+      await fetch('/api/tasks/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTaskTitle, priority: newTaskPriority, created_by: 'user' })
@@ -66,7 +66,7 @@ function TasksTab() {
 
   const updateTaskStatus = async (taskId: string, newStatus: string) => {
     try {
-      await fetch(`http://localhost:8000/api/tasks/${taskId}/status`, {
+      await fetch(`/api/tasks/${taskId}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus, changed_by: 'user' })

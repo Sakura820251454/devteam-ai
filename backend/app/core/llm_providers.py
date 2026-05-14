@@ -39,9 +39,6 @@ class OpenAIProvider(BaseLLMProvider):
     def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1"):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
-        self.client: Optional[httpx.AsyncClient] = None
-
-    async def __aenter__(self):
         self.client = httpx.AsyncClient(
             base_url=self.base_url,
             headers={
@@ -50,6 +47,8 @@ class OpenAIProvider(BaseLLMProvider):
             },
             timeout=120
         )
+
+    async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -123,9 +122,6 @@ class DeepSeekProvider(BaseLLMProvider):
     def __init__(self, api_key: str, base_url: str = "https://api.deepseek.com"):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
-        self.client: Optional[httpx.AsyncClient] = None
-
-    async def __aenter__(self):
         self.client = httpx.AsyncClient(
             base_url=self.base_url,
             headers={
@@ -134,6 +130,8 @@ class DeepSeekProvider(BaseLLMProvider):
             },
             timeout=120
         )
+
+    async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -207,9 +205,6 @@ class AnthropicProvider(BaseLLMProvider):
     def __init__(self, api_key: str, base_url: str = "https://api.anthropic.com"):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
-        self.client: Optional[httpx.AsyncClient] = None
-
-    async def __aenter__(self):
         self.client = httpx.AsyncClient(
             base_url=self.base_url,
             headers={
@@ -219,6 +214,8 @@ class AnthropicProvider(BaseLLMProvider):
             },
             timeout=120
         )
+
+    async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -323,9 +320,6 @@ class AzureOpenAIProvider(BaseLLMProvider):
         self.api_key = api_key
         self.endpoint = endpoint.rstrip("/")
         self.api_version = api_version
-        self.client: Optional[httpx.AsyncClient] = None
-
-    async def __aenter__(self):
         self.client = httpx.AsyncClient(
             base_url=self.endpoint,
             headers={
@@ -334,6 +328,8 @@ class AzureOpenAIProvider(BaseLLMProvider):
             },
             timeout=120
         )
+
+    async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):

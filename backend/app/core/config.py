@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     app_name: str = "DevTeam-AI"
     debug: bool = True
     
-    llm_mode: LLMMode = LLMMode.MOCK
+    llm_mode: LLMMode = LLMMode.REAL
     
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
@@ -33,8 +33,8 @@ class Settings(BaseSettings):
     azure_endpoint: str = ""
     azure_api_version: str = "2024-02-15-preview"
     
-    default_llm_provider: str = "mock"
-    default_llm_model: str = "mock-model"
+    default_llm_provider: str = "deepseek"
+    default_llm_model: str = "deepseek-chat"
     
     database_url: str = "sqlite+aiosqlite:///./data/devteam.db"
     
@@ -43,4 +43,8 @@ class Settings(BaseSettings):
 
 
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    if settings.llm_mode == LLMMode.MOCK:
+        settings.default_llm_provider = "mock"
+        settings.default_llm_model = "mock-model"
+    return settings

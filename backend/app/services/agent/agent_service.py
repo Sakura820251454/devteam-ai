@@ -16,7 +16,7 @@ Agent 模板是经过验证的最佳实践配置，包含：
 2. 预设模板（fallback）- 代码中定义的默认模板
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
 import uuid
@@ -24,6 +24,8 @@ import os
 from pathlib import Path
 
 from app.services.shared.soul_parser import load_all_agents as load_soul_agents, SoulFile
+from app.models.session import Session, SessionStatus, Message as SessionMessage, MessageType
+from app.core.llm import Message as LLMMessage
 
 
 class AgentType(Enum):
@@ -78,6 +80,7 @@ class AgentService:
         self._templates: Dict[str, AgentTemplate] = {}
         self._agents: Dict[str, Dict] = {}
         self._teams: Dict[str, List[str]] = {}  # team_id -> [agent_ids]
+        self._sessions: Dict[str, Session] = {}
 
         # 优先从 soul.md 加载，然后加载预设模板作为 fallback
         self._load_from_soul_files()
@@ -403,6 +406,134 @@ class AgentService:
             }
             for tid, t in self._teams.items()
         ]
+
+    # ========== Session 管理 ==========
+
+    def create_session(
+        self,
+        title: str = "新会话",
+        participant_ids: Optional[List[str]] = None
+    ) -> Session:
+        """创建会话"""
+        session_id = f"session_{uuid.uuid4().hex[:8]}"
+        session = Session(
+            id=session_id,
+            title=title,
+            participants=participant_ids or []
+        )
+        self._sessions[session_id] = session
+        return session
+
+    def list_sessions(self) -> List[Session]:
+        """列出所有会话"""
+        return list(self._sessions.values())
+
+    def get_session(self, session_id: str) -> Optional[Session]:
+        """获取指定会话"""
+        return self._sessions.get(session_id)
+
+    # ========== Chat 方法 ==========
+
+    async def agent_chat(
+        self,
+        agent_id: str,
+        session_id: str,
+        user_message: str
+    ) -> str:
+        """Agent 聊天（非流式）"""
+        from app.services.llm.llm_service import llm_service
+
+        agent = self._agents.get(agent_id)
+        if not agent:
+            raise ValueError(f"Agent not found: {agent_id}")
+
+        session = self._sessions.get(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+
+        # Add user message to session
+        user_msg = SessionMessage(
+            id=f"msg_{uuid.uuid4().hex[:8]}",
+            session_id=session_id,
+            sender_id="user",
+            sender_name="User",
+            content=user_message,
+            message_type=MessageType.TEXT
+        )
+        session.add_message(user_msg)
+
+        # Build LLM messages with system prompt
+        system_prompt = agent.get("system_prompt", "You are a helpful assistant.")
+        llm_messages = [
+            LLMMessage(role="system", content=system_prompt),
+            LLMMessage(role="user", content=user_message)
+        ]
+
+        response = await llm_service.chat(llm_messages)
+
+        # Add assistant response to session
+        assistant_msg = SessionMessage(
+            id=f"msg_{uuid.uuid4().hex[:8]}",
+            session_id=session_id,
+            sender_id=agent_id,
+            sender_name=agent.get("name", "Agent"),
+            content=response.content,
+            message_type=MessageType.TEXT
+        )
+        session.add_message(assistant_msg)
+
+        return response.content
+
+    async def agent_chat_stream(
+        self,
+        agent_id: str,
+        session_id: str,
+        user_message: str
+    ) -> AsyncIterator[str]:
+        """Agent 聊天（流式）"""
+        from app.services.llm.llm_service import llm_service
+
+        agent = self._agents.get(agent_id)
+        if not agent:
+            raise ValueError(f"Agent not found: {agent_id}")
+
+        session = self._sessions.get(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+
+        # Add user message to session
+        user_msg = SessionMessage(
+            id=f"msg_{uuid.uuid4().hex[:8]}",
+            session_id=session_id,
+            sender_id="user",
+            sender_name="User",
+            content=user_message,
+            message_type=MessageType.TEXT
+        )
+        session.add_message(user_msg)
+
+        # Build LLM messages
+        system_prompt = agent.get("system_prompt", "You are a helpful assistant.")
+        llm_messages = [
+            LLMMessage(role="system", content=system_prompt),
+            LLMMessage(role="user", content=user_message)
+        ]
+
+        full_response = ""
+        async for chunk in llm_service.stream_chat(llm_messages):
+            full_response += chunk
+            yield chunk
+
+        # Add assistant response to session
+        assistant_msg = SessionMessage(
+            id=f"msg_{uuid.uuid4().hex[:8]}",
+            session_id=session_id,
+            sender_id=agent_id,
+            sender_name=agent.get("name", "Agent"),
+            content=full_response,
+            message_type=MessageType.TEXT
+        )
+        session.add_message(assistant_msg)
 
 
 def get_preset_templates() -> List[AgentTemplate]:

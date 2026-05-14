@@ -74,14 +74,16 @@ export default function PipelineView() {
 
   const fetchAgents = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/agents/')
+      const res = await fetch('/api/agents/')
       if (res.ok) {
         const data = await res.json()
-        if (data.length > 0) {
-          setAgents(data.map((a: any) => ({
+        // API returns {agents: [...], total: N}
+        const agentList = data.agents || data
+        if (agentList.length > 0) {
+          setAgents(agentList.map((a: any) => ({
             id: a.id,
             name: a.name,
-            role: a.role || '开发',
+            role: a.type || a.role || '开发',
             status: 'idle'
           })))
         }
@@ -91,7 +93,7 @@ export default function PipelineView() {
 
   const fetchTasks = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/tasks/')
+      const res = await fetch('/api/tasks/')
       if (res.ok) {
         const data = await res.json()
         setTasks(data.map((t: any) => ({
@@ -106,7 +108,7 @@ export default function PipelineView() {
 
   const fetchPipeline = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/pipelines/active')
+      const res = await fetch('/api/pipelines/active')
       if (res.ok) {
         const data = await res.json()
         if (data.pipeline) setPipeline(data.pipeline)
@@ -116,7 +118,7 @@ export default function PipelineView() {
 
   const fetchMessages = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/messages/history?limit=50')
+      const res = await fetch('/api/messages/history?limit=50')
       if (res.ok) {
         const data = await res.json()
         if (data.length > 0) {

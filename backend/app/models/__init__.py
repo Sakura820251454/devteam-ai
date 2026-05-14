@@ -10,8 +10,16 @@ from app.models.agent import (
 from app.models.session import (
     Session,
     SessionStatus,
+    SessionPhase,
     Message,
     MessageType,
+)
+from app.models.task import (
+    Task,
+    TaskStatus,
+    RiskLevel,
+    Priority,
+    TaskHistory,
 )
 
 __all__ = [
@@ -24,6 +32,12 @@ __all__ = [
     "create_default_developer_agent",
     "Session",
     "SessionStatus",
+    "SessionPhase",
     "Message",
     "MessageType",
+    "Task",
+    "TaskStatus",
+    "RiskLevel",
+    "Priority",
+    "TaskHistory",
 ]

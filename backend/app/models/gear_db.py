@@ -14,9 +14,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 
 from sqlalchemy import Column, String, Text, JSON, Float, DateTime, Boolean, Integer
-from sqlalchemy.ext.declarative import declarative_base
-
-Base = declarative_base()
+from app.database import Base
 
 
 class GearType(str, Enum):
@@ -62,7 +60,7 @@ class GearModel(Base):
     last_used_at = Column(DateTime)
     usage_count = Column(Integer, default=0)
     success_rate = Column(Float, default=0.0)
-    metadata = Column(JSON)
+    gear_metadata = Column("metadata", JSON)
     source_id = Column(String)  # 关联的技能/记忆/工具ID
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now)

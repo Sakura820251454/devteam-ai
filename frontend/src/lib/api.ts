@@ -79,23 +79,14 @@ export interface ChatResponse {
   session_id: string
 }
 
-export async function initDefaultAgent(): Promise<Agent> {
-  const response = await fetch(`${API_BASE}/agents/init-default`, {
-    method: 'POST',
-  })
-  if (!response.ok) {
-    throw new Error(`初始化Agent失败: ${response.statusText}`)
-  }
-  const data = await response.json()
-  return data.agent
-}
-
 export async function listAgents(): Promise<Agent[]> {
   const response = await fetch(`${API_BASE}/agents`)
   if (!response.ok) {
     throw new Error(`获取Agent列表失败: ${response.statusText}`)
   }
-  return response.json()
+  const data = await response.json()
+  // API returns {agents: [...], total: N}
+  return data.agents || data
 }
 
 export async function createSession(title?: string): Promise<Session> {

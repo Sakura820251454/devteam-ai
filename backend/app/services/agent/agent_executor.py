@@ -9,6 +9,9 @@ from app.models.task import Task, TaskStatus
 from app.services.collaboration.task_board import task_board
 from app.services.collaboration.message_bus import message_bus, Message, MessageType
 from app.services.collaboration.speaking_controller import speaking_controller, SpeakingMode
+from app.services.agent.agent_service import agent_service
+from app.core.llm import Message as LLMMessage
+from app.services.llm.llm_service import llm_service
 
 
 class ExecutionStatus(str, Enum):
@@ -111,6 +114,98 @@ class AgentExecutor:
             task_board.add_comment(task_id, f"执行异常: {str(e)}", "system")
 
         execution["completed_at"] = datetime.now()
+
+    async def execute_task_with_agent(self, task_id: str, agent_id: str) -> Dict[str, Any]:
+        task = task_board.get_task(task_id)
+        if not task:
+            return {"success": False, "error": "Task not found"}
+
+        agent = agent_service.get_agent(agent_id)
+        if not agent:
+            return {"success": False, "error": "Agent not found"}
+
+        task_board.change_status(task_id, TaskStatus.IN_PROGRESS, agent_id)
+        
+        msg = Message(
+            sender_id=agent_id,
+            sender_name=agent.get("name", "Agent"),
+            channel=f"task:{task_id}",
+            content=f"开始执行任务: {task.title}",
+            message_type=MessageType.SYSTEM
+        )
+        await message_bus.send_to_task(msg, task_id)
+        
+        try:
+            execution_prompt = self._build_task_execution_prompt(task, agent)
+            
+            system_prompt = agent.get("system_prompt", "你是一个专业的开发团队成员，擅长完成各种开发任务。")
+            
+            llm_messages = [
+                LLMMessage(role="system", content=system_prompt),
+                LLMMessage(role="user", content=execution_prompt)
+            ]
+            
+            response = await llm_service.chat(
+                llm_messages,
+                agent=None,
+                track_cost=True,
+                task_id=task_id
+            )
+            
+            result_content = response.content
+            
+            task_board.add_comment(task_id, f"执行结果:\n{result_content}", agent_id)
+            
+            msg = Message(
+                sender_id=agent_id,
+                sender_name=agent.get("name", "Agent"),
+                channel=f"task:{task_id}",
+                content=f"任务完成: {task.title}",
+                message_type=MessageType.SYSTEM
+            )
+            await message_bus.send_to_task(msg, task_id)
+            
+            task_board.change_status(task_id, TaskStatus.REVIEW, agent_id)
+            
+            return {
+                "success": True,
+                "result": result_content,
+                "summary": self._summarize_task_result(task.title, result_content)
+            }
+            
+        except Exception as e:
+            task_board.add_comment(task_id, f"执行失败: {str(e)}", agent_id)
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    def _build_task_execution_prompt(self, task: Task, agent: Dict[str, Any]) -> str:
+        return f"""请执行以下任务:
+
+任务标题: {task.title}
+任务描述: {task.description}
+
+任务标签: {', '.join(task.tags) if task.tags else '无'}
+
+请根据任务描述和你的角色，完成任务并给出详细的执行结果。
+
+如果需要编写代码，请提供完整的代码实现。
+如果需要设计架构，请提供详细的架构说明。
+如果需要分析问题，请提供深入的分析报告。
+
+请确保：
+1. 严格按照任务描述执行
+2. 提供具体的实现方案
+3. 说明关键的设计决策
+4. 给出可能的改进建议
+
+执行完成后，请总结任务完成情况。"""
+
+    def _summarize_task_result(self, task_title: str, result: str) -> str:
+        if len(result) > 500:
+            return f"{task_title}: {result[:200]}..."
+        return f"{task_title}: {result}"
 
     async def pause_execution(self, task_id: str) -> bool:
         async with self._lock:
