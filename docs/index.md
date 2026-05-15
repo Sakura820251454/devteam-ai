@@ -14,7 +14,7 @@ hero:
       link: /02-design/
     - theme: alt
       text: GitHub
-      link: https://github.com/your-org/devteam-ai
+      link: https://github.com/Sakura820251454/devteam-ai
 
 features:
   - icon: 🤖
@@ -62,7 +62,7 @@ frontend/src/components/CollaborationView.tsx → 04-modules/frontend/collaborat
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-org/devteam-ai.git
+git clone https://github.com/Sakura820251454/devteam-ai.git
 cd devteam-ai
 
 # 后端环境

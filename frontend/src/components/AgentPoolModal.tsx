@@ -92,6 +92,14 @@ export default function AgentPoolModal({ isOpen, onClose, onAgentsSelected, curr
     }
   }, [isOpen, currentTask])
 
+  const MOCK_AGENTS: Agent[] = [
+    { id: 'data_engineer', name: '数据工程师', type: 'backend_developer', description: '负责数据管道和 ETL 流程设计', avatar_color: '#3fb950', capabilities: ['数据建模', 'ETL', 'SQL优化'], source: 'mock', status: 'idle', is_active: true, soul_data: { core_principles: ['数据准确性优先', '管道可观测性'], execution_rules: ['所有ETL必须有重试机制', '敏感数据必须脱敏'] } },
+    { id: 'security_expert', name: '安全专家', type: 'architect', description: '负责安全审计和漏洞扫描', avatar_color: '#f85149', capabilities: ['渗透测试', '安全审计', 'OWASP'], source: 'mock', status: 'idle', is_active: true, soul_data: { core_principles: ['安全左移', '纵深防御'], execution_rules: ['PR合并前必须通过安全扫描', '敏感信息不得硬编码'] } },
+    { id: 'ux_designer', name: 'UX设计师', type: 'frontend_developer', description: '负责用户体验设计和交互原型', avatar_color: '#f0883e', capabilities: ['用户研究', '原型设计', '可用性测试'], source: 'mock', status: 'idle', is_active: true, soul_data: { core_principles: ['以用户为中心', '渐进式增强'], execution_rules: ['新功能必须有交互原型', '遵循设计系统规范'] } },
+    { id: 'tech_writer', name: '技术文档工程师', type: 'custom', description: '负责 API 文档和用户手册编写', avatar_color: '#d29922', capabilities: ['API文档', '用户手册', '教程编写'], source: 'mock', status: 'idle', is_active: true, soul_data: { core_principles: ['文档即代码', '清晰胜于花哨'], execution_rules: ['API变更必须同步更新文档', '所有示例代码必须可运行'] } },
+    { id: 'ml_engineer', name: 'ML工程师', type: 'backend_developer', description: '负责机器学习模型训练和部署', avatar_color: '#a371f7', capabilities: ['模型训练', '特征工程', 'MLOps'], source: 'mock', status: 'idle', is_active: true, soul_data: { core_principles: ['模型可解释性', '数据隐私优先'], execution_rules: ['模型上线前必须通过A/B测试', '训练数据版本化管理'] } },
+  ]
+
   const fetchAgents = async () => {
     setLoading(true)
     try {
@@ -100,10 +108,10 @@ export default function AgentPoolModal({ isOpen, onClose, onAgentsSelected, curr
         const data = await response.json()
         setAgents(data.agents || [])
       } else {
-        console.error('Failed to fetch agents')
+        setAgents(MOCK_AGENTS)
       }
-    } catch (error) {
-      console.error('Error fetching agents:', error)
+    } catch {
+      setAgents(MOCK_AGENTS)
     } finally {
       setLoading(false)
     }

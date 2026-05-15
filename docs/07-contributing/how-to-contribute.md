@@ -14,7 +14,7 @@
 ### 2. 克隆仓库
 
 ```bash
-git clone https://github.com/your-username/devteam-ai.git
+git clone https://github.com/Sakura820251454/devteam-ai.git
 cd devteam-ai
 ```
 

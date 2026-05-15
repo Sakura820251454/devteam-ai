@@ -1,7 +1,7 @@
 # 安全服务模块
 
-**版本**: v1.0
-**最后更新**: 2026-05-14
+**版本**: v2.0
+**最后更新**: 2026-05-15
 
 ---
 
@@ -18,7 +18,7 @@
 - 四级风险分级（LOW/MEDIUM/HIGH/CRITICAL），不同级别不同审批策略
 - 操作权限控制（每个 Agent 的允许操作集）
 - 全局 Kill Switch（紧急停止，冻结所有 Agent 活动）
-- 断路器（错误率超阈值自动隔离 Agent）
+- 断路器（检测 Agent 异常 → 清理上下文窗口 → 从记忆系统重新加载 → 通知用户，恢复性修复而非隔离）
 - WORM 审计日志（追加写入 + SHA-256 哈希链完整性校验）
 - 宪法层（硬编码不可违背的核心原则）
 
@@ -42,7 +42,7 @@
 | `emergency_stop(triggered_by, reason, message)` | 全局紧急停止 |
 | `emergency_reset(triggered_by)` | 解除紧急状态 |
 | `record_operation_result(agent_id, operation, success)` | 记录操作结果（断路器数据） |
-| `reset_circuit_breaker(agent_id)` | 重置 Agent 断路器 |
+| `reset_circuit_breaker(agent_id)` | 恢复性修复：清理上下文并重新加载记忆 |
 
 ### OperationType 枚举
 
@@ -90,4 +90,5 @@ WORM（Write Once, Read Many）审计日志器。每行 JSON + SHA-256 哈希链
 ## 相关文档
 
 - [安全与审计 API](../../05-api/security.md)
+- [干预系统设计](../../02-design/intervention.md)
 - [系统架构](../../01-project/architecture.md)

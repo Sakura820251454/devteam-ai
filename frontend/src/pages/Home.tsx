@@ -1,229 +1,228 @@
-import { useState, useEffect } from 'react'
-import CollaborationView from '../components/CollaborationView'
+import { useState, useRef } from 'react'
+import { useStore } from '../lib/store'
+import { startSimulation } from '../lib/simulation'
+import PipelineView from '../components/PipelineView'
+import AgentTeamPanel from '../components/AgentTeamPanel'
+import EventTimeline from '../components/EventTimeline'
+import CostPanel from '../components/CostPanel'
+import TerminalLog from '../components/TerminalLog'
+import InterventionPanel from '../components/InterventionPanel'
+import AgentChatPanel from '../components/AgentChatPanel'
+import CreateProjectModal from '../components/CreateProjectModal'
 
-type Tab = 'collaboration' | 'tasks'
-
-interface TaskResponse {
-  id: string
-  title: string
-  description: string
-  status: string
-  priority: string
-  assigned_agents: string[]
-  created_by: string
-  tags: string[]
-  created_at: string
-  updated_at: string
-}
-
-interface BoardResponse {
-  total: number
-  columns: Record<string, TaskResponse[]>
-}
-
-const STATUS_COLUMNS = [
-  { key: 'backlog', label: '待办', color: 'bg-gray-600' },
-  { key: 'todo', label: '计划中', color: 'bg-blue-600' },
-  { key: 'in_progress', label: '进行中', color: 'bg-yellow-600' },
-  { key: 'review', label: '审核', color: 'bg-purple-600' },
-  { key: 'done', label: '完成', color: 'bg-green-600' },
-]
-
-const PRIORITY_COLORS: Record<string, string> = {
-  low: 'bg-gray-400',
-  medium: 'bg-blue-400',
-  high: 'bg-orange-400',
-  urgent: 'bg-red-400'
-}
-
-function TasksTab() {
-  const [board, setBoard] = useState<BoardResponse | null>(null)
-  const [newTaskTitle, setNewTaskTitle] = useState('')
-  const [newTaskPriority, setNewTaskPriority] = useState('medium')
-  const [isCreating, setIsCreating] = useState(false)
-
-  const fetchBoard = async () => {
-    try {
-      const res = await fetch('/api/tasks/board/all')
-      if (res.ok) setBoard(await res.json())
-    } catch (err) { console.error('Failed to fetch board:', err) }
-  }
-
-  const createTask = async () => {
-    if (!newTaskTitle.trim()) return
-    setIsCreating(true)
-    try {
-      await fetch('/api/tasks/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: newTaskTitle, priority: newTaskPriority, created_by: 'user' })
-      })
-      setNewTaskTitle('')
-      fetchBoard()
-    } catch (err) { console.error('Failed to create task:', err) }
-    finally { setIsCreating(false) }
-  }
-
-  const updateTaskStatus = async (taskId: string, newStatus: string) => {
-    try {
-      await fetch(`/api/tasks/${taskId}/status`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus, changed_by: 'user' })
-      })
-      fetchBoard()
-    } catch (err) { console.error('Failed to update task:', err) }
-  }
-
-  useEffect(() => { fetchBoard() }, [])
-
-  const totalTasks = board?.total || 0
-  const completedTasks = board?.columns['done']?.length || 0
-  const inProgressTasks = board?.columns['in_progress']?.length || 0
-
-  return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-gray-900">
-      <div className="flex-1 overflow-y-auto p-4">
-        <div className="flex gap-4 mb-4">
-          <div className="bg-gray-800 rounded-lg px-4 py-2 flex items-center gap-2">
-            <span className="text-gray-400 text-sm">总任务</span>
-            <span className="text-white font-bold text-lg">{totalTasks}</span>
-          </div>
-          <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-lg px-4 py-2 flex items-center gap-2">
-            <span className="text-yellow-400 text-sm">进行中</span>
-            <span className="text-yellow-400 font-bold text-lg">{inProgressTasks}</span>
-          </div>
-          <div className="bg-green-900/30 border border-green-700/50 rounded-lg px-4 py-2 flex items-center gap-2">
-            <span className="text-green-400 text-sm">已完成</span>
-            <span className="text-green-400 font-bold text-lg">{completedTasks}</span>
-          </div>
-        </div>
-
-        <div className="bg-gray-800 rounded-lg p-4 mb-4">
-          <h3 className="text-sm font-medium text-gray-300 mb-3">快速创建任务</h3>
-          <div className="flex gap-3">
-            <input
-              type="text"
-              value={newTaskTitle}
-              onChange={(e) => setNewTaskTitle(e.target.value)}
-              placeholder="输入任务标题..."
-              className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-primary-500"
-              onKeyDown={(e) => e.key === 'Enter' && createTask()}
-            />
-            <select
-              value={newTaskPriority}
-              onChange={(e) => setNewTaskPriority(e.target.value)}
-              className="bg-gray-700 border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-primary-500"
-            >
-              <option value="low">低</option>
-              <option value="medium">中</option>
-              <option value="high">高</option>
-              <option value="urgent">紧急</option>
-            </select>
-            <button
-              onClick={createTask}
-              disabled={!newTaskTitle.trim() || isCreating}
-              className="px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:bg-gray-600 rounded transition-colors"
-            >
-              {isCreating ? '创建中...' : '创建'}
-            </button>
-          </div>
-        </div>
-
-        <div className="flex gap-4 h-[calc(100%-180px)] overflow-x-auto">
-          {STATUS_COLUMNS.map(({ key, label, color }) => (
-            <div key={key} className="flex-shrink-0 w-72 flex flex-col bg-gray-800/50 rounded-lg">
-              <div className={`${color} text-white px-4 py-2 rounded-t-lg font-medium flex items-center justify-between`}>
-                <span>{label}</span>
-                <span className="bg-white/20 px-2 py-0.5 rounded text-sm">{board?.columns[key]?.length || 0}</span>
-              </div>
-              <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                {board?.columns[key]?.map((task) => (
-                  <div key={task.id} className="bg-gray-700 rounded p-3 hover:bg-gray-650 transition-colors">
-                    <div className="flex items-start gap-2">
-                      <div className={`w-2 h-2 mt-1.5 rounded-full flex-shrink-0 ${PRIORITY_COLORS[task.priority] || 'bg-gray-400'}`} />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm text-white truncate">{task.title}</div>
-                        <div className="flex gap-1 mt-2 flex-wrap">
-                          {key === 'backlog' && (
-                            <button onClick={() => updateTaskStatus(task.id, 'todo')} className="text-xs text-blue-400 hover:text-blue-300 bg-blue-900/30 px-2 py-1 rounded">→ 开始</button>
-                          )}
-                          {key === 'todo' && (
-                            <button onClick={() => updateTaskStatus(task.id, 'in_progress')} className="text-xs text-yellow-400 hover:text-yellow-300 bg-yellow-900/30 px-2 py-1 rounded">→ 进行</button>
-                          )}
-                          {key === 'in_progress' && (
-                            <>
-                              <button onClick={() => updateTaskStatus(task.id, 'review')} className="text-xs text-purple-400 hover:text-purple-300 bg-purple-900/30 px-2 py-1 rounded">→ 审核</button>
-                              <button onClick={() => updateTaskStatus(task.id, 'todo')} className="text-xs text-gray-400 hover:text-gray-300 bg-gray-600/50 px-2 py-1 rounded">← 退回</button>
-                            </>
-                          )}
-                          {key === 'review' && (
-                            <>
-                              <button onClick={() => updateTaskStatus(task.id, 'done')} className="text-xs text-green-400 hover:text-green-300 bg-green-900/30 px-2 py-1 rounded">✓ 完成</button>
-                              <button onClick={() => updateTaskStatus(task.id, 'in_progress')} className="text-xs text-yellow-400 hover:text-yellow-300 bg-yellow-900/30 px-2 py-1 rounded">← 重做</button>
-                            </>
-                          )}
-                          {key === 'done' && (
-                            <button onClick={() => updateTaskStatus(task.id, 'review')} className="text-xs text-gray-400 hover:text-gray-300 bg-gray-600/50 px-2 py-1 rounded">← 重新审核</button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                {(!board?.columns[key] || board.columns[key].length === 0) && (
-                  <div className="text-center text-gray-500 py-8 text-sm">暂无任务</div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
+type SideTab = 'agents' | 'chat' | 'timeline' | 'cost'
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<Tab>('collaboration')
+  const {
+    pipeline,
+    sidePanelOpen,
+    terminalExpanded,
+    terminalFullscreen,
+    isConnected,
+    isLoading,
+    setSidePanelOpen,
+    setTerminalExpanded,
+    startProject,
+    resetProject,
+  } = useStore()
+
+  const [activeTab, setActiveTab] = useState<SideTab>('agents')
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const stopSimRef = useRef<(() => void) | null>(null)
+
+  const progress = pipeline ? Math.round(pipeline.progress * 100) : 0
+  const statusLabel =
+    !isConnected ? '未连接' :
+    isLoading ? '加载中...' :
+    pipeline?.status === 'running' ? '运行中' :
+    pipeline?.status === 'paused' ? '已暂停' :
+    pipeline?.status === 'completed' ? '已完成' :
+    pipeline?.status === 'failed' ? '失败' :
+    '空闲'
+
+  const statusColor =
+    !isConnected ? 'bg-surface-400' :
+    isLoading ? 'bg-accent-orange animate-pulse' :
+    pipeline?.status === 'running' ? 'bg-accent-green animate-pulse' :
+    pipeline?.status === 'paused' ? 'bg-accent-orange' :
+    pipeline?.status === 'completed' ? 'bg-accent-cyan' :
+    pipeline?.status === 'failed' ? 'bg-accent-red' :
+    'bg-surface-400'
+
+  const handleCreateProject = (name: string, description: string) => {
+    stopSimRef.current?.()
+    startProject(name, description)
+    stopSimRef.current = startSimulation(name, description)
+  }
+
+  const handleOpenExample = () => {
+    stopSimRef.current?.()
+    const name = '示例：博客平台开发'
+    const desc = '开发一个支持 Markdown 的技术博客平台，包含文章发布、标签分类、评论系统、RSS 订阅、全文搜索。前后端分离架构，FastAPI + React + PostgreSQL。'
+    startProject(name, desc)
+    stopSimRef.current = startSimulation(name, desc)
+  }
+
+  const handleResetProject = () => {
+    stopSimRef.current?.()
+    stopSimRef.current = null
+    resetProject()
+  }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-900 text-gray-100">
-      <header className="bg-gray-800 border-b border-gray-700 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-primary-400">DevTeam-AI</h1>
-          <div className="text-sm text-gray-500">
-            多智能体协同开发平台
+    <div className="flex flex-col h-screen bg-background text-surface-50 overflow-hidden">
+      {/* Top Bar */}
+      <header className="h-12 bg-background-panel border-b border-white/5 flex items-center px-4 shrink-0 z-10">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          <h1 className="text-sm font-semibold text-accent-cyan tracking-wide">
+            DevTeam-AI
+          </h1>
+          <span className="text-surface-300 text-xs">|</span>
+          <span className="text-surface-200 text-sm font-medium truncate">
+            {pipeline?.name || '未创建项目'}
+          </span>
+          {pipeline && (
+            <button
+              onClick={handleResetProject}
+              className="text-xs text-surface-500 hover:text-accent-red transition-colors ml-2"
+              title="重置项目"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-4">
+          {/* Pipeline progress bar (compact) */}
+          {pipeline && (
+            <div className="flex items-center gap-2">
+              <div className="w-32 h-1.5 bg-surface-600 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-accent-cyan rounded-full transition-all duration-700"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              <span className="text-xs text-surface-300 font-mono tabular-nums">
+                {progress}%
+              </span>
+            </div>
+          )}
+
+          {/* Status indicator */}
+          <div className="flex items-center gap-1.5">
+            <div className={`w-2 h-2 rounded-full ${statusColor}`} />
+            <span className="text-xs text-surface-300">{statusLabel}</span>
           </div>
+
+          {/* New project button — always visible */}
+          {!pipeline && (
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="px-3 py-1 bg-accent-cyan/20 text-accent-cyan rounded text-xs font-medium hover:bg-accent-cyan/30 transition-colors"
+            >
+              + 新项目
+            </button>
+          )}
+
+          {/* Terminal toggle */}
+          <button
+            onClick={() => setTerminalExpanded(!terminalExpanded)}
+            className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+              terminalExpanded
+                ? 'bg-accent-cyan/20 text-accent-cyan'
+                : 'text-surface-300 hover:text-surface-100 hover:bg-white/5'
+            }`}
+          >
+            &gt;_
+          </button>
+
+          {/* Side panel toggle */}
+          <button
+            onClick={() => setSidePanelOpen(!sidePanelOpen)}
+            className={`px-2 py-1 rounded text-xs transition-colors ${
+              sidePanelOpen
+                ? 'text-surface-200'
+                : 'text-surface-400 hover:text-surface-200'
+            }`}
+            title={sidePanelOpen ? '收起面板' : '展开面板'}
+          >
+            {sidePanelOpen ? '▸' : '◂'}
+          </button>
         </div>
       </header>
-      <div className="bg-gray-800 border-b border-gray-700 px-6">
-        <div className="flex gap-1">
-          <button
-            onClick={() => setActiveTab('collaboration')}
-            className={`px-4 py-3 font-medium transition-colors ${
-              activeTab === 'collaboration'
-                ? 'text-primary-400 border-b-2 border-primary-400'
-                : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            🤝 协作模式
-          </button>
-          <button
-            onClick={() => setActiveTab('tasks')}
-            className={`px-4 py-3 font-medium transition-colors ${
-              activeTab === 'tasks'
-                ? 'text-primary-400 border-b-2 border-primary-400'
-                : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            📋 任务看板
-          </button>
+
+      {/* Main Content */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Pipeline — 主视图 */}
+        <div className="flex-1 overflow-hidden">
+          <PipelineView
+            onCreateProject={() => setShowCreateModal(true)}
+            onOpenExample={handleOpenExample}
+          />
         </div>
+
+        {/* Side Panels */}
+        {sidePanelOpen && (
+          <aside className="w-80 bg-background-panel border-l border-white/5 flex flex-col shrink-0 animate-slide-in-right">
+            {/* Tab Bar */}
+            <div className="flex border-b border-white/5 shrink-0">
+              {([
+                ['agents', 'Agent'],
+                ['chat', '对话'],
+                ['timeline', '时间线'],
+                ['cost', '成本'],
+              ] as [SideTab, string][]).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setActiveTab(key)}
+                  className={`flex-1 py-2.5 text-xs font-medium transition-colors relative ${
+                    activeTab === key
+                      ? 'text-accent-cyan'
+                      : 'text-surface-400 hover:text-surface-200'
+                  }`}
+                >
+                  {label}
+                  {activeTab === key && (
+                    <div className="absolute bottom-0 left-1/4 right-1/4 h-0.5 bg-accent-cyan rounded-full" />
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Panel Content */}
+            <div className="flex-1 overflow-hidden">
+              {activeTab === 'agents' && <AgentTeamPanel />}
+              {activeTab === 'chat' && <AgentChatPanel />}
+              {activeTab === 'timeline' && <EventTimeline />}
+              {activeTab === 'cost' && <CostPanel />}
+            </div>
+          </aside>
+        )}
       </div>
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {activeTab === 'collaboration' && <CollaborationView />}
-        {activeTab === 'tasks' && <TasksTab />}
-      </main>
+
+      {/* Terminal Log */}
+      {terminalExpanded && !terminalFullscreen && (
+        <div className="h-48 bg-background-input border-t border-white/5 shrink-0 animate-slide-up">
+          <TerminalLog />
+        </div>
+      )}
+
+      {/* Terminal Fullscreen Overlay */}
+      {terminalFullscreen && (
+        <div className="fixed inset-0 z-50 bg-background animate-fade-in">
+          <TerminalLog />
+        </div>
+      )}
+
+      {/* Create Project Modal */}
+      <CreateProjectModal
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onSubmit={handleCreateProject}
+      />
+
+      {/* Intervention FAB */}
+      <InterventionPanel />
     </div>
   )
 }

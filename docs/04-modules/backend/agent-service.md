@@ -1,13 +1,13 @@
 # Agent 服务模块
 
 **版本**: v2.0  
-**最后更新**: 2026-05-13
+**最后更新**: 2026-05-15
 
 ---
 
 ## 概述
 
-- **功能定位**：Agent 生命周期管理、模板管理和团队管理
+- **功能定位**：Agent 生命周期管理、人才库管理和团队管理
 - **所属层级**：backend
 - **代码路径**：`backend/app/services/agent/`
 
@@ -15,7 +15,7 @@
 
 ## 功能特性
 
-- Agent 模板管理（预设模板 + 自定义模板 + soul.md 加载）
+- 人才库模式（无预设角色，任务驱动临时职责）
 - Agent 实例创建、查询、更新、删除
 - 团队配置管理
 - Soul 文件解析和集成
@@ -28,15 +28,12 @@
 
 Agent 管理的主要服务类。
 
-#### 模板管理方法
+#### Soul 管理方法
 
 | 方法 | 说明 |
 |------|------|
-| `get_all_templates()` | 获取所有模板 |
-| `get_template(template_id)` | 获取指定模板 |
-| `get_templates_by_type(agent_type)` | 按类型获取模板 |
-| `get_templates_by_tag(tag)` | 按标签获取模板 |
-| `create_custom_template(data)` | 创建自定义模板 |
+| `load_soul(soul_name)` | 从 agents/ 目录加载 soul.md 文件 |
+| `list_souls()` | 列出所有可用的 soul 配置 |
 
 #### Agent 实例管理方法
 
@@ -67,25 +64,10 @@ Agent 任务执行器（位于 `agent_executor.py`）。
 
 ---
 
-### AgentType 枚举
-
-```python
-class AgentType(Enum):
-    PM = "product_manager"           # 产品经理
-    ARCHITECT = "architect"          # 架构师
-    BACKEND = "backend_developer"    # 后端开发
-    FRONTEND = "frontend_developer"  # 前端开发
-    TESTER = "tester"                # 测试工程师
-    DEVOPS = "devops"                # 运维工程师
-    CUSTOM = "custom"                # 自定义
-```
-
----
-
 ## 数据源优先级
 
-1. **soul.md 文件**（优先）- 从 `agents/` 目录加载
-2. **预设模板**（fallback）- 代码中定义的默认模板
+1. **soul.md 文件**（优先）- 从 `agents/` 目录加载，定义 Agent 个性
+2. **基础配置**（fallback）- 仅包含必要参数（名称、上下文窗口大小）
 
 ---
 

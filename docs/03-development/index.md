@@ -29,7 +29,7 @@
 
 ```bash
 # 克隆项目
-git clone <repository-url>
+git clone https://github.com/Sakura820251454/devteam-ai.git
 cd devteam-ai
 
 # 后端环境

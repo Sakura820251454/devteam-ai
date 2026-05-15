@@ -1,459 +1,365 @@
-import { useState, useEffect, useRef } from 'react'
+import { useStore } from '../lib/store'
+import type { PipelineStage, Agent, Pipeline } from '../lib/store'
+import TaskBoard from './TaskBoard'
 
-interface Message {
-  id: string
-  sender: string
-  senderName: string
-  content: string
-  timestamp: string
-  type: 'text' | 'action' | 'system'
+const STAGE_ICONS: Record<string, { icon: string; desc: string }> = {
+  requirement_analysis: { icon: '🔍', desc: 'Agent 分析需求、澄清模糊点、产出需求文档' },
+  task_breakdown: { icon: '📋', desc: '将需求拆解为可执行的技术任务' },
+  coding: { icon: '⚡', desc: 'Agent 并行编码、实时协作' },
+  review: { icon: '🔎', desc: 'Agent 交叉审查代码质量与规范' },
+  testing: { icon: '🧪', desc: '自动化测试执行与问题修复' },
+  delivery: { icon: '🚀', desc: '代码合并、构建、部署' },
+  research: { icon: '📖', desc: '收集和整理相关领域资料' },
+  analysis: { icon: '📊', desc: '对收集的数据进行深度分析' },
+  drafting: { icon: '✍️', desc: '撰写报告初稿' },
+  internal_review: { icon: '👁️', desc: '团队内部评审和修改建议' },
+  finalize: { icon: '✅', desc: '定稿并交付最终版本' },
 }
 
-interface Task {
-  id: string
-  title: string
-  status: string
-  priority: string
+function getStageMeta(key: string) {
+  return STAGE_ICONS[key] || { icon: '📌', desc: `执行 "${key}" 阶段` }
 }
 
-interface Pipeline {
-  id: string
-  name: string
-  status: string
-  current_stage: string
-  progress: number
-  logs: Array<{ stage: string; message: string; level: string; timestamp: string }>
+const STAGE_STATUS_STYLES: Record<string, { bg: string; border: string; dot: string; text: string }> = {
+  pending:    { bg: 'bg-transparent', border: 'border-white/5', dot: 'bg-surface-600', text: 'text-surface-500' },
+  active:     { bg: 'bg-accent-cyan/5', border: 'border-accent-cyan/30 animate-pulse-border', dot: 'bg-accent-cyan animate-pulse-glow', text: 'text-surface-100' },
+  completed:  { bg: 'bg-accent-green/5', border: 'border-accent-green/20', dot: 'bg-accent-green', text: 'text-surface-200' },
+  blocked:    { bg: 'bg-accent-red/5', border: 'border-accent-red/30', dot: 'bg-accent-red animate-blink', text: 'text-surface-100' },
 }
 
-interface Agent {
-  id: string
-  name: string
-  role: string
-  status: string
+function StageConnector({ status }: { status: string }) {
+  return (
+    <div className="flex justify-center py-1">
+      <div className={`w-0.5 h-8 rounded-full transition-all duration-700 ${
+        status === 'active' ? 'bg-gradient-to-b from-accent-cyan to-surface-600' :
+        status === 'completed' ? 'bg-accent-green' : 'bg-surface-700'
+      }`} />
+    </div>
+  )
 }
 
-const STAGE_LABELS: Record<string, string> = {
-  requirement_analysis: '需求分析',
-  task_breakdown: '任务拆解',
-  task_execution: '任务执行',
-  review: '审核',
-  completed: '完成'
+function AgentAvatar({ agent }: { agent: Agent }) {
+  return (
+    <div
+      className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border border-white/10"
+      style={{ backgroundColor: `${agent.avatarColor}25`, color: agent.avatarColor }}
+      title={`${agent.name} (${agent.status})`}
+    >
+      {agent.name.substring(0, 2)}
+    </div>
+  )
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  idle: 'bg-gray-400',
-  running: 'bg-green-500 animate-pulse',
-  paused: 'bg-yellow-500',
-  completed: 'bg-blue-500',
-  failed: 'bg-red-500',
-  backlog: 'bg-gray-500',
-  todo: 'bg-blue-500',
-  in_progress: 'bg-yellow-500',
-  review: 'bg-purple-500',
-  done: 'bg-green-500'
-}
+function StageCard({
+  stage, isSelected, onClick, agents, compact,
+}: {
+  stage: PipelineStage; isSelected: boolean; onClick: () => void; agents: Agent[]; compact?: boolean
+}) {
+  const meta = getStageMeta(stage.key)
+  const styles = STAGE_STATUS_STYLES[stage.status] || STAGE_STATUS_STYLES.pending
+  const stageAgents = agents.filter((a) => stage.assignedAgents.includes(a.id))
 
-export default function PipelineView() {
-  const [agents, setAgents] = useState<Agent[]>([])
-  const [messages, setMessages] = useState<Message[]>([])
-  const [tasks, setTasks] = useState<Task[]>([])
-  const [pipeline, setPipeline] = useState<Pipeline | null>(null)
-  const [interventionInput, setInterventionInput] = useState('')
-  const [projectName, setProjectName] = useState('')
-  const [projectReq, setProjectReq] = useState('')
-  const [isSimulating, setIsSimulating] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const formatDuration = (start?: string, end?: string) => {
+    if (!start) return null
+    const min = Math.round(((end ? new Date(end).getTime() : Date.now()) - new Date(start).getTime()) / 60000)
+    if (min < 1) return '< 1min'
+    if (min < 60) return `${min}min`
+    return `${Math.floor(min / 60)}h ${min % 60}m`
   }
 
-  useEffect(() => {
-    scrollToBottom()
-  }, [messages])
+  const duration = formatDuration(stage.startedAt, stage.completedAt)
 
-  const fetchAgents = async () => {
-    try {
-      const res = await fetch('/api/agents/')
-      if (res.ok) {
-        const data = await res.json()
-        // API returns {agents: [...], total: N}
-        const agentList = data.agents || data
-        if (agentList.length > 0) {
-          setAgents(agentList.map((a: any) => ({
-            id: a.id,
-            name: a.name,
-            role: a.type || a.role || '开发',
-            status: 'idle'
-          })))
-        }
-      }
-    } catch (err) { console.error(err) }
+  if (compact) {
+    return (
+      <div
+        onClick={onClick}
+        className={`rounded-lg border px-3 py-2.5 cursor-pointer transition-all duration-200 group ${
+          styles.bg} ${styles.border} ${
+          isSelected ? 'shadow-glow-cyan border-accent-cyan' : 'hover:border-white/10'
+        }`}
+      >
+        <div className="flex items-center gap-2">
+          <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${styles.dot}`} />
+          <span className="text-sm">{meta.icon}</span>
+          <span className={`text-sm font-medium ${styles.text}`}>{stage.label || stage.key}</span>
+          <span className={`ml-auto text-xs px-1.5 py-0.5 rounded ${
+            stage.status === 'active' ? 'bg-accent-cyan/20 text-accent-cyan' :
+            stage.status === 'completed' ? 'bg-accent-green/20 text-accent-green' :
+            stage.status === 'blocked' ? 'bg-accent-red/20 text-accent-red' : 'text-surface-500'
+          }`}>
+            {stage.status === 'active' ? '进行中' : stage.status === 'completed' ? '✓' : stage.status === 'blocked' ? '!' : ''}
+          </span>
+        </div>
+        {duration && <div className="text-xs text-surface-600 font-mono mt-1 ml-7">⏱ {duration}</div>}
+      </div>
+    )
   }
-
-  const fetchTasks = async () => {
-    try {
-      const res = await fetch('/api/tasks/')
-      if (res.ok) {
-        const data = await res.json()
-        setTasks(data.map((t: any) => ({
-          id: t.id,
-          title: t.title,
-          status: t.status,
-          priority: t.priority
-        })))
-      }
-    } catch (err) { console.error(err) }
-  }
-
-  const fetchPipeline = async () => {
-    try {
-      const res = await fetch('/api/pipelines/active')
-      if (res.ok) {
-        const data = await res.json()
-        if (data.pipeline) setPipeline(data.pipeline)
-      }
-    } catch (err) { console.error(err) }
-  }
-
-  const fetchMessages = async () => {
-    try {
-      const res = await fetch('/api/messages/history?limit=50')
-      if (res.ok) {
-        const data = await res.json()
-        if (data.length > 0) {
-          setMessages(data.map((m: any) => ({
-            id: m.id,
-            sender: m.sender_id,
-            senderName: m.sender_name,
-            content: m.content,
-            timestamp: m.timestamp,
-            type: m.message_type
-          })))
-        }
-      }
-    } catch (err) { console.error(err) }
-  }
-
-  useEffect(() => {
-    fetchAgents()
-    fetchTasks()
-    fetchPipeline()
-    fetchMessages()
-  }, [])
-
-  useEffect(() => {
-    if (isSimulating || pipeline) {
-      const interval = setInterval(() => {
-        fetchTasks()
-        fetchPipeline()
-      }, 3000)
-      return () => clearInterval(interval)
-    }
-  }, [isSimulating, pipeline])
-
-  const startSimulation = async () => {
-    if (!projectName.trim()) return
-    setIsSimulating(true)
-
-    addMessage({ sender: 'system', senderName: '系统', content: `🚀 项目 "${projectName}" 已创建，开始需求分析...`, type: 'system' })
-    await sleep(1500)
-
-    addMessage({ sender: 'pm', senderName: '产品经理', content: `我来分析一下需求：${projectReq || '开发一个用户管理系统'}`,
-      type: 'text' })
-    await sleep(2000)
-
-    addMessage({ sender: 'architect', senderName: '架构师', content: '根据需求，我建议采用前后端分离架构，使用 FastAPI + React，技术栈清晰。',
-      type: 'text' })
-    await sleep(2000)
-
-    addMessage({ sender: 'pm', senderName: '产品经理', content: '同意，我来拆解任务...',
-      type: 'action' })
-    await sleep(1500)
-
-    addMessage({ sender: 'system', senderName: '系统', content: '📋 已自动拆解3个任务：数据库设计、API开发、前端界面', type: 'system' })
-
-    for (let i = 0; i < 3; i++) {
-      await sleep(2000)
-      const taskNames = ['设计数据库表结构', '开发RESTful API', '实现用户管理界面']
-      addMessage({ sender: 'backend', senderName: '后端开发', content: `开始任务: ${taskNames[i]}`, type: 'action' })
-      await sleep(2500)
-      addMessage({ sender: 'backend', senderName: '后端开发', content: `✅ 任务完成: ${taskNames[i]}`, type: 'action' })
-    }
-
-    await sleep(1500)
-    addMessage({ sender: 'tester', senderName: '测试工程师', content: '开始进行代码审查和测试...', type: 'text' })
-    await sleep(2000)
-    addMessage({ sender: 'system', senderName: '系统', content: '🎉 项目开发完成！所有任务已审核通过。', type: 'system' })
-
-    setIsSimulating(false)
-  }
-
-  const addMessage = (msg: Omit<Message, 'id' | 'timestamp'>) => {
-    setMessages(prev => [...prev, {
-      ...msg,
-      id: `msg-${Date.now()}-${Math.random()}`,
-      timestamp: new Date().toLocaleTimeString()
-    }])
-  }
-
-  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-
-  const handleIntervention = () => {
-    if (!interventionInput.trim()) return
-    addMessage({ sender: 'human', senderName: '👤 你', content: interventionInput, type: 'text' })
-    addMessage({ sender: 'system', senderName: '系统', content: `[收到人工干预] ${interventionInput}`, type: 'action' })
-    setInterventionInput('')
-  }
-
-  const getTasksByStatus = (status: string) => tasks.filter(t => t.status === status)
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-gray-900 text-gray-100 overflow-hidden">
-      {/* Top Header */}
-      <div className="bg-gray-800 border-b border-gray-700 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <h2 className="text-lg font-bold text-primary-400">🚀 开发工作台</h2>
-          {pipeline && (
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${STATUS_COLORS[pipeline.status] || 'bg-gray-400'}`} />
-              <span className="text-sm text-gray-300">{STAGE_LABELS[pipeline.current_stage] || pipeline.current_stage}</span>
-              <span className="text-sm text-gray-500">({Math.round(pipeline.progress * 100)}%)</span>
-            </div>
-          )}
+    <div
+      onClick={onClick}
+      className={`relative rounded-xl border p-5 cursor-pointer transition-all duration-300 group ${
+        styles.bg} ${styles.border} ${
+        isSelected ? 'shadow-glow-cyan' : 'hover:border-white/10 hover:bg-white/[0.02]'
+      }`}
+    >
+      <div className="flex items-center gap-3 mb-3">
+        <div className={`w-3 h-3 rounded-full shrink-0 ${styles.dot} relative`}>
+          {stage.status === 'active' && <div className="absolute inset-0 rounded-full bg-accent-cyan animate-ping opacity-30" />}
         </div>
-        <div className="flex items-center gap-2">
-          {isSimulating ? (
-            <span className="text-sm text-green-400 animate-pulse">● 运行中</span>
-          ) : pipeline ? (
-            <span className="text-sm text-blue-400">流水线运行中</span>
-          ) : (
-            <span className="text-sm text-gray-500">空闲</span>
-          )}
+        <span className="text-xl">{meta.icon}</span>
+        <h3 className={`font-semibold text-base ${styles.text}`}>{stage.label || stage.key}</h3>
+        <span className={`ml-auto text-xs px-2.5 py-0.5 rounded-full font-medium ${
+          stage.status === 'active' ? 'bg-accent-cyan/20 text-accent-cyan' :
+          stage.status === 'completed' ? 'bg-accent-green/20 text-accent-green' :
+          stage.status === 'blocked' ? 'bg-accent-red/20 text-accent-red' : 'bg-surface-600/50 text-surface-500'
+        }`}>
+          {stage.status === 'active' ? '进行中' : stage.status === 'completed' ? '已完成' : stage.status === 'blocked' ? '阻塞' : '待开始'}
+        </span>
+      </div>
+
+      <p className="text-sm text-surface-400 mb-3 leading-relaxed">{meta.desc}</p>
+
+      {stageAgents.length > 0 && (
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-xs text-surface-500">负责:</span>
+          {stageAgents.map((a) => <AgentAvatar key={a.id} agent={a} />)}
+        </div>
+      )}
+
+      {stage.artifacts.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {stage.artifacts.map((artifact) => (
+            <span key={artifact} className="text-xs px-2 py-0.5 rounded bg-white/5 text-surface-400">
+              {artifact}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {duration && <div className="text-xs text-surface-500 font-mono">⏱ {duration}</div>}
+
+      {stage.status !== 'pending' && (
+        <div className="absolute top-4 right-4 text-surface-600 group-hover:text-accent-cyan transition-colors text-sm opacity-0 group-hover:opacity-100">
+          {isSelected ? '收起 ▲' : '展开 ▼'}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ProjectStats({ pipeline }: { pipeline: Pipeline }) {
+  const completed = pipeline.stages.filter((s) => s.status === 'completed').length
+  const total = pipeline.stages.length
+  const inProgress = pipeline.stages.filter((s) => s.status === 'active').length
+  const blocked = pipeline.stages.filter((s) => s.status === 'blocked').length
+  const elapsed = pipeline.stages[0]?.startedAt
+    ? Math.round((Date.now() - new Date(pipeline.stages[0].startedAt).getTime()) / 60000)
+    : 0
+
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <div className="bg-background-card border border-white/5 rounded-lg p-4">
+        <div className="text-xs text-surface-500 mb-1">阶段进度</div>
+        <div className="text-2xl font-bold text-surface-100 font-mono">{completed}/{total}</div>
+        <div className="text-xs text-surface-500 mt-1">已完成阶段</div>
+      </div>
+      <div className="bg-background-card border border-white/5 rounded-lg p-4">
+        <div className="text-xs text-surface-500 mb-1">已用时间</div>
+        <div className="text-2xl font-bold text-surface-100 font-mono">
+          {elapsed < 60 ? `${elapsed}m` : `${Math.floor(elapsed / 60)}h ${elapsed % 60}m`}
+        </div>
+        <div className="text-xs text-surface-500 mt-1">自项目启动</div>
+      </div>
+      <div className="bg-background-card border border-white/5 rounded-lg p-4">
+        <div className="text-xs text-surface-500 mb-1">进行中</div>
+        <div className="text-2xl font-bold text-accent-orange font-mono">{inProgress}</div>
+        <div className="text-xs text-surface-500 mt-1">个阶段正在执行</div>
+      </div>
+      <div className="bg-background-card border border-white/5 rounded-lg p-4">
+        <div className="text-xs text-surface-500 mb-1">阻塞</div>
+        <div className={`text-2xl font-bold font-mono ${blocked > 0 ? 'text-accent-red' : 'text-surface-100'}`}>
+          {blocked}
+        </div>
+        <div className="text-xs text-surface-500 mt-1">{blocked > 0 ? '需关注' : '无阻塞'}</div>
+      </div>
+    </div>
+  )
+}
+
+interface PipelineViewProps {
+  onCreateProject: () => void
+  onOpenExample: () => void
+}
+
+export default function PipelineView({ onCreateProject, onOpenExample }: PipelineViewProps) {
+  const {
+    pipeline, selectedStage, agents,
+    setSelectedStage,
+    addLog,
+  } = useStore()
+
+  const handleStageClick = (stageKey: string) => {
+    if (selectedStage === stageKey) {
+      setSelectedStage(null)
+    } else {
+      setSelectedStage(stageKey)
+      const stage = pipeline?.stages.find((s) => s.key === stageKey)
+      addLog({ level: 'info', source: 'pipeline', message: `进入阶段: ${stage?.label || stageKey}` })
+    }
+  }
+
+  if (!pipeline) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-surface-500 p-8">
+        <div className="text-6xl mb-6 opacity-30">⚙️</div>
+        <h2 className="text-xl font-semibold text-surface-300 mb-2">等待项目启动</h2>
+        <p className="text-sm text-surface-500 mb-6">创建一个项目，Agent 团队将自动接管开发流程</p>
+        <div className="flex gap-3">
+          <button
+            onClick={onCreateProject}
+            className="px-5 py-2.5 bg-accent-cyan text-white rounded-lg font-medium text-sm hover:bg-accent-cyan/90 transition-all shadow-glow-cyan"
+          >
+            🚀 启动新项目
+          </button>
+          <button
+            onClick={onOpenExample}
+            className="px-5 py-2.5 bg-surface-600 text-surface-300 rounded-lg font-medium text-sm hover:bg-surface-500 transition-all"
+          >
+            📂 打开示例项目
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const activeStageIdx = pipeline.stages.findIndex((s) => s.key === pipeline.currentStage)
+
+  return (
+    <div className="h-full flex flex-col">
+      {/* Header */}
+      <div className="px-5 py-3 border-b border-white/5 flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-3">
+          <div className={`w-2.5 h-2.5 rounded-full ${
+            pipeline.status === 'running' ? 'bg-accent-green animate-pulse' :
+            pipeline.status === 'paused' ? 'bg-accent-orange' :
+            pipeline.status === 'completed' ? 'bg-accent-cyan' :
+            pipeline.status === 'failed' ? 'bg-accent-red' : 'bg-surface-400'
+          }`} />
+          <span className="text-sm font-medium text-surface-200">{pipeline.name}</span>
+          <span className="text-surface-600">·</span>
+          <span className="text-sm text-surface-500">阶段 {activeStageIdx + 1}/{pipeline.stages.length}</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="w-28 h-1.5 bg-surface-600 rounded-full overflow-hidden">
+            <div className="h-full bg-accent-cyan rounded-full transition-all duration-700" style={{ width: `${Math.round(pipeline.progress * 100)}%` }} />
+          </div>
+          <span className="text-sm text-surface-500 font-mono">{Math.round(pipeline.progress * 100)}%</span>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left Panel - Agent Team */}
-        <div className="w-64 bg-gray-800 border-r border-gray-700 flex flex-col">
-          <div className="p-3 border-b border-gray-700">
-            <h3 className="text-sm font-medium text-gray-300 mb-2">👥 Agent团队</h3>
-          </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {agents.length > 0 ? agents.map(agent => (
-              <div key={agent.id} className="bg-gray-700/50 rounded-lg p-2">
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${STATUS_COLORS[agent.status] || 'bg-gray-400'}`} />
-                  <span className="text-sm font-medium text-white">{agent.name}</span>
+      {/* Content */}
+      <div className="flex-1 overflow-hidden flex">
+        {selectedStage ? (
+          <>
+            <div className="w-64 shrink-0 border-r border-white/5 overflow-y-auto p-3 space-y-1.5">
+              <div className="text-xs text-surface-500 px-1 mb-2 uppercase tracking-wider">Pipeline</div>
+              {pipeline.stages.map((stage: PipelineStage) => (
+                <StageCard
+                  key={stage.key}
+                  stage={stage}
+                  isSelected={selectedStage === stage.key}
+                  onClick={() => handleStageClick(stage.key)}
+                  agents={agents}
+                  compact
+                />
+              ))}
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium text-surface-200">
+                    {pipeline.stages.find((s) => s.key === selectedStage)?.label || selectedStage}
+                  </span>
+                  <span className="text-sm text-surface-500 ml-2">· 任务看板</span>
                 </div>
-                <div className="text-xs text-gray-400 mt-1">{agent.role}</div>
+                <button
+                  onClick={() => setSelectedStage(null)}
+                  className="text-xs text-surface-500 hover:text-surface-200 transition-colors"
+                >
+                  ✕ 关闭
+                </button>
               </div>
-            )) : (
-              <>
-                {['产品经理', '架构师', '后端开发', '前端开发', '测试工程师'].map(role => (
-                  <div key={role} className="bg-gray-700/50 rounded-lg p-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-gray-400" />
-                      <span className="text-sm font-medium text-white">{role}</span>
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">就绪</div>
+              <TaskBoard />
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 overflow-y-auto">
+            <div className="flex gap-6 p-6 h-full">
+              <div className="flex-1 max-w-[600px] space-y-0">
+                {pipeline.stages.map((stage: PipelineStage, idx: number) => (
+                  <div key={stage.key}>
+                    <StageCard
+                      stage={stage}
+                      isSelected={false}
+                      onClick={() => handleStageClick(stage.key)}
+                      agents={agents}
+                    />
+                    {idx < pipeline.stages.length - 1 && <StageConnector status={stage.status} />}
                   </div>
                 ))}
-              </>
-            )}
-          </div>
-          <div className="p-3 border-t border-gray-700">
-            <div className="text-xs text-gray-500 mb-2">发言顺序</div>
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 text-xs text-gray-400">
-                <span className="w-5 h-5 bg-primary-600 rounded-full flex items-center justify-center text-white">1</span>
-                <span>产品经理</span>
               </div>
-              <div className="flex items-center gap-2 text-xs text-gray-400">
-                <span className="w-5 h-5 bg-gray-600 rounded-full flex items-center justify-center text-white">2</span>
-                <span>架构师</span>
-              </div>
-            </div>
-          </div>
-        </div>
 
-        {/* Center Panel - Discussion */}
-        <div className="flex-1 flex flex-col min-w-0">
-          {/* Project Setup */}
-          {!pipeline && !isSimulating && (
-            <div className="p-4 bg-gray-800/50 border-b border-gray-700">
-              <h3 className="text-sm font-medium text-gray-300 mb-3">📝 创建项目</h3>
-              <div className="flex gap-3">
-                <input
-                  type="text"
-                  value={projectName}
-                  onChange={e => setProjectName(e.target.value)}
-                  placeholder="项目名称..."
-                  className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-primary-500"
-                />
-                <input
-                  type="text"
-                  value={projectReq}
-                  onChange={e => setProjectReq(e.target.value)}
-                  placeholder="需求描述..."
-                  className="flex-[2] bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-primary-500"
-                />
-                <button
-                  onClick={startSimulation}
-                  disabled={!projectName.trim() || isSimulating}
-                  className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 rounded text-sm font-medium transition-colors"
-                >
-                  🚀 启动开发
-                </button>
-              </div>
-            </div>
-          )}
+              <div className="flex-1 space-y-4 pt-1">
+                <ProjectStats pipeline={pipeline!} />
 
-          {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {messages.length === 0 && !isSimulating && (
-              <div className="flex items-center justify-center h-full">
-                <div className="text-center text-gray-500">
-                  <p className="text-lg mb-2">🎯 开始一个新项目</p>
-                  <p className="text-sm">输入项目名称和需求，点击"启动开发"</p>
-                </div>
-              </div>
-            )}
-            {messages.map(msg => (
-              <div key={msg.id} className={`flex ${msg.sender === 'human' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[80%] rounded-lg px-4 py-2 ${
-                  msg.sender === 'system' ? 'bg-gray-700/50 border border-gray-600' :
-                  msg.sender === 'human' ? 'bg-primary-600 text-white' :
-                  'bg-gray-700 text-gray-100'
-                }`}>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-medium opacity-70">{msg.senderName}</span>
-                    <span className="text-xs opacity-50">{msg.timestamp}</span>
-                  </div>
-                  <div className="text-sm whitespace-pre-wrap">{msg.content}</div>
-                </div>
-              </div>
-            ))}
-            {isSimulating && (
-              <div className="flex justify-center">
-                <div className="animate-pulse text-gray-500 text-sm">● ● ●</div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Intervention Input */}
-          {(isSimulating || pipeline) && (
-            <div className="p-3 bg-gray-800 border-t border-gray-700">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={interventionInput}
-                  onChange={e => setInterventionInput(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleIntervention()}
-                  placeholder="输入干预指令..."
-                  className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-primary-500"
-                />
-                <button
-                  onClick={handleIntervention}
-                  className="px-4 py-2 bg-orange-600 hover:bg-orange-700 rounded text-sm font-medium transition-colors"
-                >
-                  干预
-                </button>
-              </div>
-              <div className="flex gap-4 mt-2 text-xs text-gray-500">
-                <span>暂停: ⏸</span>
-                <span>终止: ⏹</span>
-                <span>发言: ⌨️</span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Right Panel - Tasks & Progress */}
-        <div className="w-80 bg-gray-800 border-l border-gray-700 flex flex-col">
-          {/* Pipeline Progress */}
-          <div className="p-3 border-b border-gray-700">
-            <h3 className="text-sm font-medium text-gray-300 mb-3">📊 开发进度</h3>
-            <div className="space-y-3">
-              {Object.entries(STAGE_LABELS).map(([key, label], idx) => {
-                const stages = Object.keys(STAGE_LABELS)
-                const currentIdx = pipeline ? stages.indexOf(pipeline.current_stage) : -1
-                const thisIdx = stages.indexOf(key)
-                const isActive = pipeline && key === pipeline.current_stage
-                const isDone = thisIdx < currentIdx
-                return (
-                  <div key={key} className="flex items-center gap-2">
-                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                      isActive ? 'bg-primary-500 text-white animate-pulse' :
-                      isDone ? 'bg-green-500 text-white' :
-                      'bg-gray-600 text-gray-300'
-                    }`}>
-                      {isDone ? '✓' : idx + 1}
-                    </div>
-                    <span className={`text-sm ${isActive ? 'text-white font-medium' : 'text-gray-400'}`}>{label}</span>
-                    {isActive && <span className="text-xs text-primary-400 animate-pulse">进行中</span>}
-                  </div>
-                )
-              })}
-            </div>
-            {pipeline && (
-              <div className="mt-3">
-                <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-primary-500 transition-all duration-500" style={{ width: `${pipeline.progress * 100}%` }} />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Tasks */}
-          <div className="flex-1 overflow-y-auto p-3">
-            <h3 className="text-sm font-medium text-gray-300 mb-3">📋 任务列表 ({tasks.length})</h3>
-            <div className="space-y-2">
-              {['backlog', 'todo', 'in_progress', 'review', 'done'].map(status => {
-                const statusTasks = getTasksByStatus(status)
-                if (statusTasks.length === 0) return null
-                const statusLabels: Record<string, string> = {
-                  backlog: '待办', todo: '计划', in_progress: '进行', review: '审核', done: '完成'
-                }
-                return (
-                  <div key={status} className="mb-3">
-                    <div className="flex items-center gap-2 mb-1">
-                      <div className={`w-2 h-2 rounded-full ${STATUS_COLORS[status]}`} />
-                      <span className="text-xs text-gray-400">{statusLabels[status]} ({statusTasks.length})</span>
-                    </div>
-                    {statusTasks.map(task => (
-                      <div key={task.id} className="bg-gray-700/50 rounded px-2 py-1.5 mb-1">
-                        <span className="text-xs text-gray-200 truncate block">{task.title}</span>
+                <div className="bg-background-card border border-white/5 rounded-lg p-4">
+                  <div className="text-xs text-surface-500 mb-3 uppercase tracking-wider">团队状态</div>
+                  <div className="space-y-2">
+                    {agents.slice(0, 6).map((agent) => (
+                      <div key={agent.id} className="flex items-center gap-2.5">
+                        <div className="w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold" style={{ backgroundColor: `${agent.avatarColor}25`, color: agent.avatarColor }}>
+                          {agent.name.substring(0, 2)}
+                        </div>
+                        <span className="text-sm text-surface-300 flex-1">{agent.name}</span>
+                        <span className={`text-xs ${
+                          agent.status === 'idle' ? 'text-surface-500' :
+                          agent.status === 'working' ? 'text-accent-green' :
+                          agent.status === 'thinking' ? 'text-accent-purple' :
+                          'text-accent-orange'
+                        }`}>
+                          {agent.status === 'idle' ? '空闲' :
+                           agent.status === 'working' ? '工作中' :
+                           agent.status === 'thinking' ? '思考中' :
+                           agent.status === 'waiting' ? '等待中' : '阻塞'}
+                        </span>
                       </div>
                     ))}
                   </div>
-                )
-              })}
-              {tasks.length === 0 && !isSimulating && (
-                <div className="text-center text-gray-500 text-sm py-4">暂无任务</div>
-              )}
-            </div>
-          </div>
+                </div>
 
-          {/* Logs */}
-          {pipeline && pipeline.logs.length > 0 && (
-            <div className="p-3 border-t border-gray-700 max-h-40 overflow-y-auto">
-              <h3 className="text-xs font-medium text-gray-400 mb-2">📜 最近日志</h3>
-              <div className="space-y-1">
-                {pipeline.logs.slice(-5).reverse().map((log, idx) => (
-                  <div key={idx} className="text-xs">
-                    <span className="text-gray-500">{new Date(log.timestamp).toLocaleTimeString()}</span>
-                    <span className={`ml-2 ${log.level === 'error' ? 'text-red-400' : 'text-gray-400'}`}>
-                      {log.message}
+                <div className="bg-background-card border border-white/5 rounded-lg p-4">
+                  <div className="text-xs text-surface-500 mb-2 uppercase tracking-wider">关于 Pipeline</div>
+                  <p className="text-sm text-surface-400 leading-relaxed">
+                    Pipeline 展示项目从需求到交付的完整生命周期。每个阶段由 Agent 自主推进，你只需观察和必要时介入。
+                  </p>
+                  <div className="mt-3 flex gap-2 text-xs">
+                    <span className="flex items-center gap-1 text-surface-500">
+                      <span className="w-2 h-2 rounded-full bg-accent-cyan animate-pulse" /> 进行中
+                    </span>
+                    <span className="flex items-center gap-1 text-surface-500">
+                      <span className="w-2 h-2 rounded-full bg-accent-green" /> 已完成
+                    </span>
+                    <span className="flex items-center gap-1 text-surface-500">
+                      <span className="w-2 h-2 rounded-full bg-accent-red" /> 阻塞
                     </span>
                   </div>
-                ))}
+                </div>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   )

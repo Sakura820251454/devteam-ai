@@ -19,7 +19,7 @@ export default defineConfig({
       { text: 'API', link: '/05-api/' },
       { text: '路线图', link: '/06-roadmap/' },
       { text: '贡献', link: '/07-contributing/' },
-      { text: 'GitHub', link: 'https://github.com/your-org/devteam-ai' }
+      { text: 'GitHub', link: 'https://github.com/Sakura820251454/devteam-ai' }
     ],
 
     sidebar: {
@@ -192,7 +192,7 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/your-org/devteam-ai' }
+      { icon: 'github', link: 'https://github.com/Sakura820251454/devteam-ai' }
     ],
 
     footer: {
