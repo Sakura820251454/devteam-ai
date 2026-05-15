@@ -25,5 +25,5 @@
 
 ## 相关文档
 
-- [项目结构](../03-development/structure.md)
-- [API 文档](../05-api/)
+- [项目结构](../../03-development/structure.md)
+- [API 文档](../../05-api/)

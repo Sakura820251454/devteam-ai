@@ -38,52 +38,76 @@
       "check_patterns": ["class SkillManager", "class TrajectoryRecorder", "def create_skill"]
     },
 
-    "backend/app/services/collaboration/": {
-      "docs": ["docs/04-modules/backend/collaboration-service.md"],
-      "description": "协作服务",
-      "check_patterns": ["class CollaborationService", "async def collaborate"]
-    },
-
-    "backend/app/services/message_bus.py": {
+    "backend/app/services/collaboration/message_bus.py": {
       "docs": ["docs/04-modules/backend/message-bus.md"],
       "description": "消息总线服务",
-      "check_patterns": ["class Message", "async def broadcast", "async def send_private"]
+      "check_patterns": ["class MessageBus", "async def broadcast", "async def send_private"]
     },
 
-    "backend/app/services/speaking_controller.py": {
+    "backend/app/services/collaboration/speaking_controller.py": {
       "docs": ["docs/04-modules/backend/speaking-controller.md"],
       "description": "发言控制器服务",
       "check_patterns": ["class SpeakingController", "class SpeakingMode", "async def request_speak"]
     },
 
-    "backend/app/services/task_board.py": {
+    "backend/app/services/collaboration/task_board.py": {
       "docs": ["docs/04-modules/backend/task-board.md"],
       "description": "任务看板服务",
-      "check_patterns": ["class TaskBoard", "class TaskStatus", "def create_task", "def change_status"]
+      "check_patterns": ["class TaskBoard", "def create_task", "def change_status"]
     },
 
-    "backend/app/services/pipeline_orchestrator.py": {
+    "backend/app/services/collaboration/pipeline_orchestrator.py": {
       "docs": ["docs/04-modules/backend/pipeline-orchestrator.md"],
       "description": "Pipeline 编排服务",
       "check_patterns": ["class PipelineOrchestrator", "class PipelineStage", "async def start_pipeline"]
     },
 
-    "backend/app/services/agent_executor.py": {
-      "docs": ["docs/04-modules/backend/agent-executor.md"],
-      "description": "Agent 执行器服务",
-      "check_patterns": ["class AgentExecutor", "class ExecutionStatus", "async def assign_task"]
+    "backend/app/services/collaboration/arbitrator.py": {
+      "docs": ["docs/04-modules/backend/arbitration-service.md"],
+      "description": "冲突仲裁服务",
+      "check_patterns": ["class ConflictArbitrator", "class ArbitrationStatus", "async def detect_conflict"]
     },
 
-    "backend/app/services/project_service.py": {
+    "backend/app/services/collaboration/project_service.py": {
       "docs": ["docs/04-modules/backend/project-service.md"],
       "description": "项目管理服务",
       "check_patterns": ["class ProjectService", "class ProjectStatus", "def create_project"]
     },
 
-    "backend/app/services/agent_context.py": {
+    "backend/app/services/agent/agent_executor.py": {
+      "docs": ["docs/04-modules/backend/agent-executor.md"],
+      "description": "Agent 执行器服务",
+      "check_patterns": ["class AgentExecutor", "class ExecutionStatus", "async def assign_task"]
+    },
+
+    "backend/app/services/security/guard.py": {
+      "docs": ["docs/04-modules/backend/security-service.md"],
+      "description": "安全守卫服务",
+      "check_patterns": ["class SecurityGuard", "class OperationType", "async def emergency_stop"]
+    },
+
+    "backend/app/services/security/audit.py": {
+      "docs": ["docs/04-modules/backend/security-service.md"],
+      "description": "审计日志服务",
+      "check_patterns": ["class AuditLogger", "class AuditEntry", "def verify_integrity"]
+    },
+
+    "backend/app/services/shared/soul_parser.py": {
+      "docs": ["docs/04-modules/backend/shared-services.md"],
+      "description": "Soul 解析器",
+      "check_patterns": ["class SoulParser", "class SoulFile", "def parse"]
+    },
+
+    "backend/app/services/shared/batch_retry.py": {
+      "docs": ["docs/04-modules/backend/shared-services.md"],
+      "description": "批处理与重试服务",
+      "check_patterns": ["class BatchProcessor", "class RetryConfig", "async def process_batch"]
+    },
+
+    "backend/app/models/agent_context.py": {
       "docs": ["docs/04-modules/backend/agent-context.md"],
-      "description": "Agent 上下文服务",
-      "check_patterns": ["class AgentContext", "def get_context", "def update_context"]
+      "description": "Agent 上下文模型",
+      "check_patterns": ["class AgentContext", "class MemoryEntry", "class MemoryLevel"]
     },
 
     "backend/app/models/agent.py": {
@@ -158,10 +182,46 @@
       "check_patterns": ["@router.get", "@router.post"]
     },
 
-    "backend/app/api/projects.py": {
-      "docs": ["docs/05-api/projects.md"],
-      "description": "Project API",
-      "check_patterns": ["@router.get", "@router.post"]
+    "backend/app/api/chat.py": {
+      "docs": ["docs/05-api/chat.md"],
+      "description": "Chat API",
+      "check_patterns": ["@router.post", "async def chat", "async def chat_stream"]
+    },
+
+    "backend/app/api/security.py": {
+      "docs": ["docs/05-api/security.md"],
+      "description": "Security API",
+      "check_patterns": ["@router.get", "@router.post", "emergency", "audit"]
+    },
+
+    "backend/app/api/arbitration.py": {
+      "docs": ["docs/05-api/arbitration.md"],
+      "description": "Arbitration API",
+      "check_patterns": ["@router.get", "@router.post", "arbitration", "vote"]
+    },
+
+    "backend/app/api/speaking.py": {
+      "docs": ["docs/05-api/speaking.md"],
+      "description": "Speaking API",
+      "check_patterns": ["@router.get", "@router.post", "speaking", "mode", "budget"]
+    },
+
+    "backend/app/api/knowledge.py": {
+      "docs": ["docs/05-api/knowledge.md"],
+      "description": "Knowledge API",
+      "check_patterns": ["@router.get", "@router.post", "knowledge", "discover", "patterns"]
+    },
+
+    "backend/app/api/equipment.py": {
+      "docs": ["docs/05-api/equipment.md"],
+      "description": "Equipment API",
+      "check_patterns": ["@router.get", "@router.post", "equipment", "tools", "equip"]
+    },
+
+    "backend/app/api/llm.py": {
+      "docs": ["docs/05-api/llm.md"],
+      "description": "LLM API",
+      "check_patterns": ["@router.get", "@router.post", "llm", "models", "costs", "tokens"]
     },
 
     "frontend/src/components/CollaborationView.tsx": {

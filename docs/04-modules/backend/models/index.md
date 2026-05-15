@@ -26,4 +26,4 @@
 ## 相关文档
 
 - [后端模块](../index.md)
-- [项目结构](../../03-development/structure.md)
+- [项目结构](../../../03-development/structure.md)

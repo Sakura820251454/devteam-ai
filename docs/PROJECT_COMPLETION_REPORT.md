@@ -347,12 +347,12 @@ pytest tests/e2e/ -v
 
 ## 📚 相关文档
 
-- [架构设计](../../docs/02-design/architecture.md)
-- [Agent模型](../../docs/02-design/agent-model.md)
-- [任务模型](../../docs/02-design/task-model.md)
-- [团队协作](../../docs/02-design/collaboration.md)
-- [通信机制](../../docs/02-design/communication.md)
-- [干预系统](../../docs/02-design/intervention.md)
+- [架构设计](./01-project/architecture.md)
+- [Agent模型](./02-design/agent-model.md)
+- [任务模型](./02-design/task-model.md)
+- [团队协作](./02-design/collaboration.md)
+- [通信机制](./02-design/communication.md)
+- [干预系统](./02-design/intervention.md)
 
 ---
 

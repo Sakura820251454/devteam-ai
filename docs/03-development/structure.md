@@ -34,10 +34,7 @@ devteam-ai/
 │   ├── 04-modules/            # 模块文档
 │   ├── 05-api/                # API 文档
 │   ├── 06-roadmap/            # 路线图
-│   ├── 07-research/           # 调研文档
-│   ├── 08-process/            # 过程文档
-│   ├── 09-specs/              # 规格文档
-│   └── 10-contributing/       # 贡献指南
+│   └── 07-contributing/       # 贡献指南
 │
 └── scripts/                    # 脚本工具
 ```

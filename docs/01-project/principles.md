@@ -70,7 +70,7 @@
 
 - [项目愿景](./vision.md)
 - [系统架构](./architecture.md)
-- [贡献指南](../10-contributing/)
+- [贡献指南](../07-contributing/)
 
 ---
 

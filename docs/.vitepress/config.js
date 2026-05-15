@@ -18,6 +18,7 @@ export default defineConfig({
       { text: '模块', link: '/04-modules/' },
       { text: 'API', link: '/05-api/' },
       { text: '路线图', link: '/06-roadmap/' },
+      { text: '贡献', link: '/07-contributing/' },
       { text: 'GitHub', link: 'https://github.com/your-org/devteam-ai' }
     ],
 
@@ -59,6 +60,20 @@ export default defineConfig({
             { text: '干预系统', link: '/02-design/intervention' },
             { text: '自我学习', link: '/02-design/self-learning' }
           ]
+        },
+        {
+          text: '调研与规格',
+          items: [
+            { text: '记忆系统调研', link: '/02-design/memory-system-research' },
+            { text: '设计规格书', link: '/02-design/design-spec' }
+          ]
+        },
+        {
+          text: '架构决策',
+          items: [
+            { text: 'ADR 索引', link: '/02-design/decisions/' },
+            { text: 'ADR-001: VitePress', link: '/02-design/decisions/2026-05-13-vitepress-decision' }
+          ]
         }
       ],
       '/03-development/': [
@@ -86,11 +101,20 @@ export default defineConfig({
           items: [
             { text: '后端首页', link: '/04-modules/backend/' },
             { text: 'Agent 服务', link: '/04-modules/backend/agent-service' },
+            { text: 'Agent 执行器', link: '/04-modules/backend/agent-executor' },
+            { text: '消息总线', link: '/04-modules/backend/message-bus' },
+            { text: '发言控制器', link: '/04-modules/backend/speaking-controller' },
+            { text: '任务看板', link: '/04-modules/backend/task-board' },
+            { text: 'Pipeline 编排器', link: '/04-modules/backend/pipeline-orchestrator' },
+            { text: '项目管理', link: '/04-modules/backend/project-service' },
+            { text: '冲突仲裁', link: '/04-modules/backend/arbitration-service' },
+            { text: '安全服务', link: '/04-modules/backend/security-service' },
             { text: '记忆服务', link: '/04-modules/backend/memory-service' },
             { text: 'LLM 服务', link: '/04-modules/backend/llm-service' },
             { text: '装备服务', link: '/04-modules/backend/equipment-service' },
             { text: '知识服务', link: '/04-modules/backend/knowledge-service' },
-            { text: '学习服务', link: '/04-modules/backend/learning-service' }
+            { text: '学习服务', link: '/04-modules/backend/learning-service' },
+            { text: '共享服务', link: '/04-modules/backend/shared-services' }
           ]
         },
         {
@@ -98,6 +122,7 @@ export default defineConfig({
           items: [
             { text: '模型首页', link: '/04-modules/backend/models/' },
             { text: 'Agent 模型', link: '/04-modules/backend/models/agent' },
+            { text: 'Agent 上下文', link: '/04-modules/backend/agent-context' },
             { text: '记忆模型', link: '/04-modules/backend/models/memory' },
             { text: '任务模型', link: '/04-modules/backend/models/task' },
             { text: '会话模型', link: '/04-modules/backend/models/session' },
@@ -122,13 +147,20 @@ export default defineConfig({
           items: [
             { text: 'API 首页', link: '/05-api/' },
             { text: 'Agents API', link: '/05-api/agents' },
+            { text: 'Chat API', link: '/05-api/chat' },
             { text: 'Tasks API', link: '/05-api/tasks' },
             { text: 'Memory API', link: '/05-api/memory' },
             { text: 'Sessions API', link: '/05-api/sessions' },
             { text: 'Messages API', link: '/05-api/messages' },
             { text: 'Skills API', link: '/05-api/skills' },
             { text: 'Pipelines API', link: '/05-api/pipelines' },
-            { text: 'Projects API', link: '/05-api/projects' }
+            { text: 'Projects API', link: '/05-api/projects' },
+            { text: 'Security API', link: '/05-api/security' },
+            { text: 'Arbitration API', link: '/05-api/arbitration' },
+            { text: 'Speaking API', link: '/05-api/speaking' },
+            { text: 'Knowledge API', link: '/05-api/knowledge' },
+            { text: 'Equipment API', link: '/05-api/equipment' },
+            { text: 'LLM API', link: '/05-api/llm' }
           ]
         }
       ],
@@ -146,43 +178,14 @@ export default defineConfig({
           ]
         }
       ],
-      '/07-research/': [
-        {
-          text: '调研文档',
-          items: [
-            { text: '调研首页', link: '/07-research/' },
-            { text: '记忆系统调研', link: '/07-research/memory-system-research' }
-          ]
-        }
-      ],
-      '/08-process/': [
-        {
-          text: '过程文档',
-          items: [
-            { text: '过程首页', link: '/08-process/' },
-            { text: '决策记录', link: '/08-process/decisions/' },
-            { text: '会议纪要', link: '/08-process/meetings/' },
-            { text: '复盘总结', link: '/08-process/retrospectives/' }
-          ]
-        }
-      ],
-      '/09-specs/': [
-        {
-          text: '规格文档',
-          items: [
-            { text: '规格首页', link: '/09-specs/' },
-            { text: '设计规格', link: '/09-specs/2026-05-09-devteam-ai-design' }
-          ]
-        }
-      ],
-      '/10-contributing/': [
+      '/07-contributing/': [
         {
           text: '贡献指南',
           items: [
-            { text: '贡献首页', link: '/10-contributing/' },
-            { text: '如何贡献', link: '/10-contributing/how-to-contribute' },
-            { text: '文档风格', link: '/10-contributing/doc-style-guide' },
-            { text: '代码风格', link: '/10-contributing/code-style-guide' }
+            { text: '贡献首页', link: '/07-contributing/' },
+            { text: '如何贡献', link: '/07-contributing/how-to-contribute' },
+            { text: '文档风格', link: '/07-contributing/doc-style-guide' },
+            { text: '代码风格', link: '/07-contributing/code-style-guide' }
           ]
         }
       ]

@@ -372,9 +372,11 @@ def main():
     elif args.init_hook:
         tool.init_git_hooks()
     elif args.auto:
-        tool.run_sync(interactive=False)
+        success = tool.run_sync(interactive=False)
+        sys.exit(0 if success else 1)
     elif args.check:
-        tool.run_sync(interactive=False)
+        success = tool.run_sync(interactive=False)
+        sys.exit(0 if success else 1)
     else:
         # 默认显示帮助
         tool.list_mappings()

@@ -40,6 +40,10 @@ jobs:
       run: |
         pytest tests/ -v
 
+    - name: Check doc sync
+      run: |
+        python ../scripts/doc_sync.py --check
+
   frontend:
     name: Frontend - TypeScript
     runs-on: ubuntu-latest

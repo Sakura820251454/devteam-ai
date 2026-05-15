@@ -45,4 +45,5 @@
 
 ## 相关文档
 
+- [设计首页](../index.md)
 - [设计原则](../../01-project/principles.md)

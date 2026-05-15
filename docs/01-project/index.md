@@ -17,10 +17,7 @@
 | 04 | 模块文档 | 代码模块文档（一一对应） | [04-modules](../04-modules/) |
 | 05 | API 文档 | 接口文档 | [05-api](../05-api/) |
 | 06 | 路线图 | 开发规划 | [06-roadmap](../06-roadmap/) |
-| 07 | 调研文档 | 技术调研 | [07-research](../07-research/) |
-| 08 | 过程文档 | 决策记录、会议纪要 | [08-process](../08-process/) |
-| 09 | 规格文档 | 技术规格 | [09-specs](../09-specs/) |
-| 10 | 贡献指南 | 如何贡献 | [10-contributing](../10-contributing/) |
+| 07 | 贡献指南 | 如何贡献 | [07-contributing](../07-contributing/) |
 
 ---
 

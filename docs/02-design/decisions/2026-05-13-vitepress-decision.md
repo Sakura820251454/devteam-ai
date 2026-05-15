@@ -49,4 +49,4 @@
 
 ## 相关文档
 
-- [文档系统重构规格](../../../.trae/specs/docs-reorganization/spec.md)
+- [文档风格指南](../../07-contributing/doc-style-guide.md)
