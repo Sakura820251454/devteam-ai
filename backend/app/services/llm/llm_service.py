@@ -45,20 +45,23 @@ class LLMService:
         messages: List[Message],
         agent: Optional[Agent] = None,
         model: Optional[str] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         track_cost: bool = True,
         task_id: Optional[str] = None
     ) -> LLMResponse:
         llm_config = agent.config.llm_config if agent else None
-        
+
         if model is None and llm_config:
             model = llm_config.model
         elif model is None:
             model = self.settings.default_llm_model
-        
-        if temperature is None and llm_config:
-            temperature = llm_config.temperature
+
+        if temperature is None:
+            if llm_config:
+                temperature = llm_config.temperature
+            else:
+                temperature = 0.7
         
         if max_tokens is None and llm_config:
             max_tokens = llm_config.max_tokens
@@ -98,19 +101,22 @@ class LLMService:
         messages: List[Message],
         agent: Optional[Agent] = None,
         model: Optional[str] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         task_id: Optional[str] = None
     ) -> AsyncIterator[str]:
         llm_config = agent.config.llm_config if agent else None
-        
+
         if model is None and llm_config:
             model = llm_config.model
         elif model is None:
             model = self.settings.default_llm_model
-        
-        if temperature is None and llm_config:
-            temperature = llm_config.temperature
+
+        if temperature is None:
+            if llm_config:
+                temperature = llm_config.temperature
+            else:
+                temperature = 0.7
         
         if max_tokens is None and llm_config:
             max_tokens = llm_config.max_tokens
