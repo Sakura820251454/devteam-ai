@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useStore } from '../lib/store'
+import { pausePipeline, intervenePipeline } from '../lib/api'
 
 type InterventionMode = 'whisper' | 'broadcast' | 'pause'
 
@@ -56,10 +57,12 @@ export default function InterventionPanel() {
     setIsOpen(false)
   }
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!interventionMode || !message.trim()) return
 
-    if (interventionMode === 'whisper' && targetAgent) {
+    const pipelineId = pipeline?.id
+
+    if (interventionMode === 'whisper' && targetAgent && pipelineId) {
       const agent = agents.find((a) => a.id === targetAgent)
       addEvent({
         type: 'message',
@@ -74,7 +77,12 @@ export default function InterventionPanel() {
         source: 'intervention',
         message: `[whisper → ${agent?.name || targetAgent}] ${message}`,
       })
-    } else if (interventionMode === 'broadcast') {
+      try {
+        await intervenePipeline(pipelineId, message, targetAgent)
+      } catch (err) {
+        addLog({ level: 'error', source: 'intervention', message: `私信发送失败: ${err}` })
+      }
+    } else if (interventionMode === 'broadcast' && pipelineId) {
       addEvent({
         type: 'decision',
         agentId: 'human',
@@ -89,7 +97,12 @@ export default function InterventionPanel() {
         source: 'intervention',
         message: `[broadcast] ${message}`,
       })
-    } else if (interventionMode === 'pause') {
+      try {
+        await intervenePipeline(pipelineId, message)
+      } catch (err) {
+        addLog({ level: 'error', source: 'intervention', message: `广播发送失败: ${err}` })
+      }
+    } else if (interventionMode === 'pause' && pipelineId) {
       addEvent({
         type: 'action',
         agentId: 'human',
@@ -103,6 +116,11 @@ export default function InterventionPanel() {
         source: 'intervention',
         message: `[pause] Pipeline 已暂停${message ? ` — ${message}` : ''}`,
       })
+      try {
+        await pausePipeline(pipelineId)
+      } catch (err) {
+        addLog({ level: 'error', source: 'intervention', message: `暂停失败: ${err}` })
+      }
     }
 
     setMessage('')

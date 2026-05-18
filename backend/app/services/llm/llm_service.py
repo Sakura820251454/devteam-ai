@@ -48,7 +48,9 @@ class LLMService:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         track_cost: bool = True,
-        task_id: Optional[str] = None
+        task_id: Optional[str] = None,
+        timeout: Optional[float] = None,
+        cancellation_token: Optional[asyncio.Event] = None
     ) -> LLMResponse:
         llm_config = agent.config.llm_config if agent else None
 
@@ -62,18 +64,28 @@ class LLMService:
                 temperature = llm_config.temperature
             else:
                 temperature = 0.7
-        
+
         if max_tokens is None and llm_config:
             max_tokens = llm_config.max_tokens
-        
+
         provider = await self._get_provider(llm_config, agent.id if agent else None)
-        
-        response = await provider.chat(
-            messages=messages,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens
-        )
+
+        effective_timeout = timeout or 120.0
+
+        try:
+            response = await asyncio.wait_for(
+                provider.chat(
+                    messages=messages,
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    timeout=timeout,
+                    cancellation_token=cancellation_token
+                ),
+                timeout=effective_timeout + 10.0
+            )
+        except asyncio.TimeoutError:
+            raise TimeoutError(f"LLM call timed out after {effective_timeout}s")
         
         if track_cost:
             prompt_tokens = response.usage.get("prompt_tokens", 0)
@@ -103,7 +115,9 @@ class LLMService:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        task_id: Optional[str] = None
+        task_id: Optional[str] = None,
+        timeout: Optional[float] = None,
+        cancellation_token: Optional[asyncio.Event] = None
     ) -> AsyncIterator[str]:
         llm_config = agent.config.llm_config if agent else None
 
@@ -117,18 +131,20 @@ class LLMService:
                 temperature = llm_config.temperature
             else:
                 temperature = 0.7
-        
+
         if max_tokens is None and llm_config:
             max_tokens = llm_config.max_tokens
-        
+
         provider = await self._get_provider(llm_config, agent.id if agent else None)
-        
+
         full_response = ""
         async for chunk in provider.stream_chat(
             messages=messages,
             model=model,
             temperature=temperature,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
+            timeout=timeout,
+            cancellation_token=cancellation_token
         ):
             full_response += chunk
             yield chunk

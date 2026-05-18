@@ -57,20 +57,25 @@ class MockLLMProvider(BaseLLMProvider):
         messages: List[Message],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
+        cancellation_token: Optional[asyncio.Event] = None
     ) -> LLMResponse:
         """Mock 聊天接口"""
-        await asyncio.sleep(random.uniform(0.5, 1.5))
-        
+        await asyncio.sleep(random.uniform(0.01, 0.05))
+
+        if cancellation_token and cancellation_token.is_set():
+            raise asyncio.CancelledError("Mock LLM call cancelled")
+
         content = self._get_mock_response(messages)
-        
+
         usage = {
             "prompt_tokens": sum(len(m.content) // 4 for m in messages),
             "completion_tokens": len(content) // 4,
             "total_tokens": (sum(len(m.content) // 4 for m in messages) + len(content) // 4)
         }
         self.total_tokens += usage["total_tokens"]
-        
+
         return LLMResponse(
             content=content,
             usage=usage,
@@ -83,16 +88,20 @@ class MockLLMProvider(BaseLLMProvider):
         messages: List[Message],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
+        cancellation_token: Optional[asyncio.Event] = None
     ) -> AsyncIterator[str]:
         """Mock 流式聊天接口"""
         content = self._get_mock_response(messages)
-        
+
         for char in content:
-            await asyncio.sleep(random.uniform(0.02, 0.05))
+            if cancellation_token and cancellation_token.is_set():
+                raise asyncio.CancelledError("Mock LLM stream cancelled")
+            await asyncio.sleep(random.uniform(0.01, 0.03))
             yield char
-        
-        await asyncio.sleep(0.1)
+
+        await asyncio.sleep(0.05)
 
     def get_stats(self) -> Dict[str, int]:
         """获取 Mock 调用统计"""

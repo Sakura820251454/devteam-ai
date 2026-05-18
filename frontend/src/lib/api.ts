@@ -497,6 +497,134 @@ export async function getSettings(): Promise<AppSettings> {
   return response.json()
 }
 
+// ============ Execution API ============
+
+export interface ExecutionStep {
+  index: number
+  name: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+  startedAt?: string
+  completedAt?: string
+  result?: string
+  error?: string
+}
+
+export interface TaskExecutionStatus {
+  task_id: string
+  agent_id: string
+  status: string
+  current_step: number
+  total_steps: number
+  last_heartbeat?: string
+  accumulated_result?: string
+  started_at?: string
+  completed_at?: string
+}
+
+export interface StuckTaskInfo {
+  task_id: string
+  agent_id: string
+  reason: string
+  elapsed_seconds: number
+  current_step: number
+  total_steps: number
+  last_heartbeat?: string
+}
+
+export interface CheckpointInfo {
+  id: string
+  task_id: string
+  step_index: number
+  step_name: string
+  partial_result?: string
+  created_at?: string
+}
+
+export async function getTaskExecutionStatus(taskId: string): Promise<TaskExecutionStatus> {
+  const response = await fetch(`${API_BASE}/execution/tasks/${taskId}/status`)
+  if (!response.ok) throw new Error('获取执行状态失败')
+  return response.json()
+}
+
+export async function retryTask(taskId: string, fromCheckpoint: boolean = true): Promise<void> {
+  await fetch(`${API_BASE}/execution/tasks/${taskId}/retry?from_checkpoint=${fromCheckpoint}`, {
+    method: 'POST',
+  })
+}
+
+export async function getStuckTasks(thresholdSeconds?: number): Promise<StuckTaskInfo[]> {
+  const params = thresholdSeconds ? `?threshold_seconds=${thresholdSeconds}` : ''
+  const response = await fetch(`${API_BASE}/execution/stuck${params}`)
+  if (!response.ok) throw new Error('获取卡死任务失败')
+  const data = await response.json()
+  return data.stuck_tasks
+}
+
+export async function getTaskHeartbeat(taskId: string): Promise<TaskExecutionStatus> {
+  const response = await fetch(`${API_BASE}/execution/heartbeat/${taskId}`)
+  if (!response.ok) throw new Error('获取心跳信息失败')
+  return response.json()
+}
+
+export async function listCheckpoints(taskId: string): Promise<CheckpointInfo[]> {
+  const response = await fetch(`${API_BASE}/execution/tasks/${taskId}/checkpoints`)
+  if (!response.ok) throw new Error('获取检查点失败')
+  const data = await response.json()
+  return data.checkpoints
+}
+
+export async function restoreCheckpoint(taskId: string, checkpointId: string): Promise<void> {
+  await fetch(`${API_BASE}/execution/tasks/${taskId}/checkpoints/${checkpointId}/restore`, {
+    method: 'POST',
+  })
+}
+
+export async function getMonitorStatus(): Promise<{ monitoring: boolean }> {
+  const response = await fetch(`${API_BASE}/execution/monitor/status`)
+  if (!response.ok) throw new Error('获取监控状态失败')
+  return response.json()
+}
+
+export async function pausePipeline(pipelineId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/pipelines/${pipelineId}/pause`, { method: 'POST' })
+  if (!response.ok) throw new Error('暂停流水线失败')
+}
+
+export async function resumePipeline(pipelineId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/pipelines/${pipelineId}/resume`, { method: 'POST' })
+  if (!response.ok) throw new Error('恢复流水线失败')
+}
+
+export async function stopPipeline(pipelineId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/pipelines/${pipelineId}/stop`, { method: 'POST' })
+  if (!response.ok) throw new Error('停止流水线失败')
+}
+
+export async function intervenePipeline(
+  pipelineId: string,
+  message: string,
+  agentId?: string,
+): Promise<void> {
+  await fetch(`${API_BASE}/pipelines/${pipelineId}/intervene`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, agent_id: agentId || null }),
+  })
+}
+
+export async function getPipelineStatus(pipelineId: string): Promise<{
+  pipeline_id: string
+  status: string
+  current_stage: string
+  progress: number
+  running_tasks: Array<Record<string, unknown>>
+  is_paused: boolean
+}> {
+  const response = await fetch(`${API_BASE}/pipelines/${pipelineId}/status`)
+  if (!response.ok) throw new Error('获取流水线状态失败')
+  return response.json()
+}
+
 export async function updateSettings(workspaceRoot: string): Promise<AppSettings> {
   const response = await fetch(`${API_BASE}/settings`, {
     method: 'PATCH',

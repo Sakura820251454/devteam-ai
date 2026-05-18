@@ -15,6 +15,7 @@ from app.api.security import router as security_router
 from app.api.arbitration import router as arbitration_router
 from app.api.workspaces import router as workspaces_router
 from app.api.settings import router as settings_router
+from app.api.execution import router as execution_router
 
 __all__ = [
     "agents_router",
@@ -34,4 +35,5 @@ __all__ = [
     "arbitration_router",
     "workspaces_router",
     "settings_router",
+    "execution_router",
 ]

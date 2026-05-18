@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { createWorkspace } from './api'
+import { createWorkspace, type TaskExecutionStatus, type StuckTaskInfo } from './api'
 
 export interface LLMConfig {
   provider: string
@@ -132,6 +132,11 @@ interface WorkspaceState {
   // Global LLM defaults
   globalLlmConfig: LLMConfig
 
+  // Execution tracking
+  taskExecutions: Record<string, TaskExecutionStatus>
+  stuckTasks: StuckTaskInfo[]
+  isStuckPolling: boolean
+
   // Global status
   isConnected: boolean
   isLoading: boolean
@@ -139,6 +144,9 @@ interface WorkspaceState {
 
   // Actions
   setGlobalLlmConfig: (config: LLMConfig) => void
+  setTaskExecution: (taskId: string, status: TaskExecutionStatus) => void
+  setStuckTasks: (tasks: StuckTaskInfo[]) => void
+  setStuckPolling: (polling: boolean) => void
   setPipeline: (pipeline: Pipeline | null) => void
   updatePipelineStage: (stageKey: string, updates: Partial<PipelineStage>) => void
   setSelectedStage: (stage: string | null) => void
@@ -194,11 +202,21 @@ export const useStore = create<WorkspaceState>((set) => ({
     temperature: 0.7,
     max_tokens: undefined,
   },
+  taskExecutions: {},
+  stuckTasks: [],
+  isStuckPolling: false,
+
   isConnected: false,
   isLoading: false,
   error: null,
 
   setGlobalLlmConfig: (config) => set({ globalLlmConfig: config }),
+  setTaskExecution: (taskId, status) =>
+    set((state) => ({
+      taskExecutions: { ...state.taskExecutions, [taskId]: status },
+    })),
+  setStuckTasks: (tasks) => set({ stuckTasks: tasks }),
+  setStuckPolling: (polling) => set({ isStuckPolling: polling }),
   setPipeline: (pipeline) => set({ pipeline }),
   updatePipelineStage: (stageKey, updates) =>
     set((state) => ({

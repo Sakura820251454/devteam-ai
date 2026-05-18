@@ -20,7 +20,9 @@ class BaseLLMProvider(ABC):
         messages: List[Message],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
+        cancellation_token: Optional[asyncio.Event] = None
     ) -> LLMResponse:
         pass
 
@@ -30,7 +32,9 @@ class BaseLLMProvider(ABC):
         messages: List[Message],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
+        cancellation_token: Optional[asyncio.Event] = None
     ) -> AsyncIterator[str]:
         pass
 
@@ -60,62 +64,73 @@ class OpenAIProvider(BaseLLMProvider):
         messages: List[Message],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
+        cancellation_token: Optional[asyncio.Event] = None
     ) -> LLMResponse:
         model = model or "gpt-4o-mini"
-        
+
         payload = {
             "model": model,
             "messages": [msg.to_dict() for msg in messages],
             "temperature": temperature,
         }
-        
+
         if max_tokens:
             payload["max_tokens"] = max_tokens
-        
-        response = await self.client.post("/chat/completions", json=payload)
-        response.raise_for_status()
-        
-        data = response.json()
-        choice = data["choices"][0]
-        
-        return LLMResponse(
-            content=choice["message"]["content"],
-            usage=data.get("usage", {}),
-            model=data.get("model", model),
-            finish_reason=choice.get("finish_reason", "stop")
-        )
+
+        async with asyncio.timeout(timeout):
+            response = await self.client.post("/chat/completions", json=payload)
+            response.raise_for_status()
+
+            if cancellation_token and cancellation_token.is_set():
+                raise asyncio.CancelledError("LLM call cancelled")
+
+            data = response.json()
+            choice = data["choices"][0]
+
+            return LLMResponse(
+                content=choice["message"]["content"],
+                usage=data.get("usage", {}),
+                model=data.get("model", model),
+                finish_reason=choice.get("finish_reason", "stop")
+            )
 
     async def stream_chat(
         self,
         messages: List[Message],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
+        cancellation_token: Optional[asyncio.Event] = None
     ) -> AsyncIterator[str]:
         model = model or "gpt-4o-mini"
-        
+
         payload = {
             "model": model,
             "messages": [msg.to_dict() for msg in messages],
             "temperature": temperature,
             "stream": True,
         }
-        
+
         if max_tokens:
             payload["max_tokens"] = max_tokens
-        
-        async with self.client.stream("POST", "/chat/completions", json=payload) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    data = json.loads(data_str)
-                    delta = data["choices"][0].get("delta", {})
-                    if "content" in delta:
-                        yield delta["content"]
+
+        async with asyncio.timeout(timeout):
+            async with self.client.stream("POST", "/chat/completions", json=payload) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if cancellation_token and cancellation_token.is_set():
+                        raise asyncio.CancelledError("LLM stream cancelled")
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        data = json.loads(data_str)
+                        delta = data["choices"][0].get("delta", {})
+                        if "content" in delta:
+                            yield delta["content"]
 
 
 class DeepSeekProvider(BaseLLMProvider):
@@ -143,62 +158,73 @@ class DeepSeekProvider(BaseLLMProvider):
         messages: List[Message],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
+        cancellation_token: Optional[asyncio.Event] = None
     ) -> LLMResponse:
         model = model or "deepseek-chat"
-        
+
         payload = {
             "model": model,
             "messages": [msg.to_dict() for msg in messages],
             "temperature": temperature,
         }
-        
+
         if max_tokens:
             payload["max_tokens"] = max_tokens
-        
-        response = await self.client.post("/chat/completions", json=payload)
-        response.raise_for_status()
-        
-        data = response.json()
-        choice = data["choices"][0]
-        
-        return LLMResponse(
-            content=choice["message"]["content"],
-            usage=data.get("usage", {}),
-            model=data.get("model", model),
-            finish_reason=choice.get("finish_reason", "stop")
-        )
+
+        async with asyncio.timeout(timeout):
+            response = await self.client.post("/chat/completions", json=payload)
+            response.raise_for_status()
+
+            if cancellation_token and cancellation_token.is_set():
+                raise asyncio.CancelledError("LLM call cancelled")
+
+            data = response.json()
+            choice = data["choices"][0]
+
+            return LLMResponse(
+                content=choice["message"]["content"],
+                usage=data.get("usage", {}),
+                model=data.get("model", model),
+                finish_reason=choice.get("finish_reason", "stop")
+            )
 
     async def stream_chat(
         self,
         messages: List[Message],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
+        cancellation_token: Optional[asyncio.Event] = None
     ) -> AsyncIterator[str]:
         model = model or "deepseek-chat"
-        
+
         payload = {
             "model": model,
             "messages": [msg.to_dict() for msg in messages],
             "temperature": temperature,
             "stream": True,
         }
-        
+
         if max_tokens:
             payload["max_tokens"] = max_tokens
-        
-        async with self.client.stream("POST", "/chat/completions", json=payload) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    data = json.loads(data_str)
-                    delta = data["choices"][0].get("delta", {})
-                    if "content" in delta:
-                        yield delta["content"]
+
+        async with asyncio.timeout(timeout):
+            async with self.client.stream("POST", "/chat/completions", json=payload) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if cancellation_token and cancellation_token.is_set():
+                        raise asyncio.CancelledError("LLM stream cancelled")
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        data = json.loads(data_str)
+                        delta = data["choices"][0].get("delta", {})
+                        if "content" in delta:
+                            yield delta["content"]
 
 
 class AnthropicProvider(BaseLLMProvider):
@@ -227,11 +253,13 @@ class AnthropicProvider(BaseLLMProvider):
         messages: List[Message],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
+        cancellation_token: Optional[asyncio.Event] = None
     ) -> LLMResponse:
         model = model or "claude-3-5-sonnet-20240620"
         max_tokens = max_tokens or 4096
-        
+
         system_msg = ""
         chat_messages = []
         for msg in messages:
@@ -242,43 +270,49 @@ class AnthropicProvider(BaseLLMProvider):
                     "role": msg.role,
                     "content": msg.content
                 })
-        
+
         payload = {
             "model": model,
             "messages": chat_messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        
+
         if system_msg:
             payload["system"] = system_msg
-        
-        response = await self.client.post("/v1/messages", json=payload)
-        response.raise_for_status()
-        
-        data = response.json()
-        
-        return LLMResponse(
-            content=data["content"][0]["text"],
-            usage={
-                "prompt_tokens": data.get("usage", {}).get("input_tokens", 0),
-                "completion_tokens": data.get("usage", {}).get("output_tokens", 0),
-                "total_tokens": data.get("usage", {}).get("input_tokens", 0) + data.get("usage", {}).get("output_tokens", 0),
-            },
-            model=model,
-            finish_reason=data.get("stop_reason", "end_turn")
-        )
+
+        async with asyncio.timeout(timeout):
+            response = await self.client.post("/v1/messages", json=payload)
+            response.raise_for_status()
+
+            if cancellation_token and cancellation_token.is_set():
+                raise asyncio.CancelledError("LLM call cancelled")
+
+            data = response.json()
+
+            return LLMResponse(
+                content=data["content"][0]["text"],
+                usage={
+                    "prompt_tokens": data.get("usage", {}).get("input_tokens", 0),
+                    "completion_tokens": data.get("usage", {}).get("output_tokens", 0),
+                    "total_tokens": data.get("usage", {}).get("input_tokens", 0) + data.get("usage", {}).get("output_tokens", 0),
+                },
+                model=model,
+                finish_reason=data.get("stop_reason", "end_turn")
+            )
 
     async def stream_chat(
         self,
         messages: List[Message],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
+        cancellation_token: Optional[asyncio.Event] = None
     ) -> AsyncIterator[str]:
         model = model or "claude-3-5-sonnet-20240620"
         max_tokens = max_tokens or 4096
-        
+
         system_msg = ""
         chat_messages = []
         for msg in messages:
@@ -289,7 +323,7 @@ class AnthropicProvider(BaseLLMProvider):
                     "role": msg.role,
                     "content": msg.content
                 })
-        
+
         payload = {
             "model": model,
             "messages": chat_messages,
@@ -297,22 +331,25 @@ class AnthropicProvider(BaseLLMProvider):
             "max_tokens": max_tokens,
             "stream": True,
         }
-        
+
         if system_msg:
             payload["system"] = system_msg
-        
-        async with self.client.stream("POST", "/v1/messages", json=payload) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    data = json.loads(data_str)
-                    if data.get("type") == "content_block_delta":
-                        delta = data.get("delta", {})
-                        if delta.get("type") == "text_delta":
-                            yield delta.get("text", "")
+
+        async with asyncio.timeout(timeout):
+            async with self.client.stream("POST", "/v1/messages", json=payload) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if cancellation_token and cancellation_token.is_set():
+                        raise asyncio.CancelledError("LLM stream cancelled")
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        data = json.loads(data_str)
+                        if data.get("type") == "content_block_delta":
+                            delta = data.get("delta", {})
+                            if delta.get("type") == "text_delta":
+                                yield delta.get("text", "")
 
 
 class AzureOpenAIProvider(BaseLLMProvider):
@@ -341,63 +378,75 @@ class AzureOpenAIProvider(BaseLLMProvider):
         messages: List[Message],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
+        cancellation_token: Optional[asyncio.Event] = None
     ) -> LLMResponse:
         deployment_name = model or "gpt-4o-mini"
-        
+
         payload = {
             "messages": [msg.to_dict() for msg in messages],
             "temperature": temperature,
         }
-        
+
         if max_tokens:
             payload["max_tokens"] = max_tokens
-        
+
         url = f"/openai/deployments/{deployment_name}/chat/completions?api-version={self.api_version}"
-        response = await self.client.post(url, json=payload)
-        response.raise_for_status()
-        
-        data = response.json()
-        choice = data["choices"][0]
-        
-        return LLMResponse(
-            content=choice["message"]["content"],
-            usage=data.get("usage", {}),
-            model=data.get("model", deployment_name),
-            finish_reason=choice.get("finish_reason", "stop")
-        )
+
+        async with asyncio.timeout(timeout):
+            response = await self.client.post(url, json=payload)
+            response.raise_for_status()
+
+            if cancellation_token and cancellation_token.is_set():
+                raise asyncio.CancelledError("LLM call cancelled")
+
+            data = response.json()
+            choice = data["choices"][0]
+
+            return LLMResponse(
+                content=choice["message"]["content"],
+                usage=data.get("usage", {}),
+                model=data.get("model", deployment_name),
+                finish_reason=choice.get("finish_reason", "stop")
+            )
 
     async def stream_chat(
         self,
         messages: List[Message],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
+        cancellation_token: Optional[asyncio.Event] = None
     ) -> AsyncIterator[str]:
         deployment_name = model or "gpt-4o-mini"
-        
+
         payload = {
             "messages": [msg.to_dict() for msg in messages],
             "temperature": temperature,
             "stream": True,
         }
-        
+
         if max_tokens:
             payload["max_tokens"] = max_tokens
-        
+
         url = f"/openai/deployments/{deployment_name}/chat/completions?api-version={self.api_version}"
-        
-        async with self.client.stream("POST", url, json=payload) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    data = json.loads(data_str)
-                    delta = data["choices"][0].get("delta", {})
-                    if "content" in delta:
-                        yield delta["content"]
+
+        async with asyncio.timeout(timeout):
+            async with self.client.stream("POST", url, json=payload) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if cancellation_token and cancellation_token.is_set():
+                        raise asyncio.CancelledError("LLM stream cancelled")
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        data = json.loads(data_str)
+                        delta = data["choices"][0].get("delta", {})
+                        if "content" in delta:
+                            yield delta["content"]
 
 
 class LLMProviderFactory:

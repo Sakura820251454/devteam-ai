@@ -1,17 +1,26 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from app.api import agents_router, chat_router, sessions_router, messages_router, speaking_router, tasks_router, projects_router, pipelines_router, memories_router, skills_router, equipment_router, knowledge_router, llm_router, security_router, arbitration_router, workspaces_router, settings_router
+from app.api import agents_router, chat_router, sessions_router, messages_router, speaking_router, tasks_router, projects_router, pipelines_router, memories_router, skills_router, equipment_router, knowledge_router, llm_router, security_router, arbitration_router, workspaces_router, settings_router, execution_router
 from app.core import get_settings
-from app.database import init_db
+from app.database import init_db, async_session_maker
 from app.services.equipment.equipment_init import init_default_tools
+from app.services.execution.task_persistence_service import task_persistence_service
+from app.services.execution.stuck_detector import stuck_detector
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     init_default_tools()
+
+    task_persistence_service.initialize(async_session_maker)
+
+    await stuck_detector.start_monitoring()
+
     yield
+
+    await stuck_detector.stop_monitoring()
 
 
 def create_app() -> FastAPI:
@@ -50,6 +59,7 @@ def create_app() -> FastAPI:
     app.include_router(arbitration_router)
     app.include_router(workspaces_router)
     app.include_router(settings_router)
+    app.include_router(execution_router)
 
     @app.get("/")
     async def root():
@@ -58,11 +68,11 @@ def create_app() -> FastAPI:
             "version": "0.1.0",
             "status": "running"
         }
-    
+
     @app.get("/health")
     async def health():
         return {"status": "healthy"}
-    
+
     return app
 
 
