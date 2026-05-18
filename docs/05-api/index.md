@@ -1,7 +1,7 @@
 # API 文档
 
-**版本**: v2.0  
-**最后更新**: 2026-05-13
+**版本**: v2.2  
+**最后更新**: 2026-05-18
 
 ---
 
@@ -23,13 +23,15 @@
 | [Skills API](./skills.md) | 技能管理接口 |
 | [Pipelines API](./pipelines.md) | 流水线管理接口 |
 | [Projects API](./projects.md) | 项目管理接口 |
+| [Workspaces API](./workspaces.md) | 工作区管理接口 |
+| [Settings API](./settings.md) | 系统设置接口 |
 
 ---
 
 ## 基础 URL
 
 ```
-http://localhost:8000/api/v1
+http://localhost:8000/api
 ```
 
 ---

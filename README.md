@@ -30,9 +30,16 @@ node --version
 ```bash
 cd backend
 
-# 创建虚拟环境
+# 创建虚拟环境（如未创建）
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# 激活虚拟环境
+# Windows (PowerShell):
+.\venv\Scripts\Activate.ps1
+# Windows (CMD):
+venv\Scripts\activate.bat
+# Linux/Mac:
+source venv/bin/activate
 
 # 安装依赖
 pip install -e .
@@ -51,19 +58,65 @@ cd frontend
 npm install
 ```
 
-### 4. 启动服务
+### 4. 文档设置 (可选)
 
 ```bash
-# 启动后端 (在 backend 目录)
-uvicorn app.main:app --reload --port 8000
+cd docs
 
-# 启动前端 (在 frontend 目录，新终端)
+# 安装依赖
+npm install
+```
+
+### 5. 启动服务
+
+**后端服务** (在 backend 目录):
+```bash
+# 激活虚拟环境
+# Windows (PowerShell):
+.\venv\Scripts\Activate.ps1
+
+# 激活虚拟环境后
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+**前端服务** (在 frontend 目录，新终端):
+```bash
 npm run dev
 ```
 
-### 5. 访问应用
+**文档服务** (在 docs 目录，新终端，可选):
+```bash
+npm run docs:dev
+```
 
-打开浏览器访问 http://localhost:3000
+### 6. 访问应用
+
+打开浏览器访问以下地址：
+
+| 服务 | 地址 |
+|------|------|
+| **前端应用** | http://localhost:3000 |
+| **后端 API** | http://localhost:8000 |
+| **API 文档** | http://localhost:8000/docs |
+| **项目文档** | http://localhost:5173 |
+
+### 7. 重启服务
+
+**重启后端服务**:
+```bash
+# 方法1: 在运行 uvicorn 的终端按 Ctrl+C 停止，然后重新运行启动命令
+
+# 方法2: 使用 PowerShell 终止进程后重启
+# 终止占用 8000 端口的进程
+Get-Process -Id (Get-NetTCPConnection -LocalPort 8000).OwningProcess -ErrorAction SilentlyContinue | Stop-Process -Force
+
+# 然后重新启动后端服务
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+**重启前端服务**: 在运行 `npm run dev` 的终端按 `Ctrl+C` 停止，然后重新运行 `npm run dev`
+
+**重启文档服务**: 在运行 `npm run docs:dev` 的终端按 `Ctrl+C` 停止，然后重新运行 `npm run docs:dev`
 
 ## ✨ Phase 1 功能
 

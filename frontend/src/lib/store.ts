@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { createWorkspace } from './api'
 
 export interface Agent {
   id: string
@@ -117,6 +118,9 @@ interface WorkspaceState {
   // Cost
   costData: CostData | null
 
+  // Workspace
+  workspacePath: string | null
+
   // Global status
   isConnected: boolean
   isLoading: boolean
@@ -144,10 +148,11 @@ interface WorkspaceState {
   clearChatMessages: () => void
   setInterventionMode: (mode: null | 'whisper' | 'broadcast' | 'pause') => void
   setCostData: (data: CostData | null) => void
+  setWorkspacePath: (path: string | null) => void
   setConnected: (connected: boolean) => void
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
-  startProject: (name: string, description: string) => void
+  startProject: (name: string, description: string, customAgents?: Agent[]) => void
   resetProject: () => void
 }
 
@@ -170,6 +175,7 @@ export const useStore = create<WorkspaceState>((set) => ({
   chatMessages: [],
   interventionMode: null,
   costData: null,
+  workspacePath: null,
   isConnected: false,
   isLoading: false,
   error: null,
@@ -265,11 +271,12 @@ export const useStore = create<WorkspaceState>((set) => ({
   clearChatMessages: () => set({ chatMessages: [] }),
   setInterventionMode: (mode) => set({ interventionMode: mode }),
   setCostData: (data) => set({ costData: data }),
+  setWorkspacePath: (path) => set({ workspacePath: path }),
   setConnected: (connected) => set({ isConnected: connected }),
   setLoading: (loading) => set({ isLoading: loading }),
   setError: (error) => set({ error }),
 
-  startProject: (name, _description) => {
+  startProject: (name, _description, customAgents?: Agent[]) => {
     const now = new Date().toISOString()
 
     const defaultAgents: Agent[] = [
@@ -281,6 +288,58 @@ export const useStore = create<WorkspaceState>((set) => ({
       { id: 'devops', name: 'DevOps', role: '运维工程师', status: 'idle', avatarColor: '#39d2c0', description: '负责部署与基础设施' },
     ]
 
+    const projectAgents = customAgents && customAgents.length > 0 ? customAgents : defaultAgents
+
+    // Map agent IDs to pipeline stages based on their roles
+    const stageAgentMap: Record<string, string[]> = {
+      requirement_analysis: [],
+      task_breakdown: [],
+      coding: [],
+      review: [],
+      testing: [],
+      delivery: [],
+    }
+
+    for (const agent of projectAgents) {
+      const role = agent.role
+      if (role.includes('需求') || role.includes('产品')) {
+        stageAgentMap.requirement_analysis.push(agent.id)
+        stageAgentMap.task_breakdown.push(agent.id)
+      }
+      if (role.includes('架构') || role.includes('设计')) {
+        stageAgentMap.requirement_analysis.push(agent.id)
+        stageAgentMap.task_breakdown.push(agent.id)
+        stageAgentMap.review.push(agent.id)
+      }
+      if (role.includes('后端')) {
+        stageAgentMap.coding.push(agent.id)
+      }
+      if (role.includes('前端')) {
+        stageAgentMap.coding.push(agent.id)
+      }
+      if (role.includes('测试')) {
+        stageAgentMap.review.push(agent.id)
+        stageAgentMap.testing.push(agent.id)
+      }
+      if (role.includes('运维') || role.includes('部署') || role.includes('DevOps')) {
+        stageAgentMap.delivery.push(agent.id)
+      }
+      if (role.includes('评审')) {
+        stageAgentMap.review.push(agent.id)
+      }
+      if (role.includes('文档')) {
+        stageAgentMap.task_breakdown.push(agent.id)
+      }
+    }
+
+    // Deduplicate and ensure each stage has at least one agent
+    for (const key of Object.keys(stageAgentMap)) {
+      stageAgentMap[key] = [...new Set(stageAgentMap[key])]
+      if (stageAgentMap[key].length === 0) {
+        stageAgentMap[key] = [projectAgents[0]?.id || 'pm']
+      }
+    }
+
     const pipeline: Pipeline = {
       id: `pipeline-${Date.now()}`,
       name,
@@ -288,19 +347,19 @@ export const useStore = create<WorkspaceState>((set) => ({
       currentStage: 'requirement_analysis',
       progress: 0,
       stages: [
-        { key: 'requirement_analysis', label: '需求分析', status: 'pending', assignedAgents: ['pm', 'architect'], artifacts: [] },
-        { key: 'task_breakdown', label: '任务拆解', status: 'pending', assignedAgents: ['pm', 'architect'], artifacts: [] },
-        { key: 'coding', label: '编码实现', status: 'pending', assignedAgents: ['backend', 'frontend'], artifacts: [] },
-        { key: 'review', label: '代码审查', status: 'pending', assignedAgents: ['architect', 'tester'], artifacts: [] },
-        { key: 'testing', label: '测试验证', status: 'pending', assignedAgents: ['tester'], artifacts: [] },
-        { key: 'delivery', label: '交付部署', status: 'pending', assignedAgents: ['devops'], artifacts: [] },
+        { key: 'requirement_analysis', label: '需求分析', status: 'pending', assignedAgents: stageAgentMap.requirement_analysis, artifacts: [] },
+        { key: 'task_breakdown', label: '任务拆解', status: 'pending', assignedAgents: stageAgentMap.task_breakdown, artifacts: [] },
+        { key: 'coding', label: '编码实现', status: 'pending', assignedAgents: stageAgentMap.coding, artifacts: [] },
+        { key: 'review', label: '代码审查', status: 'pending', assignedAgents: stageAgentMap.review, artifacts: [] },
+        { key: 'testing', label: '测试验证', status: 'pending', assignedAgents: stageAgentMap.testing, artifacts: [] },
+        { key: 'delivery', label: '交付部署', status: 'pending', assignedAgents: stageAgentMap.delivery, artifacts: [] },
       ],
       createdAt: now,
     }
 
     set({
       pipeline,
-      agents: defaultAgents,
+      agents: projectAgents,
       tasks: [],
       events: [],
       chatMessages: [],
@@ -314,6 +373,18 @@ export const useStore = create<WorkspaceState>((set) => ({
     logCounter = 0
     eventCounter = 0
     chatCounter = 0
+
+    // Fire-and-forget: create physical workspace on backend
+    const pid = pipeline.id
+    createWorkspace(
+      pid,
+      name,
+      _description,
+      projectAgents.map((a) => ({ id: a.id, name: a.name, role: a.role })),
+      pipeline.stages.map((s) => ({ key: s.key, label: s.label, assignedAgents: s.assignedAgents })),
+    )
+      .then((result) => set({ workspacePath: result.workspace_path }))
+      .catch((err) => console.warn('创建物理工作区失败 (后端未启动?):', err.message))
   },
 
   resetProject: () =>

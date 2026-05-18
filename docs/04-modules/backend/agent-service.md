@@ -1,7 +1,7 @@
 # Agent 服务模块
 
-**版本**: v2.0  
-**最后更新**: 2026-05-15
+**版本**: v2.2  
+**最后更新**: 2026-05-18
 
 ---
 
@@ -66,8 +66,17 @@ Agent 任务执行器（位于 `agent_executor.py`）。
 
 ## 数据源优先级
 
-1. **soul.md 文件**（优先）- 从 `agents/` 目录加载，定义 Agent 个性
-2. **基础配置**（fallback）- 仅包含必要参数（名称、上下文窗口大小）
+1. **soul.md 文件**（优先）- 从 `backend/agents/` 目录加载，定义 Agent 个性。启动时自动解析为模板并创建 Agent 实例，通过 `/api/agents/soul-based` 提供
+2. **预设模板**（fallback）- 代码中定义的默认角色（产品经理、架构师等）
+
+### soul.md 加载机制 (v2.2)
+
+- `_load_from_soul_files()` 在 AgentService 初始化时执行
+- 从 `backend/agents/agent_*/soul.md` 读取所有 Agent 定义
+- 同时写入 `_templates`（模板表）和 `_agents`（实例表）
+- Agent ID 格式：`soul_{name}`
+- 自动推断 AgentType（基于名称关键词匹配）
+- 路径基于 `Path(__file__).parent.parent.parent.parent / "agents"`（4 层 parent）
 
 ---
 

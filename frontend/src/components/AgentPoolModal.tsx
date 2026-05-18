@@ -33,7 +33,7 @@ interface AgentAssignment {
 interface AgentPoolModalProps {
   isOpen: boolean
   onClose: () => void
-  onAgentsSelected: (agents: AgentAssignment[], taskId: string) => void
+  onAgentsSelected: (agents: AgentAssignment[], taskName: string, taskDesc: string, taskId: string) => void
   currentTask?: Task
 }
 
@@ -150,7 +150,7 @@ export default function AgentPoolModal({ isOpen, onClose, onAgentsSelected, curr
   const handleSubmit = () => {
     if (!canSubmit) return
     const taskId = `task_${Date.now()}`
-    onAgentsSelected(Array.from(selectedAgents.values()), taskId)
+    onAgentsSelected(Array.from(selectedAgents.values()), taskName.trim(), taskDesc.trim(), taskId)
     onClose()
   }
 

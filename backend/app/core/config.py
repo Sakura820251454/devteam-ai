@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     max_tokens_per_request: int = 4000
     request_timeout: int = 120
 
+    workspace_root: str = "../../devteam-workspaces"
+
 
 def get_settings() -> Settings:
     settings = Settings()

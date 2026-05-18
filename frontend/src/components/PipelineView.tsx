@@ -194,7 +194,7 @@ interface PipelineViewProps {
 
 export default function PipelineView({ onCreateProject, onOpenExample }: PipelineViewProps) {
   const {
-    pipeline, selectedStage, agents,
+    pipeline, selectedStage, agents, workspacePath,
     setSelectedStage,
     addLog,
   } = useStore()
@@ -251,6 +251,11 @@ export default function PipelineView({ onCreateProject, onOpenExample }: Pipelin
           <span className="text-sm text-surface-500">阶段 {activeStageIdx + 1}/{pipeline.stages.length}</span>
         </div>
         <div className="flex items-center gap-3">
+          {workspacePath && (
+            <span className="text-xs text-surface-600 font-mono" title={workspacePath}>
+              📁 {workspacePath.split('/').slice(-2).join('/')}
+            </span>
+          )}
           <div className="w-28 h-1.5 bg-surface-600 rounded-full overflow-hidden">
             <div className="h-full bg-accent-cyan rounded-full transition-all duration-700" style={{ width: `${Math.round(pipeline.progress * 100)}%` }} />
           </div>

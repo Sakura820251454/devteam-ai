@@ -1,7 +1,39 @@
 # 变更日志
 
-**版本**: v2.1  
-**最后更新**: 2026-05-15
+**版本**: v2.2  
+**最后更新**: 2026-05-18
+
+---
+
+## [v2.2] - 2026-05-18
+
+### soul.md 人才库 Bug 修复
+
+- 修复 `agent_service.py` 中 `agents_dir` 路径解析 bug（少了一层 parent，导致找不到 `backend/agents/` 目录）
+- `_load_from_soul_files()` 现在自动创建 Agent 实例到 `_agents`（之前只写 `_templates`），人才库 API 能正确返回 6 个 soul.md Agent
+- 修复 `test_soul_parser.py` import 路径
+
+### 项目创建流程统一
+
+- `store.startProject` 新增 `customAgents` 参数，支持人才库选中的自定义 Agent
+- Pipeline 阶段 `assignedAgents` 根据角色关键词自动分配
+- `AgentPoolModal` 回调现在传递 `taskName` / `taskDesc`
+- 人才库提交后调用 `startProject() + startSimulation()`，真正创建项目（之前只添加 Agent 到侧栏）
+
+### 项目工作区管理系统
+
+- 新建 `WorkspaceManager` 服务 — 创建物理项目目录（`devteam-workspaces/{project_id}/`）
+- 目录结构：`project.json`, `docs/`, `src/`, `artifacts/{stage}/`, `logs/`
+- 工作区独立于 DevTeam-AI 项目本身，通过 `config.workspace_root` 可配置
+- 新建 `/api/workspaces` API — 创建、查询、管理项目工作区
+- 前端 `store` 新增 `workspacePath` 状态，`PipelineView` 顶栏显示工作区路径
+- `simulation.ts` 每个阶段完成时写入真实的 `.md` 产物文件到工作区
+
+### 前端设置面板
+
+- 新建 `/api/settings` API — 读写系统设置，持久化到 `data/settings.json`
+- 新建 `SettingsModal` 组件 — 顶栏 ⚙ 按钮打开
+- 用户可通过前端界面修改工作区存储路径，无需编辑配置文件
 
 ---
 

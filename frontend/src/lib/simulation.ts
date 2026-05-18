@@ -1,5 +1,6 @@
 import { useStore } from './store'
 import type { Task } from './store'
+import { addArtifact, addWorkspaceLog, updateWorkspaceStatus } from './api'
 
 const AGENTS = {
   pm:        { id: 'pm',        name: '产品经理',   color: '#58a6ff' },
@@ -25,6 +26,20 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
       fn()
     }, delayMs)
     timers.push(t)
+  }
+
+  // Write artifact file to backend workspace
+  function writeArtifact(stageKey: string, name: string, content: string) {
+    const pid = s().pipeline?.id
+    if (!pid) return
+    addArtifact(pid, stageKey, name, content).catch(() => {})
+  }
+
+  // Write log to backend workspace
+  function writeLog(level: string, source: string, message: string) {
+    const pid = s().pipeline?.id
+    if (!pid) return
+    addWorkspaceLog(pid, level, source, message).catch(() => {})
   }
 
   function chat(agent: typeof AGENTS.pm, content: string, delayMs: number) {
@@ -120,6 +135,15 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
 
   setStageStatus('requirement_analysis', 'completed', 3800)
   updateStage('requirement_analysis', { artifacts: ['需求规格说明 v1.0', '用户故事 8条'] }, 3900)
+
+  schedule(3950, () => writeArtifact('requirement_analysis', '需求规格说明_v1.0.md',
+    `# 需求规格说明 v1.0\n\n## 项目\n${projectName}\n\n## 需求描述\n${projectDesc}\n\n## 核心功能模块\n1. 用户管理\n2. 权限控制\n3. 数据展示\n4. 系统配置\n\n## 非功能需求\n- 响应时间 < 200ms\n- 支持 1000 并发\n- 数据安全加密\n\n## 验收标准\n- 所有用户故事通过测试\n- 代码审查评分 A- 以上`))
+
+  schedule(3960, () => writeArtifact('requirement_analysis', '用户故事.md',
+    `# 用户故事\n\n1. 作为用户，我希望能注册账号\n2. 作为管理员，我希望能管理用户权限\n3. 作为用户，我希望能查看个人数据\n4. 作为用户，我希望能导出数据报告\n5. 作为开发者，我希望能查看 API 文档\n6. 作为运维，我希望能监控系统状态\n7. 作为用户，我希望能修改个人信息\n8. 作为管理员，我希望能查看操作审计日志`))
+
+  schedule(3970, () => { writeLog('info', 'pipeline', '阶段完成: 需求分析'); writeLog('success', 'pm', '产出需求规格说明 v1.0 + 8 条用户故事') })
+
   setProgress(0.17, 'task_breakdown', 4000)
 
   // ================================================================
@@ -198,6 +222,15 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
 
   setStageStatus('task_breakdown', 'completed', 9000)
   updateStage('task_breakdown', { artifacts: ['任务列表 5项', '技术方案文档'] }, 9200)
+
+  schedule(9250, () => writeArtifact('task_breakdown', '任务列表.md',
+    `# 任务列表\n\n## 1. 数据库表结构设计 [高优先级]\n- 设计用户、角色、权限等核心表\n- 负责人: 架构师, 后端开发\n\n## 2. 实现用户认证 API [高优先级]\n- JWT 登录、注册、token 刷新\n- 负责人: 后端开发\n\n## 3. 前端登录页面开发 [中优先级]\n- 登录/注册表单、表单验证、token 存储\n- 负责人: 前端开发\n\n## 4. 编写 API 单元测试 [中优先级]\n- 对认证 API 编写全面的单元测试和集成测试\n- 负责人: 测试工程师\n\n## 5. CI/CD Pipeline 配置 [低优先级]\n- 配置 GitHub Actions 自动化构建、测试、部署\n- 负责人: DevOps`))
+
+  schedule(9260, () => writeArtifact('task_breakdown', '技术方案文档.md',
+    `# 技术方案文档\n\n## 技术栈\n- 后端: FastAPI + SQLAlchemy + PostgreSQL\n- 前端: React + TypeScript + Tailwind CSS\n- 认证: JWT (access_token 30min / refresh_token 7d)\n- 部署: Docker + GitHub Actions\n\n## 架构设计\n- 前后端分离，RESTful API\n- 分层架构: Router → Service → Repository\n- 异步数据库操作 (aiosqlite)\n\n## API 设计\n- POST /api/auth/login\n- POST /api/auth/register\n- POST /api/auth/refresh\n- GET /api/users/me\n- PATCH /api/users/me`))
+
+  schedule(9270, () => writeLog('info', 'pipeline', '阶段完成: 任务拆解'))
+
   setProgress(0.33, 'coding', 9500)
 
   // ================================================================
@@ -351,6 +384,18 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
 
   updateStage('coding', { artifacts: ['后端 API 代码', '前端组件', '数据库迁移脚本'] }, 31000)
   setStageStatus('coding', 'completed', 32000)
+
+  schedule(32100, () => writeArtifact('coding', '后端API代码.md',
+    `# 后端 API 代码实现\n\n## 文件结构\n\`\`\`\nbackend/app/\n├── api/\n│   └── auth.py          # 认证路由\n├── models/\n│   └── user.py          # 用户模型\n├── services/\n│   └── auth_service.py  # 认证服务\n└── middleware/\n    └── jwt.py           # JWT 中间件\n\`\`\`\n\n## 核心端点\n- POST /api/auth/login → 返回 access_token + refresh_token\n- POST /api/auth/register → 创建用户\n- POST /api/auth/refresh → 刷新 token\n\n## 安全措施\n- 密码 bcrypt 哈希\n- JWT 黑名单 (Redis)\n- X-Request-Id 追踪`))
+
+  schedule(32110, () => writeArtifact('coding', '前端组件.md',
+    `# 前端组件实现\n\n## 页面\n- /login — 登录页面\n- /register — 注册页面\n\n## 组件\n- LoginForm.tsx — 登录表单 (邮箱 + 密码 + 验证)\n- RegisterForm.tsx — 注册表单\n- AuthGuard.tsx — 路由守卫\n- TokenManager.ts — localStorage token 管理\n\n## 技术细节\n- React Hook Form 处理表单\n- Axios 拦截器自动附加 Authorization header\n- 错误处理和 loading 状态`))
+
+  schedule(32120, () => writeArtifact('coding', '数据库迁移脚本.md',
+    `# 数据库迁移脚本\n\n## 表结构\n\`\`\`sql\nCREATE TABLE users (\n  id UUID PRIMARY KEY,\n  email VARCHAR(255) UNIQUE NOT NULL,\n  password_hash VARCHAR(255) NOT NULL,\n  created_at TIMESTAMP DEFAULT NOW()\n);\n\nCREATE TABLE roles (\n  id UUID PRIMARY KEY,\n  name VARCHAR(100) UNIQUE NOT NULL\n);\n\nCREATE TABLE permissions (\n  id UUID PRIMARY KEY,\n  name VARCHAR(100) UNIQUE NOT NULL\n);\n\`\`\`\n\n## 迁移命令\n\`\`\`bash\nalembic upgrade head\n\`\`\``))
+
+  schedule(32130, () => writeLog('info', 'pipeline', '阶段完成: 编码实现'))
+
   setProgress(0.55, 'review', 32500)
 
   // ================================================================
@@ -379,6 +424,15 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
 
   setStageStatus('review', 'completed', 43000)
   updateStage('review', { artifacts: ['审查报告', '改进建议 3条'] }, 43500)
+
+  schedule(43600, () => writeArtifact('review', '审查报告.md',
+    `# 代码审查报告\n\n## 总体评分: A-\n\n## 后端代码审查\n- 架构清晰，分层合理: ✅\n- 建议增加 Repository 抽象层: ⚠️\n- 异常处理可以更统一: ⚠️\n- JWT 中间件实现正确: ✅\n\n## 前端代码审查\n- 组件拆分合理: ✅\n- 错误边界处理得当: ✅\n- CSS 样式有重复，建议提取公共类: ⚠️\n\n## 改进建议\n1. Service 层增加 Repository 抽象\n2. 统一异常处理机制\n3. 前端提取公共 CSS 样式类`))
+
+  schedule(43610, () => writeArtifact('review', '改进建议.md',
+    `# 改进建议\n\n1. **Repository 抽象层**: 在 Service 和 ORM 之间增加 Repository 层，提高可测试性\n2. **异常处理统一**: 使用统一的 AppException 类和全局异常处理器\n3. **公共样式提取**: 将重复的 CSS 样式提取为 Tailwind 组件类\n\n## 实施优先级\n- 建议 1: 中 (不影响功能，提升维护性)\n- 建议 2: 高 (影响错误定位效率)\n- 建议 3: 低 (不影响功能)`))
+
+  schedule(43620, () => writeLog('info', 'pipeline', '阶段完成: 代码审查'))
+
   setProgress(0.7, 'testing', 44000)
 
   // ================================================================
@@ -443,6 +497,15 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
 
   setStageStatus('testing', 'completed', 52000)
   updateStage('testing', { artifacts: ['测试报告', '覆盖率数据'] }, 52500)
+
+  schedule(52600, () => writeArtifact('testing', '测试报告.md',
+    `# 测试报告\n\n## 测试结果: 全部通过 ✅\n\n## 单元测试\n- 认证模块: 16/16 通过\n- 用户模块: 8/8 通过\n- 合计: 24/24 通过\n\n## 集成测试\n- 登录流程: 3/3 通过\n- 注册流程: 2/2 通过\n- Token 刷新: 2/2 通过\n- 权限验证: 1/1 通过\n- 合计: 8/8 通过\n\n## 覆盖率\n- 后端: 89%\n- 前端: 76%\n- 整体: 82.5%\n\n## 性能测试\n- API 平均响应: 45ms\n- 并发 1000 用户: 无错误`))
+
+  schedule(52610, () => writeArtifact('testing', '覆盖率数据.md',
+    `# 测试覆盖率数据\n\n\`\`\`\nName                        Stmts   Miss  Cover\n----------------------------------------------\napp/api/auth.py                45      2    96%\napp/services/auth_service.py   89      8    91%\napp/models/user.py             23      1    96%\napp/middleware/jwt.py          34      5    85%\n----------------------------------------------\nTOTAL                         191     16    89%\n\`\`\`\n\n## 未覆盖区域\n- auth_service.py: refresh_token 过期处理\n- jwt.py: 边缘情况 token 解析错误`))
+
+  schedule(52620, () => writeLog('info', 'pipeline', '阶段完成: 测试验证'))
+
   setProgress(0.85, 'delivery', 53000)
 
   // ================================================================
@@ -509,6 +572,17 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
   updateStage('delivery', { artifacts: ['Docker 镜像', 'CI/CD 配置', '上线应用'] }, 59500)
   setStageStatus('delivery', 'completed', 60000)
   setProgress(1.0, 'delivery', 60500)
+
+  schedule(60600, () => writeArtifact('delivery', 'Docker镜像.md',
+    `# Docker 镜像\n\n## Dockerfile\n\`\`\`dockerfile\nFROM python:3.11-slim\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install -r requirements.txt\nCOPY . .\nEXPOSE 8000\nCMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]\n\`\`\`\n\n## 构建\n\`\`\`bash\ndocker build -t devteam-app:latest .\n\`\`\``))
+
+  schedule(60610, () => writeArtifact('delivery', 'CI_CD配置.md',
+    `# CI/CD Pipeline 配置\n\n## GitHub Actions\n\`\`\`yaml\nname: Deploy\non:\n  push:\n    branches: [main]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: pip install -r requirements.txt\n      - run: pytest\n  deploy:\n    needs: test\n    runs-on: ubuntu-latest\n    steps:\n      - run: docker build -t app .\n      - run: docker push app\n\`\`\`\n\n## 环境\n- 开发: devteam-dev.example.com\n- 生产: devteam.example.com`))
+
+  schedule(60620, () => writeArtifact('delivery', '上线说明.md',
+    `# 上线说明\n\n## 应用信息\n- 名称: ${projectName}\n- 版本: 1.0.0\n- 上线时间: ${new Date().toISOString()}\n\n## 健康检查\n- GET /health → {\"status\": \"healthy\"}\n\n## 监控\n- 日志: 已接入\n- 监控面板: 已配置\n- 告警: 已配置`))
+
+  schedule(60630, () => { writeLog('success', 'pipeline', '项目交付完成'); updateWorkspaceStatus(s().pipeline?.id || '', 'completed', 'delivery').catch(() => {}) })
 
   schedule(61000, () => {
     const p = s().pipeline

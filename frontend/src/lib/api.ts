@@ -341,3 +341,170 @@ export async function clearCostRecords(): Promise<void> {
     throw new Error(`清除成本记录失败: ${response.statusText}`)
   }
 }
+
+// ============ Workspace API ============
+
+export interface WorkspaceInfo {
+  id: string
+  name: string
+  description: string
+  created_at: string
+  updated_at: string
+  status: string
+  agents: Array<Record<string, unknown>>
+  stages: Array<Record<string, unknown>>
+  files?: WorkspaceFile[]
+  workspace_path?: string
+}
+
+export interface WorkspaceFile {
+  name: string
+  path: string
+  type: 'file' | 'directory'
+  size?: number
+  modified_at?: string
+  children?: WorkspaceFile[]
+}
+
+export async function createWorkspace(
+  projectId: string,
+  name: string,
+  description: string,
+  agents: Array<Record<string, unknown>> = [],
+  stages: Array<Record<string, unknown>> = [],
+): Promise<{ workspace: WorkspaceInfo; workspace_path: string }> {
+  const response = await fetch(`${API_BASE}/workspaces`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: projectId, name, description, agents, stages }),
+  })
+  if (!response.ok) {
+    throw new Error(`创建工作区失败: ${response.statusText}`)
+  }
+  return response.json()
+}
+
+export async function getWorkspace(projectId: string): Promise<WorkspaceInfo> {
+  const response = await fetch(`${API_BASE}/workspaces/${projectId}`)
+  if (!response.ok) {
+    throw new Error(`获取工作区失败: ${response.statusText}`)
+  }
+  return response.json()
+}
+
+export async function listWorkspaces(): Promise<WorkspaceInfo[]> {
+  const response = await fetch(`${API_BASE}/workspaces`)
+  if (!response.ok) {
+    throw new Error(`获取工作区列表失败: ${response.statusText}`)
+  }
+  const data = await response.json()
+  return data.workspaces || []
+}
+
+export async function addArtifact(
+  projectId: string,
+  stageKey: string,
+  name: string,
+  content: string,
+): Promise<{ path: string; stage: string; name: string }> {
+  const response = await fetch(`${API_BASE}/workspaces/${projectId}/artifacts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stage_key: stageKey, name, content }),
+  })
+  if (!response.ok) {
+    throw new Error(`添加产物失败: ${response.statusText}`)
+  }
+  return response.json()
+}
+
+export async function listWorkspaceFiles(
+  projectId: string,
+  subdir: string = '',
+): Promise<WorkspaceFile[]> {
+  const params = subdir ? `?subdir=${encodeURIComponent(subdir)}` : ''
+  const response = await fetch(`${API_BASE}/workspaces/${projectId}/files${params}`)
+  if (!response.ok) {
+    throw new Error(`获取文件列表失败: ${response.statusText}`)
+  }
+  const data = await response.json()
+  return data.files || []
+}
+
+export async function readWorkspaceFile(
+  projectId: string,
+  filePath: string,
+): Promise<{ path: string; content: string }> {
+  const response = await fetch(`${API_BASE}/workspaces/${projectId}/files/${encodeURIComponent(filePath)}`)
+  if (!response.ok) {
+    throw new Error(`读取文件失败: ${response.statusText}`)
+  }
+  return response.json()
+}
+
+export async function addWorkspaceLog(
+  projectId: string,
+  level: string,
+  source: string,
+  message: string,
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/workspaces/${projectId}/logs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ level, source, message }),
+  })
+  if (!response.ok) {
+    console.warn(`添加日志失败: ${response.statusText}`)
+  }
+}
+
+export async function updateWorkspaceStatus(
+  projectId: string,
+  status: string,
+  currentStage: string = '',
+): Promise<void> {
+  const params = new URLSearchParams({ status })
+  if (currentStage) params.set('current_stage', currentStage)
+  const response = await fetch(`${API_BASE}/workspaces/${projectId}/status?${params}`, {
+    method: 'PATCH',
+  })
+  if (!response.ok) {
+    console.warn(`更新工作区状态失败: ${response.statusText}`)
+  }
+}
+
+export async function deleteWorkspace(projectId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/workspaces/${projectId}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) {
+    throw new Error(`删除工作区失败: ${response.statusText}`)
+  }
+}
+
+// ============ Settings API ============
+
+export interface AppSettings {
+  workspace_root: string
+  workspace_root_resolved: string
+}
+
+export async function getSettings(): Promise<AppSettings> {
+  const response = await fetch(`${API_BASE}/settings`)
+  if (!response.ok) {
+    throw new Error(`获取设置失败: ${response.statusText}`)
+  }
+  return response.json()
+}
+
+export async function updateSettings(workspaceRoot: string): Promise<AppSettings> {
+  const response = await fetch(`${API_BASE}/settings`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspace_root: workspaceRoot }),
+  })
+  if (!response.ok) {
+    throw new Error(`更新设置失败: ${response.statusText}`)
+  }
+  return response.json()
+}

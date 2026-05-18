@@ -1,7 +1,7 @@
 # 前端模块文档
 
-**版本**: v2.0  
-**最后更新**: 2026-05-13
+**版本**: v2.2  
+**最后更新**: 2026-05-18
 
 ---
 
@@ -17,9 +17,10 @@
 |------|----------|------|
 | [协作视图](./collaboration-view.md) | `CollaborationView.tsx` | Agent 协作界面 |
 | [Agent 配置](./agent-config-modal.md) | `AgentConfigModal.tsx` | Agent 配置弹窗 |
-| [Agent 池](./agent-pool-modal.md) | `AgentPoolModal.tsx` | Agent 池管理 |
+| [Agent 人才库](./agent-pool-modal.md) | `AgentPoolModal.tsx` | 人才库 & 项目组建 |
 | [流水线视图](./pipeline-view.md) | `PipelineView.tsx` | 任务流水线界面 |
 | [任务分配](./task-assignment.md) | `TaskAssignmentCard.tsx` | 任务分配卡片 |
+| [系统设置](./settings-modal.md) | `SettingsModal.tsx` | 工作区路径配置 (v2.2) |
 
 ---
 

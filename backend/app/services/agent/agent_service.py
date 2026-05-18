@@ -90,18 +90,40 @@ class AgentService:
         """从 soul.md 文件加载 Agent 定义（优先数据源）"""
         try:
             # 获取 agents 目录路径
-            agents_dir = Path(__file__).parent.parent.parent / "agents"
-            
+            agents_dir = Path(__file__).parent.parent.parent.parent / "agents"
+
             if agents_dir.exists():
                 # 从 soul_parser 加载所有 Agent
                 soul_agents = load_soul_agents(str(agents_dir))
-                
+
                 for name, soul in soul_agents.items():
                     # 将 soul.md 转换为 AgentTemplate
                     template = self._soul_to_template(soul)
                     if template:
                         # 使用 soul.md 中的名称作为模板 ID（优先）
                         self._templates[template.id] = template
+
+                        # 同时自动创建 Agent 实例，使其出现在人才库中
+                        agent_id = f"soul_{soul.name}"
+                        self._agents[agent_id] = {
+                            "id": agent_id,
+                            "template_id": template.id,
+                            "name": soul.name,
+                            "type": template.type.value,
+                            "description": template.description,
+                            "avatar_color": template.avatar_color,
+                            "system_prompt": template.system_prompt,
+                            "capabilities": template.capabilities,
+                            "status": "idle",
+                            "is_active": True,
+                            "source": "soul",
+                            "soul_data": {
+                                "name": soul.name,
+                                "core_principles": soul.core_principles,
+                                "execution_rules": soul.execution_rules,
+                                "role_definitions": soul.role_definitions
+                            }
+                        }
         except Exception as e:
             print(f"Error loading agents from soul files: {e}")
 
@@ -283,7 +305,7 @@ class AgentService:
         from pathlib import Path
         
         # 查找 soul 文件
-        agents_dir = Path(__file__).parent.parent.parent / "agents"
+        agents_dir = Path(__file__).parent.parent.parent.parent / "agents"
         soul_file_path = agents_dir / f"agent_{soul_name}" / "soul.md"
         
         if not soul_file_path.exists():

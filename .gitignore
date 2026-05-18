@@ -52,3 +52,6 @@ docs/.vitepress/dist/
 
 # Trae
 .trae/
+
+# Project workspaces (runtime output)
+workspaces/

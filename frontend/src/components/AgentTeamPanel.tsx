@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useStore } from '../lib/store'
 import type { Agent } from '../lib/store'
+import { startSimulation } from '../lib/simulation'
 import AgentPoolModal from './AgentPoolModal'
 
 const AGENT_COLORS: Record<string, string> = {
@@ -38,9 +39,10 @@ function getAgentColor(agentId: string, role: string): string {
 const POOL_AGENT_COLORS = ['#58a6ff', '#a371f7', '#3fb950', '#f0883e', '#f85149', '#39d2c0', '#d29922', '#8b949e']
 
 export default function AgentTeamPanel() {
-  const { agents, setAgents, setInterventionMode } = useStore()
+  const { agents, setInterventionMode, startProject } = useStore()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showPool, setShowPool] = useState(false)
+  const stopSimRef = useRef<(() => void) | null>(null)
 
   const presetAgents = agents.length > 0 ? agents : [
     { id: 'pm', name: '产品经理', role: '产品经理', status: 'idle' as const, avatarColor: '#58a6ff' },
@@ -57,6 +59,8 @@ export default function AgentTeamPanel() {
 
   const handleAgentsSelected = (
     assignments: Array<{ agentId: string; tempRole: string; tempDescription: string }>,
+    taskName: string,
+    taskDesc: string,
   ) => {
     const roleLabels: Record<string, string> = {
       requirement: '需求分析',
@@ -78,9 +82,10 @@ export default function AgentTeamPanel() {
       description: a.tempDescription || undefined,
     }))
 
-    const existingIds = new Set(agents.map((a) => a.id))
-    const toAdd = newAgents.filter((a) => !existingIds.has(a.id))
-    setAgents([...agents, ...toAdd])
+    // Stop previous simulation and start new project
+    stopSimRef.current?.()
+    startProject(taskName, taskDesc, newAgents)
+    stopSimRef.current = startSimulation(taskName, taskDesc)
   }
 
   return (
@@ -168,8 +173,8 @@ export default function AgentTeamPanel() {
       <AgentPoolModal
         isOpen={showPool}
         onClose={() => setShowPool(false)}
-        onAgentsSelected={(assignments) => {
-          handleAgentsSelected(assignments)
+        onAgentsSelected={(assignments, taskName, taskDesc) => {
+          handleAgentsSelected(assignments, taskName, taskDesc)
           setShowPool(false)
         }}
       />

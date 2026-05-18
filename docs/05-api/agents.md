@@ -1,7 +1,7 @@
 # Agents API
 
-**版本**: v2.0  
-**最后更新**: 2026-05-13
+**版本**: v2.2  
+**最后更新**: 2026-05-18
 
 ---
 
@@ -148,6 +148,40 @@ Agent 管理接口，用于创建、查询、更新和删除 Agent，以及管�
   "system_prompt": "你是一个定制的AI助手...",
   "capabilities": ["能力1", "能力2"],
   "tags": ["自定义", "测试"]
+}
+```
+
+---
+
+### 获取基于 soul.md 的 Agent 列表
+
+| 属性 | 值 |
+|------|-----|
+| **Method** | GET |
+| **Path** | `/api/agents/soul-based` |
+
+返回所有从 `agents/` 目录 soul.md 文件加载的 Agent 实例（含 soul_data，如 core_principles 和 execution_rules）。系统启动时自动创建，无需手动调用创建接口。
+
+#### 响应
+
+```json
+{
+  "agents": [
+    {
+      "id": "soul_xiaowang",
+      "name": "xiaowang",
+      "type": "custom",
+      "source": "soul",
+      "status": "idle",
+      "is_active": true,
+      "soul_data": {
+        "name": "xiaowang",
+        "core_principles": ["解决实际问题..."],
+        "execution_rules": ["单步任务立即执行..."]
+      }
+    }
+  ],
+  "total": 6
 }
 ```
 

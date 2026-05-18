@@ -9,6 +9,7 @@ import TerminalLog from '../components/TerminalLog'
 import InterventionPanel from '../components/InterventionPanel'
 import AgentChatPanel from '../components/AgentChatPanel'
 import CreateProjectModal from '../components/CreateProjectModal'
+import SettingsModal from '../components/SettingsModal'
 
 type SideTab = 'agents' | 'chat' | 'timeline' | 'cost'
 
@@ -24,10 +25,12 @@ export default function Home() {
     setTerminalExpanded,
     startProject,
     resetProject,
+    setWorkspacePath,
   } = useStore()
 
   const [activeTab, setActiveTab] = useState<SideTab>('agents')
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const stopSimRef = useRef<(() => void) | null>(null)
 
   const progress = pipeline ? Math.round(pipeline.progress * 100) : 0
@@ -124,6 +127,15 @@ export default function Home() {
             </button>
           )}
 
+          {/* Settings */}
+          <button
+            onClick={() => setShowSettings(true)}
+            className="px-2 py-1 rounded text-sm text-surface-400 hover:text-surface-200 hover:bg-white/5 transition-colors"
+            title="系统设置"
+          >
+            ⚙
+          </button>
+
           {/* Terminal toggle */}
           <button
             onClick={() => setTerminalExpanded(!terminalExpanded)}
@@ -219,6 +231,13 @@ export default function Home() {
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
         onSubmit={handleCreateProject}
+      />
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        onSettingsChanged={(path) => setWorkspacePath(path)}
       />
 
       {/* Intervention FAB */}
