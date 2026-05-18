@@ -29,6 +29,9 @@
 | [知识服务](./knowledge-service.md) | 知识库管理 |
 | [学习服务](./learning-service.md) | 自我学习机制 |
 | [共享服务](./shared-services.md) | Soul 解析、批处理与重试 |
+| [执行持久化](./execution-persistence.md) | 执行状态和检查点持久化 (v2.3) |
+| [检查点管理](./execution-checkpoint.md) | 步骤检查点保存和恢复 (v2.3) |
+| [卡死检测](./execution-stuck-detector.md) | 基于心跳的卡死任务检测 (v2.3) |
 
 ## 数据模型
 
@@ -40,6 +43,7 @@
 | [任务模型](./models/task.md) | 任务数据结构 |
 | [会话模型](./models/session.md) | 会话数据结构 |
 | [Gear 模型](./models/gear.md) | 装备数据结构 |
+| [执行模型](./models/execution.md) | 任务执行和检查点数据模型 (v2.3) |
 
 ---
 

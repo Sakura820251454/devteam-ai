@@ -1,7 +1,46 @@
 # 变更日志
 
-**版本**: v2.2  
+**版本**: v2.3  
 **最后更新**: 2026-05-18
+
+---
+
+## [v2.3] - 2026-05-18
+
+### Agent 执行恢复系统
+
+解决 Agent 执行 LLM 调用时卡死无法中断、无法从断点恢复的痛点。
+
+**步骤化执行**：
+- LLM 先规划 3-8 个子步骤，再逐步骤执行（`_plan_task_steps()` / `_execute_task_with_steps()`）
+- 步骤规划失败时降级为原单次 LLM 调用，向后兼容
+
+**可取消执行**：
+- `asyncio.Event()` 取消令牌 + `asyncio.Task.cancel()` 句柄保存
+- 取消粒度在步骤边界：每步开始前检查取消信号
+- `pause_execution()` 先 set 令牌再 cancel Task
+- LLM Provider 层 `asyncio.timeout()` + Service 层 `asyncio.wait_for()` 双重超时保护
+
+**检查点与断点恢复**：
+- 每步完成后自动保存检查点（上下文快照 + 累积结果）
+- `resume_execution()` 加载最新检查点，从断点继续
+- 恢复提示词明确告知 LLM 不重复已完成工作
+- 新建 `TaskExecutionModel` / `TaskCheckpointModel` ORM 模型
+
+**卡死检测**：
+- `StuckDetector` 后台心跳监控（120s 阈值 / 30s 检查间隔）
+- 心跳超时或从未有心跳 → TaskBoard 评论 + MessageBus 系统告警
+- 前端轮询 `/api/execution/stuck`，显示卡死警告
+
+**新建模块**：
+- `backend/app/models/execution_db.py` — ORM 模型
+- `backend/app/services/execution/task_persistence_service.py` — 持久化服务
+- `backend/app/services/execution/checkpoint_manager.py` — 检查点管理
+- `backend/app/services/execution/stuck_detector.py` — 卡死检测
+- `backend/app/api/execution.py` — 6 个执行管理 API 端点
+- `frontend/src/components/ExecutionProgressPanel.tsx` — 步骤进度和卡死警告面板
+
+**测试覆盖**：72 个新增测试（40 单元 + 32 集成），全部通过。
 
 ---
 

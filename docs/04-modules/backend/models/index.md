@@ -20,6 +20,7 @@
 | [任务模型](./task.md) | `models/task.py` | 任务数据结构 |
 | [会话模型](./session.md) | `models/session.py` | 会话数据结构 |
 | [Gear 模型](./gear.md) | `models/gear_db.py` | 装备数据结构 |
+| [执行模型](./execution.md) | `models/execution_db.py` | 任务执行和检查点 (v2.3) |
 
 ---
 

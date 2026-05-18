@@ -114,7 +114,10 @@ export default defineConfig({
             { text: '装备服务', link: '/04-modules/backend/equipment-service' },
             { text: '知识服务', link: '/04-modules/backend/knowledge-service' },
             { text: '学习服务', link: '/04-modules/backend/learning-service' },
-            { text: '共享服务', link: '/04-modules/backend/shared-services' }
+            { text: '共享服务', link: '/04-modules/backend/shared-services' },
+            { text: '执行持久化', link: '/04-modules/backend/execution-persistence' },
+            { text: '检查点管理', link: '/04-modules/backend/execution-checkpoint' },
+            { text: '卡死检测', link: '/04-modules/backend/execution-stuck-detector' }
           ]
         },
         {
@@ -126,7 +129,8 @@ export default defineConfig({
             { text: '记忆模型', link: '/04-modules/backend/models/memory' },
             { text: '任务模型', link: '/04-modules/backend/models/task' },
             { text: '会话模型', link: '/04-modules/backend/models/session' },
-            { text: 'Gear 模型', link: '/04-modules/backend/models/gear' }
+            { text: 'Gear 模型', link: '/04-modules/backend/models/gear' },
+            { text: '执行模型', link: '/04-modules/backend/models/execution' }
           ]
         },
         {
@@ -137,7 +141,8 @@ export default defineConfig({
             { text: 'Agent 配置', link: '/04-modules/frontend/agent-config-modal' },
             { text: 'Agent 池', link: '/04-modules/frontend/agent-pool-modal' },
             { text: '流水线视图', link: '/04-modules/frontend/pipeline-view' },
-            { text: '任务分配', link: '/04-modules/frontend/task-assignment' }
+            { text: '任务分配', link: '/04-modules/frontend/task-assignment' },
+            { text: '执行进度面板', link: '/04-modules/frontend/execution-progress-panel' }
           ]
         }
       ],
@@ -160,7 +165,8 @@ export default defineConfig({
             { text: 'Speaking API', link: '/05-api/speaking' },
             { text: 'Knowledge API', link: '/05-api/knowledge' },
             { text: 'Equipment API', link: '/05-api/equipment' },
-            { text: 'LLM API', link: '/05-api/llm' }
+            { text: 'LLM API', link: '/05-api/llm' },
+            { text: 'Execution API', link: '/05-api/execution' }
           ]
         }
       ],

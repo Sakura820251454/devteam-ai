@@ -21,6 +21,7 @@
 | [流水线视图](./pipeline-view.md) | `PipelineView.tsx` | 任务流水线界面 |
 | [任务分配](./task-assignment.md) | `TaskAssignmentCard.tsx` | 任务分配卡片 |
 | [系统设置](./settings-modal.md) | `SettingsModal.tsx` | 工作区路径配置 (v2.2) |
+| [执行进度面板](./execution-progress-panel.md) | `ExecutionProgressPanel.tsx` | 步骤进度、心跳和卡死警告 (v2.3) |
 
 ---
 

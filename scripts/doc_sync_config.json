@@ -62,6 +62,42 @@
       "check_patterns": ["class PipelineOrchestrator", "class PipelineStage", "async def start_pipeline"]
     },
 
+    "backend/app/services/execution/task_persistence_service.py": {
+      "docs": ["docs/04-modules/backend/execution-persistence.md"],
+      "description": "执行持久化服务",
+      "check_patterns": ["class TaskPersistenceService", "async def save_execution", "async def load_execution", "async def save_checkpoint", "async def update_heartbeat"]
+    },
+
+    "backend/app/services/execution/checkpoint_manager.py": {
+      "docs": ["docs/04-modules/backend/execution-checkpoint.md"],
+      "description": "检查点管理服务",
+      "check_patterns": ["class CheckpointManager", "async def save_checkpoint", "async def load_checkpoint", "def build_resume_context"]
+    },
+
+    "backend/app/services/execution/stuck_detector.py": {
+      "docs": ["docs/04-modules/backend/execution-stuck-detector.md"],
+      "description": "卡死检测服务",
+      "check_patterns": ["class StuckDetector", "async def check_stuck_tasks", "async def _handle_stuck_task"]
+    },
+
+    "backend/app/models/execution_db.py": {
+      "docs": ["docs/04-modules/backend/models/execution.md"],
+      "description": "执行数据模型",
+      "check_patterns": ["class TaskExecutionModel", "class TaskCheckpointModel"]
+    },
+
+    "backend/app/api/execution.py": {
+      "docs": ["docs/05-api/execution.md"],
+      "description": "Execution API",
+      "check_patterns": ["@router.get", "@router.post", "execution", "stuck", "checkpoint"]
+    },
+
+    "frontend/src/components/ExecutionProgressPanel.tsx": {
+      "docs": ["docs/04-modules/frontend/execution-progress-panel.md"],
+      "description": "执行进度面板组件",
+      "check_patterns": ["export default function ExecutionProgressPanel", "StepProgressBar", "HeartbeatIndicator"]
+    },
+
     "backend/app/services/collaboration/arbitrator.py": {
       "docs": ["docs/04-modules/backend/arbitration-service.md"],
       "description": "冲突仲裁服务",
@@ -77,7 +113,7 @@
     "backend/app/services/agent/agent_executor.py": {
       "docs": ["docs/04-modules/backend/agent-executor.md"],
       "description": "Agent 执行器服务",
-      "check_patterns": ["class AgentExecutor", "class ExecutionStatus", "async def assign_task"]
+      "check_patterns": ["class AgentExecutor", "class ExecutionStatus", "async def _execute_task_with_steps", "async def _plan_task_steps", "async def pause_execution", "async def resume_execution"]
     },
 
     "backend/app/services/security/guard.py": {

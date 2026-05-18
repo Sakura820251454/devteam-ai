@@ -25,6 +25,7 @@
 | [Projects API](./projects.md) | 项目管理接口 |
 | [Workspaces API](./workspaces.md) | 工作区管理接口 |
 | [Settings API](./settings.md) | 系统设置接口 |
+| [Execution API](./execution.md) | 执行监控和恢复接口 (v2.3) |
 
 ---
 
