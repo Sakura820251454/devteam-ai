@@ -9,6 +9,7 @@ import TerminalLog from '../components/TerminalLog'
 import InterventionPanel from '../components/InterventionPanel'
 import AgentChatPanel from '../components/AgentChatPanel'
 import CreateProjectModal from '../components/CreateProjectModal'
+import AgentConfigModal from '../components/AgentConfigModal'
 import SettingsModal from '../components/SettingsModal'
 
 type SideTab = 'agents' | 'chat' | 'timeline' | 'cost'
@@ -30,6 +31,8 @@ export default function Home() {
 
   const [activeTab, setActiveTab] = useState<SideTab>('agents')
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [showAgentConfig, setShowAgentConfig] = useState(false)
+  const [pendingProject, setPendingProject] = useState({ name: '', description: '' })
   const [showSettings, setShowSettings] = useState(false)
   const stopSimRef = useRef<(() => void) | null>(null)
 
@@ -53,9 +56,33 @@ export default function Home() {
     'bg-surface-400'
 
   const handleCreateProject = (name: string, description: string) => {
+    setPendingProject({ name, description })
+    setShowCreateModal(false)
+    setShowAgentConfig(true)
+  }
+
+  const handleAgentsConfigured = (selectedAgents: Array<{
+    id: string; name: string; type: string; description: string;
+    avatar_color: string; capabilities: string[];
+    llm_config?: { provider: string; model: string; temperature: number; max_tokens?: number }
+  }>, _teamConfig: { mode: string; complexity: string }) => {
     stopSimRef.current?.()
-    startProject(name, description)
-    stopSimRef.current = startSimulation(name, description)
+    const agents = selectedAgents.map((a) => ({
+      id: a.id,
+      name: a.name,
+      role: a.type === 'product_manager' ? '产品经理' :
+        a.type === 'architect' ? '架构师' :
+        a.type === 'backend_developer' ? '后端开发' :
+        a.type === 'frontend_developer' ? '前端开发' :
+        a.type === 'tester' ? '测试工程师' :
+        a.type === 'devops' ? '运维工程师' : '自定义',
+      status: 'idle' as const,
+      avatarColor: a.avatar_color,
+      description: a.description,
+      llm_config: a.llm_config,
+    }))
+    startProject(pendingProject.name, pendingProject.description, agents)
+    stopSimRef.current = startSimulation(pendingProject.name, pendingProject.description)
   }
 
   const handleOpenExample = () => {
@@ -231,6 +258,13 @@ export default function Home() {
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
         onSubmit={handleCreateProject}
+      />
+
+      {/* Agent Config Modal — step 2 after project creation */}
+      <AgentConfigModal
+        isOpen={showAgentConfig}
+        onClose={() => setShowAgentConfig(false)}
+        onAgentsConfigured={handleAgentsConfigured}
       />
 
       {/* Settings Modal */}

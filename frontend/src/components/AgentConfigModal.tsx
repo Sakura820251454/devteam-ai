@@ -1,4 +1,7 @@
 import { useState, useEffect } from 'react'
+import { getAvailableModels, getAvailableProviders } from '../lib/api'
+import type { LLMModelInfo } from '../lib/api'
+import { useStore } from '../lib/store'
 
 interface AgentTemplate {
   id: string
@@ -13,6 +16,7 @@ interface AgentTemplate {
   tags: string[]
   is_preset: boolean
   suitable_scenarios: string[]
+  llm_config?: { provider: string; model: string; temperature: number; max_tokens?: number }
 }
 
 interface AgentConfigModalProps {
@@ -24,6 +28,14 @@ interface AgentConfigModalProps {
 interface TeamConfig {
   mode: 'auto' | 'sequential' | 'parallel'
   complexity: 'simple' | 'medium' | 'complex'
+}
+
+const PROVIDER_LABELS: Record<string, string> = {
+  openai: 'OpenAI',
+  deepseek: 'DeepSeek',
+  anthropic: 'Anthropic Claude',
+  azure: 'Azure OpenAI',
+  mock: 'Mock（测试用）',
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -132,6 +144,7 @@ const ROLE_RECOMMENDATIONS: Record<string, string[]> = {
 }
 
 export default function AgentConfigModal({ isOpen, onClose, onAgentsConfigured }: AgentConfigModalProps) {
+  const { globalLlmConfig } = useStore()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [teamConfig, setTeamConfig] = useState<TeamConfig>({
     mode: 'auto',
@@ -139,13 +152,51 @@ export default function AgentConfigModal({ isOpen, onClose, onAgentsConfigured }
   })
   const [showRecommendations, setShowRecommendations] = useState(false)
 
+  // LLM config per agent: agentId -> { provider, model, temperature, max_tokens? }
+  const [agentLlmConfigs, setAgentLlmConfigs] = useState<Record<string, { provider: string; model: string; temperature: number; max_tokens?: number }>>({})
+  const [expandedLlmAgent, setExpandedLlmAgent] = useState<string | null>(null)
+  const [availableProviders, setAvailableProviders] = useState<string[]>([])
+  const [availableModels, setAvailableModels] = useState<Record<string, LLMModelInfo>>({})
+
   useEffect(() => {
     if (isOpen) {
       setSelectedIds(new Set())
       setTeamConfig({ mode: 'auto', complexity: 'simple' })
       setShowRecommendations(false)
+      setAgentLlmConfigs({})
+      setExpandedLlmAgent(null)
+      loadLLMData()
     }
   }, [isOpen])
+
+  const loadLLMData = async () => {
+    try {
+      const [providers, models] = await Promise.all([
+        getAvailableProviders(),
+        getAvailableModels(),
+      ])
+      setAvailableProviders(providers)
+      setAvailableModels(models)
+    } catch {
+      setAvailableProviders(['openai', 'deepseek', 'anthropic', 'azure', 'mock'])
+    }
+  }
+
+  const getEffectiveLlmConfig = (agentId: string) => {
+    return agentLlmConfigs[agentId] || null
+  }
+
+  const setAgentLlmConfig = (agentId: string, config: { provider: string; model: string; temperature: number; max_tokens?: number }) => {
+    setAgentLlmConfigs((prev) => ({ ...prev, [agentId]: config }))
+  }
+
+  const clearAgentLlmConfig = (agentId: string) => {
+    setAgentLlmConfigs((prev) => {
+      const next = { ...prev }
+      delete next[agentId]
+      return next
+    })
+  }
 
   const toggleRole = (id: string) => {
     const newSelected = new Set(selectedIds)
@@ -184,7 +235,12 @@ export default function AgentConfigModal({ isOpen, onClose, onAgentsConfigured }
   }
 
   const handleConfirm = () => {
-    const selectedAgents = PRESET_ROLES.filter(r => selectedIds.has(r.id))
+    const selectedAgents = PRESET_ROLES
+      .filter(r => selectedIds.has(r.id))
+      .map(r => ({
+        ...r,
+        llm_config: agentLlmConfigs[r.id] || undefined,
+      }))
     onAgentsConfigured(selectedAgents, teamConfig)
     onClose()
   }
@@ -256,6 +312,111 @@ export default function AgentConfigModal({ isOpen, onClose, onAgentsConfigured }
                         <div className="text-xs text-gray-400 truncate">{role.description}</div>
                       </div>
                     </div>
+                    {/* Per-agent LLM config expander */}
+                    {isSelected && (
+                      <div className="mt-3 pt-3 border-t border-gray-600" onClick={(e) => e.stopPropagation()}>
+                        {getEffectiveLlmConfig(role.id) ? (
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-primary-300 font-mono">
+                              {getEffectiveLlmConfig(role.id)!.model}
+                            </span>
+                            <div className="flex gap-1">
+                              <button
+                                onClick={() => setExpandedLlmAgent(expandedLlmAgent === role.id ? null : role.id)}
+                                className="text-xs text-gray-400 hover:text-gray-300 px-2 py-0.5 rounded"
+                              >
+                                {expandedLlmAgent === role.id ? '收起' : '修改'}
+                              </button>
+                              <button
+                                onClick={() => clearAgentLlmConfig(role.id)}
+                                className="text-xs text-gray-400 hover:text-red-400 px-2 py-0.5 rounded"
+                              >
+                                重置
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              const defaultCfg = {
+                                provider: globalLlmConfig.provider,
+                                model: globalLlmConfig.model,
+                                temperature: globalLlmConfig.temperature,
+                                max_tokens: globalLlmConfig.max_tokens,
+                              }
+                              setAgentLlmConfig(role.id, defaultCfg)
+                              setExpandedLlmAgent(role.id)
+                            }}
+                            className="w-full text-xs text-gray-400 hover:text-primary-400 py-1 rounded transition-colors"
+                          >
+                            + 自定义 LLM（默认: {globalLlmConfig.model}）
+                          </button>
+                        )}
+                        {/* Expanded LLM config form */}
+                        {expandedLlmAgent === role.id && getEffectiveLlmConfig(role.id) && (() => {
+                          const cfg = getEffectiveLlmConfig(role.id)!
+                          const filteredModels = Object.entries(availableModels).filter(([, info]) => info.provider === cfg.provider)
+                          return (
+                            <div className="mt-2 space-y-2 bg-gray-700/50 rounded-lg p-3">
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Provider</label>
+                                <select
+                                  value={cfg.provider}
+                                  onChange={(e) => {
+                                    const newProvider = e.target.value
+                                    const modelsForProvider = Object.entries(availableModels).filter(([, info]) => info.provider === newProvider)
+                                    const newModel = modelsForProvider.length > 0 ? modelsForProvider[0][0] : cfg.model
+                                    setAgentLlmConfig(role.id, { ...cfg, provider: newProvider, model: newModel })
+                                  }}
+                                  className="w-full bg-gray-600 border border-gray-500 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-primary-500"
+                                >
+                                  {availableProviders.map((p) => (
+                                    <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Model</label>
+                                <select
+                                  value={cfg.model}
+                                  onChange={(e) => setAgentLlmConfig(role.id, { ...cfg, model: e.target.value })}
+                                  className="w-full bg-gray-600 border border-gray-500 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-primary-500"
+                                >
+                                  {filteredModels.map(([name, info]) => (
+                                    <option key={name} value={name}>{name} — {info.description}</option>
+                                  ))}
+                                  {filteredModels.length === 0 && (
+                                    <option value={cfg.model}>{cfg.model}</option>
+                                  )}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Temperature: {cfg.temperature.toFixed(1)}</label>
+                                <input
+                                  type="range"
+                                  min="0"
+                                  max="2"
+                                  step="0.1"
+                                  value={cfg.temperature}
+                                  onChange={(e) => setAgentLlmConfig(role.id, { ...cfg, temperature: parseFloat(e.target.value) })}
+                                  className="w-full accent-primary-500"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Max Tokens（可选）</label>
+                                <input
+                                  type="number"
+                                  value={cfg.max_tokens || ''}
+                                  onChange={(e) => setAgentLlmConfig(role.id, { ...cfg, max_tokens: e.target.value ? parseInt(e.target.value) : undefined })}
+                                  placeholder="模型默认"
+                                  className="w-full bg-gray-600 border border-gray-500 rounded px-2 py-1 text-xs text-gray-200 placeholder:text-gray-500 focus:outline-none focus:border-primary-500"
+                                />
+                              </div>
+                            </div>
+                          )
+                        })()}
+                      </div>
+                    )}
                   </button>
                 )
               })}

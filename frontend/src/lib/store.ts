@@ -1,6 +1,13 @@
 import { create } from 'zustand'
 import { createWorkspace } from './api'
 
+export interface LLMConfig {
+  provider: string
+  model: string
+  temperature: number
+  max_tokens?: number
+}
+
 export interface Agent {
   id: string
   name: string
@@ -9,6 +16,7 @@ export interface Agent {
   avatarColor: string
   currentTask?: string
   description?: string
+  llm_config?: LLMConfig
 }
 
 export interface PipelineStage {
@@ -121,12 +129,16 @@ interface WorkspaceState {
   // Workspace
   workspacePath: string | null
 
+  // Global LLM defaults
+  globalLlmConfig: LLMConfig
+
   // Global status
   isConnected: boolean
   isLoading: boolean
   error: string | null
 
   // Actions
+  setGlobalLlmConfig: (config: LLMConfig) => void
   setPipeline: (pipeline: Pipeline | null) => void
   updatePipelineStage: (stageKey: string, updates: Partial<PipelineStage>) => void
   setSelectedStage: (stage: string | null) => void
@@ -176,10 +188,17 @@ export const useStore = create<WorkspaceState>((set) => ({
   interventionMode: null,
   costData: null,
   workspacePath: null,
+  globalLlmConfig: {
+    provider: 'deepseek',
+    model: 'deepseek-chat',
+    temperature: 0.7,
+    max_tokens: undefined,
+  },
   isConnected: false,
   isLoading: false,
   error: null,
 
+  setGlobalLlmConfig: (config) => set({ globalLlmConfig: config }),
   setPipeline: (pipeline) => set({ pipeline }),
   updatePipelineStage: (stageKey, updates) =>
     set((state) => ({
@@ -380,7 +399,7 @@ export const useStore = create<WorkspaceState>((set) => ({
       pid,
       name,
       _description,
-      projectAgents.map((a) => ({ id: a.id, name: a.name, role: a.role })),
+      projectAgents.map((a) => ({ id: a.id, name: a.name, role: a.role, llm_config: a.llm_config })),
       pipeline.stages.map((s) => ({ key: s.key, label: s.label, assignedAgents: s.assignedAgents })),
     )
       .then((result) => set({ workspacePath: result.workspace_path }))

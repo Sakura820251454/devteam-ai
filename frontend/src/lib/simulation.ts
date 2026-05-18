@@ -88,24 +88,74 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
 
   function setCostData(delayMs: number) {
     schedule(delayMs, () => {
+      const state = s()
+      const agents = state.agents
+      const globalCfg = state.globalLlmConfig
+
+      const agentCosts: Record<string, { cost: number; tokens: number; calls: number }> = {
+        '产品经理':   { cost: 0.028, tokens: 15000, calls: 5 },
+        '架构师':     { cost: 0.052, tokens: 32000, calls: 7 },
+        '后端开发':   { cost: 0.045, tokens: 26000, calls: 5 },
+        '前端开发':   { cost: 0.035, tokens: 18000, calls: 4 },
+        '测试工程师': { cost: 0.018, tokens: 9000,  calls: 2 },
+        '运维工程师': { cost: 0.008, tokens: 4000,  calls: 1 },
+        'DevOps':     { cost: 0.008, tokens: 4000,  calls: 1 },
+      }
+
+      const byAgent: Record<string, { cost: number; tokens: number; calls: number }> = {}
+      const byModel: Record<string, { cost: number; tokens: number; calls: number }> = {}
+
+      if (agents.length > 0) {
+        for (const agent of agents) {
+          const baseCost = agentCosts[agent.role] || { cost: 0.015, tokens: 8000, calls: 3 }
+          byAgent[agent.name] = { ...baseCost }
+
+          const model = agent.llm_config?.model || globalCfg.model
+          if (!byModel[model]) {
+            byModel[model] = { cost: 0, tokens: 0, calls: 0 }
+          }
+          byModel[model].cost += baseCost.cost
+          byModel[model].tokens += baseCost.tokens
+          byModel[model].calls += baseCost.calls
+        }
+      } else {
+        // Fallback: no agents in store — use global defaults
+        byAgent['产品经理']   = agentCosts['产品经理']
+        byAgent['架构师']     = agentCosts['架构师']
+        byAgent['后端开发']   = agentCosts['后端开发']
+        byAgent['前端开发']   = agentCosts['前端开发']
+        byAgent['测试工程师'] = agentCosts['测试工程师']
+        byAgent['运维工程师'] = agentCosts['运维工程师']
+
+        const model = globalCfg.model
+        const totalCost = Object.values(byAgent).reduce((s, a) => s + a.cost, 0)
+        const totalTokens = Object.values(byAgent).reduce((s, a) => s + a.tokens, 0)
+        const totalCalls = Object.values(byAgent).reduce((s, a) => s + a.calls, 0)
+        byModel[model] = { cost: totalCost, tokens: totalTokens, calls: totalCalls }
+      }
+
+      // Round costs to 3 decimal places
+      for (const key of Object.keys(byModel)) {
+        byModel[key].cost = Math.round(byModel[key].cost * 1000) / 1000
+      }
+      for (const key of Object.keys(byAgent)) {
+        byAgent[key].cost = Math.round(byAgent[key].cost * 1000) / 1000
+      }
+
+      const totalCost = Object.values(byAgent).reduce((s, a) => s + a.cost, 0)
+      const totalTokens = Object.values(byAgent).reduce((s, a) => s + a.tokens, 0)
+      const promptTokens = Math.round(totalTokens * 0.72)
+      const completionTokens = totalTokens - promptTokens
+      const callCount = Object.values(byAgent).reduce((s, a) => s + a.calls, 0)
+
       s().setCostData({
-        totalCost: 0.18 + Math.random() * 0.05,
-        totalTokens: 95000 + Math.floor(Math.random() * 15000),
-        promptTokens: 72000,
-        completionTokens: 28000,
-        callCount: 24,
-        byAgent: {
-          '产品经理':   { cost: 0.028, tokens: 15000, calls: 5 },
-          '架构师':     { cost: 0.052, tokens: 32000, calls: 7 },
-          '后端开发':   { cost: 0.045, tokens: 26000, calls: 5 },
-          '前端开发':   { cost: 0.035, tokens: 18000, calls: 4 },
-          '测试工程师': { cost: 0.018, tokens: 9000,  calls: 2 },
-          'DevOps':    { cost: 0.008, tokens: 4000,  calls: 1 },
-        },
-        byModel: {
-          'claude-opus-4-7':  { cost: 0.098, tokens: 52000, calls: 12 },
-          'claude-sonnet-4-6': { cost: 0.088, tokens: 48000, calls: 12 },
-        },
+        totalCost: Math.round(totalCost * 1000) / 1000,
+        totalTokens,
+        promptTokens,
+        completionTokens,
+        callCount,
+        byAgent,
+        byModel,
       })
     })
   }

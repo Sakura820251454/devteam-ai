@@ -1,7 +1,9 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useStore } from '../lib/store'
 import type { Agent } from '../lib/store'
 import { startSimulation } from '../lib/simulation'
+import { getAvailableModels, getAvailableProviders } from '../lib/api'
+import type { LLMModelInfo } from '../lib/api'
 import AgentPoolModal from './AgentPoolModal'
 
 const AGENT_COLORS: Record<string, string> = {
@@ -29,6 +31,14 @@ const STATUS_STYLES: Record<string, string> = {
   blocked: 'bg-accent-red animate-blink',
 }
 
+const PROVIDER_LABELS: Record<string, string> = {
+  openai: 'OpenAI',
+  deepseek: 'DeepSeek',
+  anthropic: 'Anthropic',
+  azure: 'Azure',
+  mock: 'Mock',
+}
+
 function getAgentColor(agentId: string, role: string): string {
   for (const [key, color] of Object.entries(AGENT_COLORS)) {
     if (role.includes(key) || agentId.includes(key)) return color
@@ -39,9 +49,12 @@ function getAgentColor(agentId: string, role: string): string {
 const POOL_AGENT_COLORS = ['#58a6ff', '#a371f7', '#3fb950', '#f0883e', '#f85149', '#39d2c0', '#d29922', '#8b949e']
 
 export default function AgentTeamPanel() {
-  const { agents, setInterventionMode, startProject } = useStore()
+  const { agents, globalLlmConfig, updateAgent, setInterventionMode, startProject } = useStore()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showPool, setShowPool] = useState(false)
+  const [llmEditorAgent, setLlmEditorAgent] = useState<string | null>(null)
+  const [availableProviders, setAvailableProviders] = useState<string[]>([])
+  const [availableModels, setAvailableModels] = useState<Record<string, LLMModelInfo>>({})
   const stopSimRef = useRef<(() => void) | null>(null)
 
   const presetAgents = agents.length > 0 ? agents : [
@@ -51,6 +64,16 @@ export default function AgentTeamPanel() {
     { id: 'frontend', name: '前端开发', role: '前端开发', status: 'idle' as const, avatarColor: '#f0883e' },
     { id: 'tester', name: '测试工程师', role: '测试工程师', status: 'idle' as const, avatarColor: '#f85149' },
   ]
+
+  useEffect(() => {
+    getAvailableProviders().then(setAvailableProviders).catch(() => setAvailableProviders(['openai', 'deepseek', 'anthropic', 'azure', 'mock']))
+    getAvailableModels().then(setAvailableModels).catch(() => {})
+  }, [])
+
+  const getModelLabel = (agent: Agent) => {
+    if (agent.llm_config) return agent.llm_config.model
+    return `全局: ${globalLlmConfig.model}`
+  }
 
   const handleWhisper = (agentId: string) => {
     setSelectedId(agentId)
@@ -106,18 +129,24 @@ export default function AgentTeamPanel() {
         {presetAgents.map((agent) => {
           const color = agent.avatarColor || getAgentColor(agent.id, agent.role)
           const isSelected = selectedId === agent.id
+          const isEditingLlm = llmEditorAgent === agent.id
+          const llmCfg = agent.llm_config
+          const effectiveCfg = llmCfg || globalLlmConfig
+          const filteredModels = Object.entries(availableModels).filter(([, info]) => info.provider === effectiveCfg.provider)
 
           return (
             <div
               key={agent.id}
-              onClick={() => handleWhisper(agent.id)}
-              className={`relative rounded-lg p-2.5 cursor-pointer transition-all duration-200 group ${
+              className={`relative rounded-lg p-2.5 transition-all duration-200 group ${
                 isSelected
                   ? 'bg-accent-cyan/10 border border-accent-cyan/30'
                   : 'bg-background-card border border-white/5 hover:border-white/10'
               }`}
             >
-              <div className="flex items-center gap-2.5">
+              <div
+                className="flex items-center gap-2.5 cursor-pointer"
+                onClick={() => handleWhisper(agent.id)}
+              >
                 <div
                   className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
                   style={{ backgroundColor: `${color}30`, color }}
@@ -133,6 +162,20 @@ export default function AgentTeamPanel() {
                     <span className="text-xs text-surface-400 truncate">
                       {agent.role}
                     </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setLlmEditorAgent(isEditingLlm ? null : agent.id)
+                      }}
+                      className={`text-xs px-1.5 py-0.5 rounded font-mono shrink-0 transition-colors ${
+                        llmCfg
+                          ? 'bg-accent-purple/20 text-accent-purple hover:bg-accent-purple/30'
+                          : 'bg-surface-600/50 text-surface-400 hover:text-surface-300 hover:bg-surface-600'
+                      }`}
+                      title={llmCfg ? `${effectiveCfg.provider} / ${effectiveCfg.model}` : `全局默认: ${globalLlmConfig.model}`}
+                    >
+                      {getModelLabel(agent)}
+                    </button>
                   </div>
                   <div className="flex items-center gap-1.5 mt-0.5">
                     <div className={`w-1.5 h-1.5 rounded-full ${STATUS_STYLES[agent.status]}`} />
@@ -151,6 +194,106 @@ export default function AgentTeamPanel() {
                   &#9993;
                 </span>
               </div>
+
+              {/* Inline LLM editor popover */}
+              {isEditingLlm && (
+                <div
+                  className="mt-2 p-3 bg-gray-800 border border-gray-600 rounded-lg space-y-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-surface-400">
+                      {llmCfg ? 'Agent 独立配置' : `使用全局默认 (${globalLlmConfig.model})`}
+                    </span>
+                    {!llmCfg ? (
+                      <button
+                        onClick={() => {
+                          updateAgent(agent.id, { llm_config: { ...globalLlmConfig } })
+                        }}
+                        className="text-xs text-accent-cyan hover:text-accent-cyan/80"
+                      >
+                        覆盖为独立配置
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          updateAgent(agent.id, { llm_config: undefined })
+                          setLlmEditorAgent(null)
+                        }}
+                        className="text-xs text-accent-red hover:text-accent-red/80"
+                      >
+                        重置为全局默认
+                      </button>
+                    )}
+                  </div>
+
+                  {(llmCfg || effectiveCfg) && (
+                    <>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-0.5">Provider</label>
+                        <select
+                          value={effectiveCfg.provider}
+                          onChange={(e) => {
+                            const newProvider = e.target.value
+                            const modelsForProvider = Object.entries(availableModels).filter(([, info]) => info.provider === newProvider)
+                            const newModel = modelsForProvider.length > 0 ? modelsForProvider[0][0] : effectiveCfg.model
+                            updateAgent(agent.id, { llm_config: { provider: newProvider, model: newModel, temperature: effectiveCfg.temperature, max_tokens: effectiveCfg.max_tokens } })
+                          }}
+                          className="w-full bg-gray-700 border border-gray-500 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent-cyan"
+                        >
+                          {availableProviders.map((p) => (
+                            <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-0.5">Model</label>
+                        <select
+                          value={effectiveCfg.model}
+                          onChange={(e) => updateAgent(agent.id, { llm_config: { ...effectiveCfg, model: e.target.value } })}
+                          className="w-full bg-gray-700 border border-gray-500 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent-cyan"
+                        >
+                          {filteredModels.map(([name, info]) => (
+                            <option key={name} value={name}>{name} — {info.description}</option>
+                          ))}
+                          {filteredModels.length === 0 && (
+                            <option value={effectiveCfg.model}>{effectiveCfg.model}</option>
+                          )}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-0.5">Temperature: {effectiveCfg.temperature.toFixed(1)}</label>
+                        <input
+                          type="range"
+                          min="0"
+                          max="2"
+                          step="0.1"
+                          value={effectiveCfg.temperature}
+                          onChange={(e) => updateAgent(agent.id, { llm_config: { ...effectiveCfg, temperature: parseFloat(e.target.value) } })}
+                          className="w-full accent-accent-cyan"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-0.5">Max Tokens</label>
+                        <input
+                          type="number"
+                          value={effectiveCfg.max_tokens || ''}
+                          onChange={(e) => updateAgent(agent.id, { llm_config: { ...effectiveCfg, max_tokens: e.target.value ? parseInt(e.target.value) : undefined } })}
+                          placeholder="模型默认"
+                          className="w-full bg-gray-700 border border-gray-500 rounded px-2 py-1 text-xs text-gray-200 placeholder:text-gray-500 focus:outline-none focus:border-accent-cyan"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  <button
+                    onClick={() => setLlmEditorAgent(null)}
+                    className="w-full text-xs text-gray-400 hover:text-gray-300 py-1"
+                  >
+                    收起
+                  </button>
+                </div>
+              )}
             </div>
           )
         })}

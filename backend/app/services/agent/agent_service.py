@@ -264,7 +264,7 @@ class AgentService:
 
     # ========== Agent 实例管理 ==========
 
-    def create_agent(self, template_id: str, name: Optional[str] = None) -> Dict:
+    def create_agent(self, template_id: str, name: Optional[str] = None, llm_config: Optional[dict] = None) -> Dict:
         """从模板创建 Agent 实例"""
         template = self._templates.get(template_id)
         if not template:
@@ -282,8 +282,9 @@ class AgentService:
             "capabilities": template.capabilities,
             "status": "idle",
             "is_active": True,
-            "source": "template",  # 标记来源
-            "soul_data": None
+            "source": "template",
+            "soul_data": None,
+            "llm_config": llm_config,
         }
         
         # 如果模板是从 soul.md 加载的，保留 soul 数据
@@ -491,7 +492,26 @@ class AgentService:
             LLMMessage(role="user", content=user_message)
         ]
 
-        response = await llm_service.chat(llm_messages)
+        # Build Agent model with llm_config so LLMService can use per-agent settings
+        agent_model = None
+        agent_llm_config = agent.get("llm_config")
+        if agent_llm_config:
+            from app.models.agent import Agent as AgentModel, AgentConfig as AgentConfigModel, LLMConfig as AgentLLMConfig
+            agent_model = AgentModel(
+                id=agent["id"],
+                config=AgentConfigModel(
+                    name=agent.get("name", "Agent"),
+                    role=agent.get("type", "agent"),
+                    llm_config=AgentLLMConfig(
+                        provider=agent_llm_config.get("provider", "deepseek"),
+                        model=agent_llm_config.get("model", "deepseek-chat"),
+                        temperature=agent_llm_config.get("temperature", 0.7),
+                        max_tokens=agent_llm_config.get("max_tokens"),
+                    )
+                )
+            )
+
+        response = await llm_service.chat(llm_messages, agent=agent_model)
 
         # Add assistant response to session
         assistant_msg = SessionMessage(
@@ -541,8 +561,27 @@ class AgentService:
             LLMMessage(role="user", content=user_message)
         ]
 
+        # Build Agent model with llm_config so LLMService can use per-agent settings
+        agent_model = None
+        agent_llm_config = agent.get("llm_config")
+        if agent_llm_config:
+            from app.models.agent import Agent as AgentModel, AgentConfig as AgentConfigModel, LLMConfig as AgentLLMConfig
+            agent_model = AgentModel(
+                id=agent["id"],
+                config=AgentConfigModel(
+                    name=agent.get("name", "Agent"),
+                    role=agent.get("type", "agent"),
+                    llm_config=AgentLLMConfig(
+                        provider=agent_llm_config.get("provider", "deepseek"),
+                        model=agent_llm_config.get("model", "deepseek-chat"),
+                        temperature=agent_llm_config.get("temperature", 0.7),
+                        max_tokens=agent_llm_config.get("max_tokens"),
+                    )
+                )
+            )
+
         full_response = ""
-        async for chunk in llm_service.stream_chat(llm_messages):
+        async for chunk in llm_service.stream_chat(llm_messages, agent=agent_model):
             full_response += chunk
             yield chunk
 

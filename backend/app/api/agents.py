@@ -12,6 +12,13 @@ from app.services.agent.agent_service import agent_service, AgentType
 router = APIRouter(prefix="/api/agents", tags=["Agent管理"])
 
 
+class LLMConfigRequest(BaseModel):
+    provider: str = "deepseek"
+    model: str = "deepseek-chat"
+    temperature: float = 0.7
+    max_tokens: Optional[int] = None
+
+
 class CreateTemplateRequest(BaseModel):
     name: str
     type: str = "custom"
@@ -23,11 +30,20 @@ class CreateTemplateRequest(BaseModel):
     speaking_tendency: str = ""
     tags: List[str] = []
     suitable_scenarios: List[str] = []
+    llm_config: Optional[LLMConfigRequest] = None
 
 
 class CreateAgentRequest(BaseModel):
     template_id: str
     name: Optional[str] = None
+    llm_config: Optional[LLMConfigRequest] = None
+
+
+class UpdateAgentRequest(BaseModel):
+    name: Optional[str] = None
+    system_prompt: Optional[str] = None
+    status: Optional[str] = None
+    llm_config: Optional[LLMConfigRequest] = None
 
 
 class CreateAgentFromSoulRequest(BaseModel):
@@ -86,7 +102,8 @@ def create_template(data: CreateTemplateRequest):
 def create_agent(data: CreateAgentRequest):
     """从模板创建 Agent"""
     try:
-        agent = agent_service.create_agent(data.template_id, data.name)
+        llm_config = data.llm_config.model_dump() if data.llm_config else None
+        agent = agent_service.create_agent(data.template_id, data.name, llm_config)
         return agent
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -130,9 +147,12 @@ def get_agent(agent_id: str):
 
 
 @router.put("/{agent_id}")
-def update_agent(agent_id: str, updates: dict):
+def update_agent(agent_id: str, updates: UpdateAgentRequest):
     """更新 Agent"""
-    agent = agent_service.update_agent(agent_id, updates)
+    update_data = updates.model_dump(exclude_none=True)
+    if "llm_config" in update_data and update_data["llm_config"] is not None:
+        update_data["llm_config"] = updates.llm_config.model_dump()
+    agent = agent_service.update_agent(agent_id, update_data)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent

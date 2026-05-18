@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { getSettings, updateSettings, listWorkspaces } from '../lib/api'
-import type { AppSettings } from '../lib/api'
+import { getSettings, updateSettings, listWorkspaces, getAvailableModels, getAvailableProviders } from '../lib/api'
+import type { AppSettings, LLMModelInfo } from '../lib/api'
+import { useStore } from '../lib/store'
 
 interface SettingsModalProps {
   isOpen: boolean
@@ -8,7 +9,16 @@ interface SettingsModalProps {
   onSettingsChanged: (workspaceRoot: string) => void
 }
 
+const PROVIDER_LABELS: Record<string, string> = {
+  openai: 'OpenAI',
+  deepseek: 'DeepSeek',
+  anthropic: 'Anthropic Claude',
+  azure: 'Azure OpenAI',
+  mock: 'Mock（测试用）',
+}
+
 export default function SettingsModal({ isOpen, onClose, onSettingsChanged }: SettingsModalProps) {
+  const { globalLlmConfig, setGlobalLlmConfig } = useStore()
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [workspaceRoot, setWorkspaceRoot] = useState('')
   const [workspaceCount, setWorkspaceCount] = useState(0)
@@ -16,10 +26,19 @@ export default function SettingsModal({ isOpen, onClose, onSettingsChanged }: Se
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
 
+  // LLM config state
+  const [llmProvider, setLlmProvider] = useState(globalLlmConfig.provider)
+  const [llmModel, setLlmModel] = useState(globalLlmConfig.model)
+  const [llmTemperature, setLlmTemperature] = useState(globalLlmConfig.temperature)
+  const [llmMaxTokens, setLlmMaxTokens] = useState(globalLlmConfig.max_tokens?.toString() || '')
+  const [availableProviders, setAvailableProviders] = useState<string[]>([])
+  const [availableModels, setAvailableModels] = useState<Record<string, LLMModelInfo>>({})
+
   useEffect(() => {
     if (isOpen) {
       setMessage('')
       loadSettings()
+      loadLLMData()
     }
   }, [isOpen])
 
@@ -39,6 +58,20 @@ export default function SettingsModal({ isOpen, onClose, onSettingsChanged }: Se
     }
   }
 
+  const loadLLMData = async () => {
+    try {
+      const [providers, models] = await Promise.all([
+        getAvailableProviders(),
+        getAvailableModels(),
+      ])
+      setAvailableProviders(providers)
+      setAvailableModels(models)
+    } catch {
+      // 后端未启动时使用默认值
+      setAvailableProviders(['openai', 'deepseek', 'anthropic', 'azure', 'mock'])
+    }
+  }
+
   const handleSave = async () => {
     if (!workspaceRoot.trim()) return
     setSaving(true)
@@ -47,6 +80,13 @@ export default function SettingsModal({ isOpen, onClose, onSettingsChanged }: Se
       const updated = await updateSettings(workspaceRoot.trim())
       setSettings(updated)
       setWorkspaceRoot(updated.workspace_root)
+      // Save global LLM config
+      setGlobalLlmConfig({
+        provider: llmProvider,
+        model: llmModel,
+        temperature: llmTemperature,
+        max_tokens: llmMaxTokens ? parseInt(llmMaxTokens) : undefined,
+      })
       setMessage('已保存')
       onSettingsChanged(updated.workspace_root_resolved || updated.workspace_root)
       setTimeout(() => setMessage(''), 2000)
@@ -56,6 +96,17 @@ export default function SettingsModal({ isOpen, onClose, onSettingsChanged }: Se
       setSaving(false)
     }
   }
+
+  const filteredModels = Object.entries(availableModels)
+    .filter(([, info]) => info.provider === llmProvider)
+
+  // Sync model when provider changes
+  useEffect(() => {
+    const modelsForProvider = filteredModels
+    if (modelsForProvider.length > 0 && !modelsForProvider.find(([name]) => name === llmModel)) {
+      setLlmModel(modelsForProvider[0][0])
+    }
+  }, [llmProvider])
 
   if (!isOpen) return null
 
@@ -111,6 +162,89 @@ export default function SettingsModal({ isOpen, onClose, onSettingsChanged }: Se
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-surface-400">已有项目</span>
                   <span className="text-surface-200 font-mono">{workspaceCount} 个工作区</span>
+                </div>
+              </div>
+
+              {/* Global LLM Configuration */}
+              <div>
+                <label className="block text-xs text-surface-400 mb-1.5">
+                  默认 LLM 配置（Agent 未单独设置时使用）
+                </label>
+                <div className="space-y-3 bg-background-card border border-white/5 rounded-lg p-3">
+                  {/* Provider */}
+                  <div>
+                    <label className="block text-xs text-surface-500 mb-1">Provider</label>
+                    <select
+                      value={llmProvider}
+                      onChange={(e) => setLlmProvider(e.target.value)}
+                      className="w-full bg-background-input border border-white/10 rounded-lg px-3 py-2 text-sm text-surface-100 focus:outline-none focus:border-accent-cyan transition-colors"
+                    >
+                      {availableProviders.map((p) => (
+                        <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Model */}
+                  <div>
+                    <label className="block text-xs text-surface-500 mb-1">Model</label>
+                    <select
+                      value={llmModel}
+                      onChange={(e) => setLlmModel(e.target.value)}
+                      className="w-full bg-background-input border border-white/10 rounded-lg px-3 py-2 text-sm text-surface-100 focus:outline-none focus:border-accent-cyan transition-colors"
+                    >
+                      {filteredModels.map(([name, info]) => (
+                        <option key={name} value={name}>
+                          {name} ({info.description})
+                        </option>
+                      ))}
+                      {filteredModels.length === 0 && (
+                        <option value={llmModel}>{llmModel}</option>
+                      )}
+                    </select>
+                    {filteredModels.length > 0 && (() => {
+                      const selectedModel = availableModels[llmModel]
+                      if (!selectedModel) return null
+                      return (
+                        <p className="text-xs text-surface-600 mt-1">
+                          输入: ${selectedModel.input_cost_per_1k}/1K tokens · 输出: ${selectedModel.output_cost_per_1k}/1K tokens · 最大: {selectedModel.max_tokens.toLocaleString()} tokens
+                        </p>
+                      )
+                    })()}
+                  </div>
+
+                  {/* Temperature */}
+                  <div>
+                    <label className="block text-xs text-surface-500 mb-1">
+                      Temperature: {llmTemperature.toFixed(1)}
+                    </label>
+                    <input
+                      type="range"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={llmTemperature}
+                      onChange={(e) => setLlmTemperature(parseFloat(e.target.value))}
+                      className="w-full accent-accent-cyan"
+                    />
+                    <div className="flex justify-between text-xs text-surface-600">
+                      <span>精确 (0)</span>
+                      <span>平衡 (1)</span>
+                      <span>创意 (2)</span>
+                    </div>
+                  </div>
+
+                  {/* Max Tokens */}
+                  <div>
+                    <label className="block text-xs text-surface-500 mb-1">Max Tokens（可选）</label>
+                    <input
+                      type="number"
+                      value={llmMaxTokens}
+                      onChange={(e) => setLlmMaxTokens(e.target.value)}
+                      placeholder="使用模型默认值"
+                      className="w-full bg-background-input border border-white/10 rounded-lg px-3 py-2 text-sm text-surface-100 placeholder:text-surface-600 focus:outline-none focus:border-accent-cyan transition-colors"
+                    />
+                  </div>
                 </div>
               </div>
 
