@@ -372,11 +372,13 @@ export async function createWorkspace(
   description: string,
   agents: Array<Record<string, unknown>> = [],
   stages: Array<Record<string, unknown>> = [],
+  teamConfig?: { strategy: string; coordinatorId?: string },
+  template?: { id: string; name: string; stages: Array<Record<string, unknown>> },
 ): Promise<{ workspace: WorkspaceInfo; workspace_path: string }> {
   const response = await fetch(`${API_BASE}/workspaces`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ project_id: projectId, name, description, agents, stages }),
+    body: JSON.stringify({ project_id: projectId, name, description, agents, stages, team_config: teamConfig, template }),
   })
   if (!response.ok) {
     throw new Error(`创建工作区失败: ${response.statusText}`)
@@ -600,6 +602,73 @@ export async function stopPipeline(pipelineId: string): Promise<void> {
   if (!response.ok) throw new Error('停止流水线失败')
 }
 
+// ========== Pipeline Template Adjustment API ==========
+
+export interface StageAdjustment {
+  key: string
+  label: string
+  description: string
+  expected_artifact: string
+  parallel_group: string | null
+}
+
+export interface AdjustmentSuggestions {
+  analysis: string
+  recommended_strategy: string
+  changes: {
+    add: Array<{ label: string; description: string; expected_artifact: string; position: number }>
+    remove: string[]
+    reorder: Array<{ key: string; new_position: number }>
+    rename: Array<{ key: string; new_label: string }>
+  }
+  final_stages: StageAdjustment[]
+}
+
+export async function adjustPipelineTemplate(
+  projectName: string,
+  projectDescription: string,
+  templateId: string,
+): Promise<AdjustmentSuggestions> {
+  const response = await fetch(`${API_BASE}/pipelines/templates/adjust`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_name: projectName, project_description: projectDescription, template_id: templateId }),
+  })
+  if (!response.ok) throw new Error('调整模板失败')
+  return response.json()
+}
+
+export async function applyPipelineAdjustment(
+  templateId: string,
+  adjustments: Record<string, unknown>,
+): Promise<{ stages: StageAdjustment[] }> {
+  const response = await fetch(`${API_BASE}/pipelines/templates/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ template_id: templateId, adjustments }),
+  })
+  if (!response.ok) throw new Error('应用调整失败')
+  return response.json()
+}
+
+export async function retryTaskWithFeedback(taskId: string, agentId: string): Promise<{ status: string; error?: string }> {
+  const response = await fetch(`${API_BASE}/execution/tasks/${taskId}/retry-with-feedback?agent_id=${encodeURIComponent(agentId)}`, {
+    method: 'POST',
+  })
+  if (!response.ok) throw new Error('重试失败')
+  return response.json()
+}
+
+export async function getArtifactStatus(projectId: string, stages: Array<Record<string, unknown>>): Promise<Record<string, unknown>> {
+  const response = await fetch(`${API_BASE}/workspaces/${projectId}/artifacts/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stages }),
+  })
+  if (!response.ok) throw new Error('获取产出物状态失败')
+  return response.json()
+}
+
 export async function intervenePipeline(
   pipelineId: string,
   message: string,
@@ -634,5 +703,95 @@ export async function updateSettings(workspaceRoot: string): Promise<AppSettings
   if (!response.ok) {
     throw new Error(`更新设置失败: ${response.statusText}`)
   }
+  return response.json()
+}
+
+// ========== 多项目管理 API ==========
+
+export interface ProjectSummary {
+  id: string
+  name: string
+  description: string
+  status: string
+  current_phase: string
+  pipeline_count: number
+  active_pipeline: Record<string, unknown> | null
+  task_count: number
+  agent_count: number
+  agents: Array<{ id: string; name: string; type: string }>
+  created_at: string
+  updated_at: string
+}
+
+export async function listProjects(status?: string): Promise<Array<{ id: string; name: string; description: string; status: string; current_phase: string; requirements: string; created_at: string; updated_at: string }>> {
+  const params = status ? `?status=${status}` : ''
+  const response = await fetch(`${API_BASE}/projects/${params}`)
+  if (!response.ok) throw new Error('获取项目列表失败')
+  return response.json()
+}
+
+export async function createProject(name: string, description: string, requirements: string = ''): Promise<{ id: string; name: string; status: string }> {
+  const response = await fetch(`${API_BASE}/projects/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, description, requirements }),
+  })
+  if (!response.ok) throw new Error('创建项目失败')
+  return response.json()
+}
+
+export async function getProjectSummary(projectId: string): Promise<ProjectSummary> {
+  const response = await fetch(`${API_BASE}/projects/${projectId}/summary`)
+  if (!response.ok) throw new Error('获取项目汇总失败')
+  return response.json()
+}
+
+export async function deleteProject(projectId: string, cascade: boolean = true): Promise<void> {
+  const response = await fetch(`${API_BASE}/projects/${projectId}?cascade=${cascade}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) throw new Error('删除项目失败')
+}
+
+export async function assignAgentToProject(agentId: string, projectId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/agents/${agentId}/assign`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: projectId }),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: '分配失败' }))
+    throw new Error(err.detail || 'Agent 分配失败')
+  }
+}
+
+export async function releaseAgentFromProject(agentId: string, projectId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/agents/${agentId}/release`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: projectId }),
+  })
+  if (!response.ok) {
+    throw new Error('Agent 释放失败')
+  }
+}
+
+export async function getAvailableAgents(): Promise<Array<Record<string, unknown>>> {
+  const response = await fetch(`${API_BASE}/agents/?available=true`)
+  if (!response.ok) throw new Error('获取可用 Agent 失败')
+  const data = await response.json()
+  return data.agents
+}
+
+export async function getProjectAgents(projectId: string): Promise<Array<Record<string, unknown>>> {
+  const response = await fetch(`${API_BASE}/agents/?project_id=${projectId}`)
+  if (!response.ok) throw new Error('获取项目 Agent 失败')
+  const data = await response.json()
+  return data.agents
+}
+
+export async function getAgentProject(agentId: string): Promise<{ agent_id: string; project_id: string | null; status: string }> {
+  const response = await fetch(`${API_BASE}/agents/${agentId}/project`)
+  if (!response.ok) throw new Error('获取 Agent 项目失败')
   return response.json()
 }

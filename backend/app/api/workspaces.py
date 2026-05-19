@@ -13,6 +13,8 @@ class CreateWorkspaceRequest(BaseModel):
     description: str = ""
     agents: List[Dict[str, Any]] = Field(default_factory=list)
     stages: List[Dict[str, Any]] = Field(default_factory=list)
+    team_config: Optional[Dict[str, Any]] = None
+    template: Optional[Dict[str, Any]] = None
 
 
 class AddArtifactRequest(BaseModel):
@@ -35,6 +37,8 @@ def create_workspace(request: CreateWorkspaceRequest):
         description=request.description,
         agents=request.agents,
         stages=request.stages,
+        team_config=request.team_config,
+        template=request.template,
     )
     return {
         "workspace": data,
@@ -115,3 +119,26 @@ def delete_workspace(project_id: str):
     if not ok:
         raise HTTPException(status_code=404, detail="Workspace not found")
     return {"status": "ok"}
+
+
+# ========== Artifact API ==========
+
+class GetArtifactStatusRequest(BaseModel):
+    stages: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+@router.post("/{project_id}/artifacts/status")
+def get_artifact_status(project_id: str, request: GetArtifactStatusRequest):
+    """获取各阶段的产出物状态"""
+    return workspace_manager.get_artifact_status(project_id, request.stages)
+
+
+@router.get("/{project_id}/artifacts/prerequisites")
+def get_prerequisite_artifacts(
+    project_id: str,
+    current_stage: str = Query(...),
+    stage_order: str = Query(""),
+):
+    """获取前置阶段的产出物内容"""
+    order = [s.strip() for s in stage_order.split(",") if s.strip()]
+    return workspace_manager.get_prerequisite_artifacts(project_id, current_stage, order)

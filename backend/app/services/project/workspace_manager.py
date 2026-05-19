@@ -35,6 +35,8 @@ class WorkspaceManager:
         description: str = "",
         agents: Optional[List[Dict[str, Any]]] = None,
         stages: Optional[List[Dict[str, Any]]] = None,
+        team_config: Optional[Dict[str, Any]] = None,
+        template: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         ws_dir = self._workspace_dir(project_id)
         ws_dir.mkdir(parents=True, exist_ok=True)
@@ -42,9 +44,12 @@ class WorkspaceManager:
         for subdir in ["docs", "src", "logs"]:
             (ws_dir / subdir).mkdir(exist_ok=True)
 
+        # Use template stage keys for artifact directories, or fallback to default
+        stage_keys = [s["key"] for s in (stages or [])] if stages else self.STAGE_KEYS
+
         artifacts_dir = ws_dir / "artifacts"
         artifacts_dir.mkdir(exist_ok=True)
-        for stage_key in self.STAGE_KEYS:
+        for stage_key in stage_keys:
             (artifacts_dir / stage_key).mkdir(exist_ok=True)
 
         project_data = {
@@ -56,6 +61,8 @@ class WorkspaceManager:
             "status": "running",
             "agents": agents or [],
             "stages": stages or [],
+            "team_config": team_config,
+            "template": template,
         }
 
         with open(ws_dir / "project.json", "w", encoding="utf-8") as f:
@@ -180,6 +187,70 @@ class WorkspaceManager:
             return False
         shutil.rmtree(ws_dir)
         return True
+
+    # ========== Artifact 管理 ==========
+
+    def get_artifact_status(self, project_id: str, stages: List[dict]) -> Dict[str, Any]:
+        """获取各阶段的产出物状态"""
+        ws_dir = self._workspace_dir(project_id)
+        artifact_dir = ws_dir / "artifacts"
+
+        stage_status = {}
+        for stage in stages:
+            stage_key = stage.get("key", stage.get("label", ""))
+            expected = stage.get("expected_artifact", "")
+            stage_dir = artifact_dir / stage_key
+
+            files = []
+            if stage_dir.exists():
+                for f in sorted(stage_dir.iterdir()):
+                    files.append({
+                        "name": f.name,
+                        "size": f.stat().st_size if f.is_file() else 0,
+                        "modified_at": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
+                    })
+
+            stage_status[stage_key] = {
+                "label": stage.get("label", stage_key),
+                "expected_artifact": expected,
+                "has_artifacts": len(files) > 0,
+                "files": files,
+            }
+
+        return {
+            "project_id": project_id,
+            "stages": stage_status,
+        }
+
+    def get_prerequisite_artifacts(
+        self, project_id: str, current_stage_key: str, stage_order: List[str],
+    ) -> Dict[str, Any]:
+        """获取前置阶段的产出物内容（用于可执行反馈）"""
+        ws_dir = self._workspace_dir(project_id)
+        artifact_dir = ws_dir / "artifacts"
+
+        try:
+            current_idx = stage_order.index(current_stage_key)
+            prerequisite_keys = stage_order[:current_idx]
+        except ValueError:
+            prerequisite_keys = stage_order
+
+        artifacts = {}
+        for stage_key in prerequisite_keys:
+            stage_dir = artifact_dir / stage_key
+            if stage_dir.exists():
+                files = {}
+                for f in sorted(stage_dir.iterdir()):
+                    if f.is_file():
+                        try:
+                            with open(f, "r", encoding="utf-8") as fh:
+                                files[f.name] = fh.read()[:5000]  # 截断到5000字符
+                        except Exception:
+                            files[f.name] = "[binary or unreadable]"
+                if files:
+                    artifacts[stage_key] = files
+
+        return artifacts
 
     def _build_file_tree(self, ws_dir: Path) -> List[Dict[str, Any]]:
         files = []

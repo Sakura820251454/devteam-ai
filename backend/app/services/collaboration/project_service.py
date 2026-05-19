@@ -118,11 +118,80 @@ class ProjectService:
             projects = [p for p in projects if p.status == status]
         return sorted(projects, key=lambda p: p.updated_at, reverse=True)
 
-    def delete_project(self, project_id: str) -> bool:
-        if project_id in self._projects:
-            del self._projects[project_id]
-            return True
-        return False
+    def delete_project(self, project_id: str, cascade: bool = True) -> bool:
+        if project_id not in self._projects:
+            return False
+        if cascade:
+            self._cleanup_project(project_id)
+        del self._projects[project_id]
+        if project_id in self._task_breakdown_prompts:
+            del self._task_breakdown_prompts[project_id]
+        return True
+
+    def _cleanup_project(self, project_id: str) -> None:
+        """级联清理项目相关资源"""
+        from app.services.collaboration.pipeline_orchestrator import pipeline_orchestrator
+        from app.services.collaboration.task_board import task_board
+        from app.services.collaboration.message_bus import message_bus
+        from app.services.collaboration.arbitrator import arbitrator
+        from app.services.agent.agent_service import agent_service
+        from app.services.agent.agent_executor import agent_executor
+        from app.services.project.workspace_manager import workspace_manager
+
+        # 停止项目 pipeline
+        for pid in list(pipeline_orchestrator._active_pipelines.keys()):
+            if pid == project_id:
+                pipeline_id = pipeline_orchestrator._active_pipelines[pid]
+                pipeline_orchestrator.stop_pipeline(pipeline_id)
+
+        # 释放 Agent
+        agent_service.release_project_agents(project_id)
+
+        # 清理任务
+        task_board.clear_project_tasks(project_id)
+
+        # 清理消息
+        message_bus.clear_project_history(project_id)
+        message_bus.cleanup_project_channels(project_id)
+
+        # 清理仲裁
+        arbitrator.clear_project_issues(project_id)
+
+        # 清理工作区
+        try:
+            workspace_manager.delete_workspace(project_id)
+        except Exception:
+            pass
+
+    def get_project_summary(self, project_id: str) -> Optional[Dict[str, Any]]:
+        """获取项目汇总信息"""
+        project = self._projects.get(project_id)
+        if not project:
+            return None
+
+        from app.services.collaboration.pipeline_orchestrator import pipeline_orchestrator
+        from app.services.collaboration.task_board import task_board
+        from app.services.agent.agent_service import agent_service
+
+        pipelines = pipeline_orchestrator.list_pipelines_by_project(project_id)
+        active_pipeline = pipeline_orchestrator.get_active_pipeline(project_id)
+        task_count = task_board.get_task_count(project_id=project_id)
+        agents = agent_service.get_project_agents(project_id)
+
+        return {
+            "id": project.id,
+            "name": project.name,
+            "description": project.description,
+            "status": project.status.value if hasattr(project.status, 'value') else project.status,
+            "current_phase": project.current_phase.value if hasattr(project.current_phase, 'value') else project.current_phase,
+            "created_at": project.created_at.isoformat() if hasattr(project.created_at, 'isoformat') else str(project.created_at),
+            "updated_at": project.updated_at.isoformat() if hasattr(project.updated_at, 'isoformat') else str(project.updated_at),
+            "pipeline_count": len(pipelines),
+            "active_pipeline": active_pipeline,
+            "task_count": task_count,
+            "agent_count": len(agents),
+            "agents": [{"id": a["id"], "name": a.get("name", ""), "type": a.get("type", "")} for a in agents],
+        }
 
     def advance_phase(self, project_id: str) -> Optional[Project]:
         project = self._projects.get(project_id)

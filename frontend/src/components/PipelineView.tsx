@@ -1,5 +1,8 @@
+import { useState } from 'react'
 import { useStore } from '../lib/store'
 import type { PipelineStage, Agent, Pipeline } from '../lib/store'
+import { adjustPipelineTemplate } from '../lib/api'
+import type { AdjustmentSuggestions } from '../lib/api'
 import TaskBoard from './TaskBoard'
 
 const STAGE_ICONS: Record<string, { icon: string; desc: string }> = {
@@ -188,16 +191,21 @@ function ProjectStats({ pipeline }: { pipeline: Pipeline }) {
 }
 
 interface PipelineViewProps {
+  projectId?: string | null
   onCreateProject: () => void
   onOpenExample: () => void
 }
 
-export default function PipelineView({ onCreateProject, onOpenExample }: PipelineViewProps) {
-  const {
-    pipeline, selectedStage, agents, workspacePath,
-    setSelectedStage,
-    addLog,
-  } = useStore()
+export default function PipelineView({ projectId, onCreateProject, onOpenExample }: PipelineViewProps) {
+  const pid = projectId ?? ''
+  const pipeline = useStore((s) => s.pipelines[pid] ?? null)
+  const agents = useStore((s) => s.agentsByProject[pid] ?? [])
+  const workspacePath = useStore((s) => s.workspacePaths[pid] ?? null)
+  const addLog = useStore((s) => s.addLog)
+  const [selectedStage, setSelectedStage] = useState<string | null>(null)
+  const [showAdjust, setShowAdjust] = useState(false)
+  const [adjustLoading, setAdjustLoading] = useState(false)
+  const [adjustResult, setAdjustResult] = useState<AdjustmentSuggestions | null>(null)
 
   const handleStageClick = (stageKey: string) => {
     if (selectedStage === stageKey) {
@@ -205,7 +213,7 @@ export default function PipelineView({ onCreateProject, onOpenExample }: Pipelin
     } else {
       setSelectedStage(stageKey)
       const stage = pipeline?.stages.find((s) => s.key === stageKey)
-      addLog({ level: 'info', source: 'pipeline', message: `进入阶段: ${stage?.label || stageKey}` })
+      addLog(pid, { level: 'info', source: 'pipeline', message: `进入阶段: ${stage?.label || stageKey}` })
     }
   }
 
@@ -260,8 +268,88 @@ export default function PipelineView({ onCreateProject, onOpenExample }: Pipelin
             <div className="h-full bg-accent-cyan rounded-full transition-all duration-700" style={{ width: `${Math.round(pipeline.progress * 100)}%` }} />
           </div>
           <span className="text-sm text-surface-500 font-mono">{Math.round(pipeline.progress * 100)}%</span>
+          {pipeline.currentStage === pipeline.stages[0]?.key && (
+            <button
+              onClick={async () => {
+                setShowAdjust(!showAdjust)
+                if (!adjustResult && !adjustLoading) {
+                  setAdjustLoading(true)
+                  try {
+                    const result = await adjustPipelineTemplate(
+                      pipeline.name,
+                      `Pipeline stages: ${pipeline.stages.map(s => s.label).join(' → ')}`,
+                      pipeline.stages.length > 0 ? 'custom' : 'web_application',
+                    )
+                    setAdjustResult(result)
+                  } catch {
+                    setAdjustResult(null)
+                  } finally {
+                    setAdjustLoading(false)
+                  }
+                }
+              }}
+              className="text-xs px-2 py-1 rounded bg-accent-purple/20 text-accent-purple hover:bg-accent-purple/30 transition-colors"
+            >
+              {adjustLoading ? '分析中...' : showAdjust ? '收起建议' : 'AI 建议调整阶段'}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* LLM Adjustment Panel */}
+      {showAdjust && (
+        <div className="px-5 py-3 border-b border-white/5 bg-accent-purple/5">
+          {adjustLoading ? (
+            <div className="flex items-center gap-2 text-sm text-surface-400">
+              <div className="animate-spin w-4 h-4 border-2 border-accent-purple border-t-transparent rounded-full" />
+              AI 正在分析项目需求，建议 Pipeline 阶段调整...
+            </div>
+          ) : adjustResult ? (
+            <div className="text-sm space-y-2">
+              <div className="text-surface-200 font-medium">
+                AI 建议：{adjustResult.analysis}
+              </div>
+              {adjustResult.changes && (
+                <div className="flex flex-wrap gap-1.5 text-xs">
+                  {adjustResult.changes.add?.length > 0 && (
+                    <span className="text-accent-green">+{adjustResult.changes.add.length} 新增阶段</span>
+                  )}
+                  {adjustResult.changes.remove?.length > 0 && (
+                    <span className="text-accent-red">-{adjustResult.changes.remove.length} 移除阶段</span>
+                  )}
+                  {adjustResult.changes.reorder?.length > 0 && (
+                    <span className="text-accent-cyan">↔ {adjustResult.changes.reorder.length} 调整顺序</span>
+                  )}
+                  {adjustResult.changes.rename?.length > 0 && (
+                    <span className="text-accent-orange">✎ {adjustResult.changes.rename.length} 重命名</span>
+                  )}
+                  {!adjustResult.changes.add?.length && !adjustResult.changes.remove?.length && !adjustResult.changes.reorder?.length && !adjustResult.changes.rename?.length && (
+                    <span className="text-surface-400">无需调整，当前阶段已是最佳方案</span>
+                  )}
+                </div>
+              )}
+              {adjustResult.final_stages?.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                  <span className="text-xs text-surface-500">建议阶段：</span>
+                  {adjustResult.final_stages.map((s, i) => (
+                    <span key={s.key} className="inline-flex items-center gap-1">
+                      {i > 0 && <span className="text-surface-600">→</span>}
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-surface-600/50 text-surface-300">
+                        {s.label}
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <span className="text-xs text-surface-500">
+                LLM 建议作为参考，可在后续开发中手动调整阶段。此功能将在 Phase 4 完整实现中支持一键应用。
+              </span>
+            </div>
+          ) : (
+            <div className="text-sm text-surface-400">LLM 分析失败，请稍后重试</div>
+          )}
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-hidden flex">
@@ -296,7 +384,7 @@ export default function PipelineView({ onCreateProject, onOpenExample }: Pipelin
                   ✕ 关闭
                 </button>
               </div>
-              <TaskBoard />
+              <TaskBoard projectId={pid} selectedStage={selectedStage} />
             </div>
           </>
         ) : (

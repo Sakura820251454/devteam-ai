@@ -195,5 +195,137 @@ class MessageBus:
         else:
             self._message_history = {MessageChannel.PUBLIC.value: []}
 
+    # ========== 项目级消息辅助方法 ==========
+
+    @staticmethod
+    def get_project_channel(project_id: str) -> str:
+        return f"project:{project_id}"
+
+    @staticmethod
+    def get_stage_channel(project_id: str, stage_key: str) -> str:
+        return f"stage:{project_id}:{stage_key}"
+
+    def get_history_by_project(self, project_id: str) -> List[Message]:
+        channel = self.get_project_channel(project_id)
+        return self._message_history.get(channel, [])
+
+    def clear_project_history(self, project_id: str) -> None:
+        channel = self.get_project_channel(project_id)
+        self.clear_history(channel)
+
+    # ========== 阶段级消息 ==========
+
+    async def send_to_stage(self, message: Message, project_id: str, stage_key: str) -> None:
+        """发送消息到指定阶段频道"""
+        channel = self.get_stage_channel(project_id, stage_key)
+        message.channel = channel
+        if "stage" not in message.metadata:
+            message.metadata["stage"] = stage_key
+        if "project_id" not in message.metadata:
+            message.metadata["project_id"] = project_id
+        await self._deliver_message(message)
+
+    def get_stage_history(
+        self,
+        project_id: str,
+        stage_key: str,
+        limit: int = 100,
+    ) -> List[Message]:
+        """获取指定阶段的消息历史"""
+        channel = self.get_stage_channel(project_id, stage_key)
+        history = self._message_history.get(channel, [])
+        return history[-limit:]
+
+    def get_stage_context(
+        self,
+        project_id: str,
+        stage_key: str,
+        include_public: bool = True,
+        limit: int = 50,
+    ) -> List[Message]:
+        """获取阶段的完整上下文（阶段消息 + 可选公共消息）"""
+        context = self.get_stage_history(project_id, stage_key, limit=limit)
+        if include_public:
+            public_msgs = self._message_history.get(MessageChannel.PUBLIC.value, [])
+            # 获取与项目相关的公共消息（通过 metadata）
+            relevant = [m for m in public_msgs if m.metadata.get("project_id") == project_id]
+            context.extend(relevant[-limit:])
+        return sorted(context, key=lambda m: m.timestamp)[-limit:]
+
+    def get_prerequisite_context(
+        self,
+        project_id: str,
+        current_stage_key: str,
+        stage_order: List[str],
+    ) -> List[Message]:
+        """
+        获取前置阶段的上下文消息（用于可执行反馈）
+        stage_order: 按顺序排列的阶段 key 列表
+        返回当前阶段之前所有阶段的消息
+        """
+        context = []
+        try:
+            current_idx = stage_order.index(current_stage_key)
+            prerequisite_keys = stage_order[:current_idx]
+        except ValueError:
+            prerequisite_keys = stage_order
+
+        for stage_key in prerequisite_keys:
+            channel = self.get_stage_channel(project_id, stage_key)
+            msgs = self._message_history.get(channel, [])
+            context.extend(msgs[-20:])  # 每个阶段取最近 20 条
+
+        # 也包含公共消息
+        public_msgs = self._message_history.get(MessageChannel.PUBLIC.value, [])
+        relevant_public = [m for m in public_msgs if m.metadata.get("project_id") == project_id]
+        context.extend(relevant_public[-30:])
+
+        return sorted(context, key=lambda m: m.timestamp)
+
+    # ========== 主题/标签订阅 ==========
+
+    def subscribe_to_topics(
+        self,
+        agent_id: str,
+        topics: List[str],
+        callback: Callable[[Message], None],
+    ) -> str:
+        """
+        按消息主题标签订阅。消息的 metadata.topic 匹配时触发回调。
+        """
+        subscription_id = str(uuid.uuid4())
+        channel = "topics"
+        if channel not in self._subscribers:
+            self._subscribers[channel] = []
+
+        # 重写 callback 以自动过滤 topic
+        async def topic_filtered_callback(message: Message):
+            msg_topic = message.metadata.get("topic", "")
+            if msg_topic in topics:
+                if asyncio.iscoroutinefunction(callback):
+                    await callback(message)
+                else:
+                    callback(message)
+
+        self._subscribers[channel].append(Subscription(
+            agent_id=agent_id,
+            channels=[channel],
+            callback=topic_filtered_callback,
+        ))
+        return subscription_id
+
+    def cleanup_project_channels(self, project_id: str) -> None:
+        """清理与项目相关的所有频道"""
+        prefix_stage = f"stage:{project_id}:"
+        prefix_project = f"project:{project_id}"
+
+        for channel in list(self._message_history.keys()):
+            if channel.startswith(prefix_stage) or channel == prefix_project:
+                del self._message_history[channel]
+
+        for channel in list(self._channel_members.keys()):
+            if channel.startswith(prefix_stage) or channel == prefix_project:
+                del self._channel_members[channel]
+
 
 message_bus = MessageBus()

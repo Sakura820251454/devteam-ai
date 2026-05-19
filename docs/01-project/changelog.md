@@ -1,7 +1,98 @@
 # 变更日志
 
-**版本**: v2.3  
-**最后更新**: 2026-05-18
+**版本**: v2.7  
+**最后更新**: 2026-05-19
+
+---
+
+## [v2.7] - 2026-05-19
+
+### LLM 动态调整 Pipeline 阶段 (Phase 4)
+
+**后端**：
+- `suggest_stage_adjustments()` 函数：LLM 分析项目需求 → 建议增删改重排阶段
+- `apply_stage_adjustments()` 函数：将 LLM 建议应用到模板
+- API `POST /api/pipelines/templates/adjust` — 触发 LLM 阶段调整建议
+- API `POST /api/pipelines/templates/apply` — 应用调整后的阶段列表
+
+**前端**：
+- `PipelineView` 新增 "AI 建议调整阶段" 按钮（需求分析阶段可见）
+- LLM 返回后展示：分析说明 + 变更摘要（新增/移除/重排/重命名）+ 建议阶段流程图
+- `api.ts` 新增 4 个 API 函数：`adjustPipelineTemplate`、`applyPipelineAdjustment`、`retryTaskWithFeedback`、`getArtifactStatus`
+
+**核心理念**：Pipeline 不是写死的 — 用户选模板作为起点，LLM 根据项目实际需求建议优化，用户确认后生效。
+
+---
+
+## [v2.6] - 2026-05-19
+
+### MetaGPT 三项增强 (Phase 3)
+
+**MessageBus 增强发布-订阅**：
+- 新增阶段频道：`stage:{project_id}:{stage_key}`，Agent 可按阶段订阅
+- `send_to_stage()` 方法：发送到指定阶段
+- `get_stage_context()` 方法：获取阶段完整上下文（阶段消息 + 公共消息）
+- `get_prerequisite_context()` 方法：获取前置阶段所有消息（用于反馈）
+- `subscribe_to_topics()` 方法：按消息主题标签订阅
+- `cleanup_project_channels()` 方法：级联清理所有项目频道
+
+**产出物管理**：
+- `get_artifact_status()` 方法：查询各阶段产出物状态（有/无、文件列表）
+- `get_prerequisite_artifacts()` 方法：获取前置阶段产出物内容（用于反馈）
+- API `POST /api/workspaces/{id}/artifacts/status` — 产出物状态查询
+- API `GET /api/workspaces/{id}/artifacts/prerequisites` — 前置产出物内容
+
+**可执行反馈 (Executable Feedback)**：
+- `_build_feedback_context()` 方法：收集项目阶段要求 + 前置产出物 + 历史消息 + 任务记录
+- `execute_task_with_feedback()` 方法：首次执行失败后，自动注入反馈上下文重试一次
+- API `POST /api/execution/tasks/{task_id}/retry-with-feedback` — 带反馈重试端点
+- Agent 出错不瞎猜，基于共享上下文修正
+
+**核心理念**：借鉴 MetaGPT 三项：
+1. 阶段产出物（Artifact）→ 执行有目标、进度有感知
+2. 发布-订阅消息 → Agent 只接收相关消息，不被无关内容淹没
+3. 可执行反馈 → 出错时对照公共历史文档和消息，不瞎猜
+
+---
+
+## [v2.4] - 2026-05-19
+
+### Agent 体系统一 (Phase 1)
+
+统一项目创建流程中的 Agent 体系，从硬编码角色模板改为 soul.md 定义的 Agent 实例。
+
+**AgentConfigModal 重写**：
+- 删除 `PRESET_ROLES` 硬编码数组（6 个固定角色模板）
+- 改为从 `/api/agents/soul-based` 加载 soul.md Agent（xiaoli、xiaochen 等 6 人）
+- 新增协调策略选择（sequential/hierarchical/discussion/auto）
+- hierarchical 模式下可指定统筹 Agent
+- 保留 per-agent LLM 配置功能
+- 后端不可用时 fallback 到与 soul.md 匹配的 MOCK 数据
+
+**Home.tsx / store.ts 适配**：
+- `handleAgentsConfigured` 简化 role 映射：soul agent 的 `type: custom` 映射为"团队成员"
+- `startProject` 新增 `teamConfig` 参数，存储策略配置
+- 通用型 agent 自动分配到所有 pipeline stage，角色在执行时动态协商
+- `createWorkspace` API 签名扩展，支持传递 `teamConfig`
+
+**协作系统设计文档**：
+- 确立 Pipeline（WHAT）与协作策略（HOW）正交架构
+- 定义 18 种 Pipeline 阶段模板（4 类：简单任务/开发项目/方案设计/复杂系统）
+- 每个阶段关联明确产出物（借鉴 MetaGPT）
+- 借鉴 MetaGPT 三项：发布-订阅消息、阶段产出物、可执行反馈
+
+### Pipeline 模板系统 (Phase 2)
+
+**后端**：
+- 新增 `pipeline_templates.py`：定义 `PipelineTemplate` + `StageDefinition` 数据模型
+- 18 种预定义模板覆盖 4 类任务（简单/开发/设计/复杂），每个阶段关联产出物
+- API 端点 `GET /api/pipelines/templates` 和 `GET /api/pipelines/templates/{id}`，支持按类别筛选
+- `workspace_manager` 支持动态 stage 目录创建 + 存储 `team_config` 和 `template`
+
+**前端**：
+- `CreateProjectModal` 增加模板选择（按类别分组 + 阶段预览 + 示例关联模板）
+- `startProject` 接受 template 参数，用模板 stages 构建动态 pipeline
+- `createWorkspace` API 传递 template 和 teamConfig 到后端
 
 ---
 

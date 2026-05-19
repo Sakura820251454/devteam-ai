@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { useStore } from '../lib/store'
+import { useStore, type Agent } from '../lib/store'
 import { startSimulation } from '../lib/simulation'
 import PipelineView from '../components/PipelineView'
 import AgentTeamPanel from '../components/AgentTeamPanel'
@@ -11,30 +11,35 @@ import AgentChatPanel from '../components/AgentChatPanel'
 import CreateProjectModal from '../components/CreateProjectModal'
 import AgentConfigModal from '../components/AgentConfigModal'
 import SettingsModal from '../components/SettingsModal'
+import ProjectSwitcher from '../components/ProjectSwitcher'
 
 type SideTab = 'agents' | 'chat' | 'timeline' | 'cost'
 
 export default function Home() {
-  const {
-    pipeline,
-    sidePanelOpen,
-    terminalExpanded,
-    terminalFullscreen,
-    isConnected,
-    isLoading,
-    setSidePanelOpen,
-    setTerminalExpanded,
-    startProject,
-    resetProject,
-    setWorkspacePath,
-  } = useStore()
+  const projects = useStore((s) => s.projects)
+  const activeProjectId = useStore((s) => s.activeProjectId)
+  const pipeline = useStore((s) => activeProjectId ? s.pipelines[activeProjectId] ?? null : null)
+  const sidePanelOpen = useStore((s) => s.sidePanelOpen)
+  const terminalExpanded = useStore((s) => s.terminalExpanded)
+  const terminalFullscreen = useStore((s) => s.terminalFullscreen)
+  const isConnected = useStore((s) => s.isConnected)
+  const isLoading = useStore((s) => s.isLoading)
+  const setSidePanelOpen = useStore((s) => s.setSidePanelOpen)
+  const setTerminalExpanded = useStore((s) => s.setTerminalExpanded)
+  const startProject = useStore((s) => s.startProject)
+  const resetProject = useStore((s) => s.resetProject)
+  const setWorkspacePath = useStore((s) => s.setWorkspacePath)
 
   const [activeTab, setActiveTab] = useState<SideTab>('agents')
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showAgentConfig, setShowAgentConfig] = useState(false)
-  const [pendingProject, setPendingProject] = useState({ name: '', description: '' })
+  const [pendingProject, setPendingProject] = useState<{
+    name: string
+    description: string
+    template: { id: string; name: string; stages: Array<{ key: string; label: string; expected_artifact: string; parallel_group: string | null }> } | null
+  }>({ name: '', description: '', template: null })
   const [showSettings, setShowSettings] = useState(false)
-  const stopSimRef = useRef<(() => void) | null>(null)
+  const stopSimRefs = useRef<Record<string, () => void>>({})
 
   const progress = pipeline ? Math.round(pipeline.progress * 100) : 0
   const statusLabel =
@@ -44,7 +49,7 @@ export default function Home() {
     pipeline?.status === 'paused' ? '已暂停' :
     pipeline?.status === 'completed' ? '已完成' :
     pipeline?.status === 'failed' ? '失败' :
-    '空闲'
+    activeProjectId ? '空闲' : '就绪'
 
   const statusColor =
     !isConnected ? 'bg-surface-400' :
@@ -55,8 +60,8 @@ export default function Home() {
     pipeline?.status === 'failed' ? 'bg-accent-red' :
     'bg-surface-400'
 
-  const handleCreateProject = (name: string, description: string) => {
-    setPendingProject({ name, description })
+  const handleCreateProject = (name: string, description: string, template: any) => {
+    setPendingProject({ name, description, template })
     setShowCreateModal(false)
     setShowAgentConfig(true)
   }
@@ -65,37 +70,57 @@ export default function Home() {
     id: string; name: string; type: string; description: string;
     avatar_color: string; capabilities: string[];
     llm_config?: { provider: string; model: string; temperature: number; max_tokens?: number }
-  }>, _teamConfig: { mode: string; complexity: string }) => {
-    stopSimRef.current?.()
-    const agents = selectedAgents.map((a) => ({
+  }>, teamConfig: { strategy: string; coordinatorId?: string }) => {
+    const typeToRole: Record<string, string> = {
+      product_manager: '产品经理',
+      architect: '架构师',
+      backend_developer: '后端开发',
+      frontend_developer: '前端开发',
+      tester: '测试工程师',
+      devops: '运维工程师',
+    }
+    const agents: Agent[] = selectedAgents.map((a) => ({
       id: a.id,
       name: a.name,
-      role: a.type === 'product_manager' ? '产品经理' :
-        a.type === 'architect' ? '架构师' :
-        a.type === 'backend_developer' ? '后端开发' :
-        a.type === 'frontend_developer' ? '前端开发' :
-        a.type === 'tester' ? '测试工程师' :
-        a.type === 'devops' ? '运维工程师' : '自定义',
+      role: typeToRole[a.type] || '团队成员',
       status: 'idle' as const,
       avatarColor: a.avatar_color,
       description: a.description,
       llm_config: a.llm_config,
     }))
-    startProject(pendingProject.name, pendingProject.description, agents)
-    stopSimRef.current = startSimulation(pendingProject.name, pendingProject.description)
+    startProject(pendingProject.name, pendingProject.description, agents, teamConfig, pendingProject.template)
+
+    // 启动模拟（延迟获取刚创建的 projectId）
+    setTimeout(() => {
+      const state = useStore.getState()
+      const pid = state.activeProjectId
+      if (pid) {
+        stopSimRefs.current[pid]?.()
+        stopSimRefs.current[pid] = startSimulation(pid, pendingProject.name, pendingProject.description)
+      }
+    }, 0)
   }
 
   const handleOpenExample = () => {
-    stopSimRef.current?.()
     const name = '示例：博客平台开发'
     const desc = '开发一个支持 Markdown 的技术博客平台，包含文章发布、标签分类、评论系统、RSS 订阅、全文搜索。前后端分离架构，FastAPI + React + PostgreSQL。'
     startProject(name, desc)
-    stopSimRef.current = startSimulation(name, desc)
+
+    setTimeout(() => {
+      const state = useStore.getState()
+      const pid = state.activeProjectId
+      if (pid) {
+        stopSimRefs.current[pid]?.()
+        stopSimRefs.current[pid] = startSimulation(pid, name, desc)
+      }
+    }, 0)
   }
 
   const handleResetProject = () => {
-    stopSimRef.current?.()
-    stopSimRef.current = null
+    if (activeProjectId) {
+      stopSimRefs.current[activeProjectId]?.()
+      delete stopSimRefs.current[activeProjectId]
+    }
     resetProject()
   }
 
@@ -104,18 +129,18 @@ export default function Home() {
       {/* Top Bar */}
       <header className="h-12 bg-background-panel border-b border-white/5 flex items-center px-4 shrink-0 z-10">
         <div className="flex items-center gap-3 flex-1 min-w-0">
-          <h1 className="text-sm font-semibold text-accent-cyan tracking-wide">
+          <h1 className="text-sm font-semibold text-accent-cyan tracking-wide shrink-0">
             DevTeam-AI
           </h1>
-          <span className="text-surface-300 text-xs">|</span>
-          <span className="text-surface-200 text-sm font-medium truncate">
-            {pipeline?.name || '未创建项目'}
-          </span>
+
+          {/* Project Switcher */}
+          <ProjectSwitcher onNewProject={() => setShowCreateModal(true)} />
+
           {pipeline && (
             <button
               onClick={handleResetProject}
-              className="text-xs text-surface-500 hover:text-accent-red transition-colors ml-2"
-              title="重置项目"
+              className="text-xs text-surface-500 hover:text-accent-red transition-colors ml-2 shrink-0"
+              title="关闭当前项目"
             >
               ✕
             </button>
@@ -123,7 +148,7 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-4">
-          {/* Pipeline progress bar (compact) */}
+          {/* Pipeline progress bar */}
           {pipeline && (
             <div className="flex items-center gap-2">
               <div className="w-32 h-1.5 bg-surface-600 rounded-full overflow-hidden">
@@ -144,8 +169,8 @@ export default function Home() {
             <span className="text-xs text-surface-300">{statusLabel}</span>
           </div>
 
-          {/* New project button — always visible */}
-          {!pipeline && (
+          {/* New project button */}
+          {projects.length > 0 && (
             <button
               onClick={() => setShowCreateModal(true)}
               className="px-3 py-1 bg-accent-cyan/20 text-accent-cyan rounded text-xs font-medium hover:bg-accent-cyan/30 transition-colors"
@@ -195,6 +220,7 @@ export default function Home() {
         {/* Pipeline — 主视图 */}
         <div className="flex-1 overflow-hidden">
           <PipelineView
+            projectId={activeProjectId}
             onCreateProject={() => setShowCreateModal(true)}
             onOpenExample={handleOpenExample}
           />
@@ -230,10 +256,10 @@ export default function Home() {
 
             {/* Panel Content */}
             <div className="flex-1 overflow-hidden">
-              {activeTab === 'agents' && <AgentTeamPanel />}
-              {activeTab === 'chat' && <AgentChatPanel />}
-              {activeTab === 'timeline' && <EventTimeline />}
-              {activeTab === 'cost' && <CostPanel />}
+              {activeTab === 'agents' && <AgentTeamPanel projectId={activeProjectId} />}
+              {activeTab === 'chat' && <AgentChatPanel projectId={activeProjectId} />}
+              {activeTab === 'timeline' && <EventTimeline projectId={activeProjectId} />}
+              {activeTab === 'cost' && <CostPanel projectId={activeProjectId} />}
             </div>
           </aside>
         )}
@@ -242,14 +268,14 @@ export default function Home() {
       {/* Terminal Log */}
       {terminalExpanded && !terminalFullscreen && (
         <div className="h-48 bg-background-input border-t border-white/5 shrink-0 animate-slide-up">
-          <TerminalLog />
+          <TerminalLog projectId={activeProjectId} />
         </div>
       )}
 
       {/* Terminal Fullscreen Overlay */}
       {terminalFullscreen && (
         <div className="fixed inset-0 z-50 bg-background animate-fade-in">
-          <TerminalLog />
+          <TerminalLog projectId={activeProjectId} />
         </div>
       )}
 
@@ -271,11 +297,13 @@ export default function Home() {
       <SettingsModal
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
-        onSettingsChanged={(path) => setWorkspacePath(path)}
+        onSettingsChanged={(path) => {
+          if (activeProjectId) setWorkspacePath(activeProjectId, path)
+        }}
       />
 
       {/* Intervention FAB */}
-      <InterventionPanel />
+      <InterventionPanel projectId={activeProjectId} />
     </div>
   )
 }

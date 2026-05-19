@@ -17,6 +17,7 @@ from app.core.llm import Message as LLMMessage
 from app.services.llm.llm_service import llm_service
 from app.services.execution.task_persistence_service import task_persistence_service
 from app.services.execution.checkpoint_manager import checkpoint_manager
+from app.services.project.workspace_manager import workspace_manager
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ class AgentExecutor:
         self._async_task_handles: Dict[str, asyncio.Task] = {}
         self._cancellation_tokens: Dict[str, asyncio.Event] = {}
         self._lock = asyncio.Lock()
-        self._global_paused: bool = False
+        self._project_paused: Dict[str, bool] = {}
         self._step_timeout: float = 120.0
 
     async def assign_task(
@@ -76,7 +77,9 @@ class AgentExecutor:
             if not execution:
                 return False
 
-            if self._global_paused:
+            task = task_board.get_task(task_id)
+            project_id = task.project_id if task else ""
+            if project_id and self._project_paused.get(project_id, False):
                 execution["status"] = ExecutionStatus.PAUSED
                 return False
 
@@ -152,6 +155,13 @@ class AgentExecutor:
         agent = agent_service.get_agent(agent_id)
         if not agent:
             return {"success": False, "error": "Agent not found"}
+
+        # 验证 Agent 属于该任务所在项目
+        task_project = task.project_id
+        if task_project:
+            agent_project = agent_service.get_agent_project(agent_id)
+            if agent_project and agent_project != task_project:
+                return {"success": False, "error": f"Agent {agent_id} 属于项目 {agent_project}，无法执行项目 {task_project} 的任务"}
 
         cancellation_token = asyncio.Event()
         self._cancellation_tokens[task_id] = cancellation_token
@@ -547,23 +557,50 @@ class AgentExecutor:
             self._cancellation_tokens.pop(task_id, None)
             return True
 
-    async def pause_all(self) -> None:
+    async def pause_project(self, project_id: str) -> None:
         async with self._lock:
-            self._global_paused = True
+            self._project_paused[project_id] = True
             for task_id, execution in self._running_tasks.items():
                 if execution["status"] == ExecutionStatus.RUNNING:
+                    task = task_board.get_task(task_id)
+                    if task and task.project_id == project_id:
+                        execution["status"] = ExecutionStatus.PAUSED
+                        if task_id in self._cancellation_tokens:
+                            self._cancellation_tokens[task_id].set()
+                        if task_id in self._async_task_handles:
+                            self._async_task_handles[task_id].cancel()
+                        task_board.change_status(task_id, TaskStatus.PAUSED, "system")
+
+    async def resume_project(self, project_id: str) -> None:
+        async with self._lock:
+            self._project_paused[project_id] = False
+            for task_id, execution in self._running_tasks.items():
+                if execution["status"] == ExecutionStatus.PAUSED:
+                    task = task_board.get_task(task_id)
+                    if task and task.project_id == project_id:
+                        await self.start_execution(task_id)
+
+    async def pause_all(self) -> None:
+        """向后兼容：暂停所有项目的执行"""
+        async with self._lock:
+            for task_id, execution in self._running_tasks.items():
+                if execution["status"] == ExecutionStatus.RUNNING:
+                    task = task_board.get_task(task_id)
+                    pid = task.project_id if task else ""
+                    self._project_paused[pid] = True
                     execution["status"] = ExecutionStatus.PAUSED
                     if task_id in self._cancellation_tokens:
                         self._cancellation_tokens[task_id].set()
                     if task_id in self._async_task_handles:
                         self._async_task_handles[task_id].cancel()
-                    task = task_board.get_task(task_id)
                     if task:
                         task_board.change_status(task_id, TaskStatus.PAUSED, "system")
 
     async def resume_all(self) -> None:
+        """向后兼容：恢复所有项目的执行"""
         async with self._lock:
-            self._global_paused = False
+            for pid in list(self._project_paused.keys()):
+                self._project_paused[pid] = False
             for task_id, execution in self._running_tasks.items():
                 if execution["status"] == ExecutionStatus.PAUSED:
                     await self.start_execution(task_id)
@@ -600,7 +637,160 @@ class AgentExecutor:
         ]
 
     def is_global_paused(self) -> bool:
-        return self._global_paused
+        return any(self._project_paused.values())
+
+    def is_project_paused(self, project_id: str) -> bool:
+        return self._project_paused.get(project_id, False)
+
+    # ========== 可执行反馈 (Executable Feedback) ==========
+
+    def _build_feedback_context(
+        self,
+        task: Task,
+        agent: Dict[str, Any],
+        error_info: str = "",
+    ) -> str:
+        """
+        构建可执行反馈上下文。
+        基于 MetaGPT 的"可执行反馈"理念：agent 出错时不是瞎猜，
+        而是对照公共历史文档和消息，基于共享上下文修正。
+        """
+        parts = []
+        project_id = getattr(task, 'project_id', '')
+
+        if not project_id:
+            return ""
+
+        # 1. 获取项目元数据（stage 顺序、产出物要求）
+        try:
+            workspace = workspace_manager.get_workspace(project_id)
+            if workspace:
+                stages = workspace.get("stages", [])
+                template = workspace.get("template", {})
+
+                if stages:
+                    stage_order = [s.get("key", s.get("label", "")) for s in stages]
+
+                    # 当前任务所属阶段
+                    current_stage = getattr(task, 'stage', '')
+                    if not current_stage and hasattr(task, 'tags'):
+                        for tag in task.tags:
+                            if tag in stage_order:
+                                current_stage = tag
+                                break
+
+                    parts.append("## 项目阶段与产出物要求")
+                    for s in stages:
+                        sk = s.get("key", s.get("label", ""))
+                        marker = " ← 当前阶段" if sk == current_stage else ""
+                        expected = s.get("expected_artifact", "")
+                        parts.append(f"- **{s.get('label', sk)}**{marker}: 产出物={expected or '待定'}")
+
+                    # 2. 前置阶段产出物
+                    if current_stage and stage_order:
+                        try:
+                            prereq_artifacts = workspace_manager.get_prerequisite_artifacts(
+                                project_id, current_stage, stage_order
+                            )
+                            if prereq_artifacts:
+                                parts.append("\n## 前置阶段产出物（供参考）")
+                                for stage_key, files in prereq_artifacts.items():
+                                    stage_label = next(
+                                        (s.get("label", stage_key) for s in stages if s.get("key") == stage_key),
+                                        stage_key,
+                                    )
+                                    parts.append(f"\n### {stage_label}")
+                                    for fname, content in files.items():
+                                        parts.append(f"**{fname}**:\n```\n{content[:2000]}\n```")
+                        except Exception:
+                            pass
+
+                    # 3. 前置阶段消息摘要
+                    if current_stage and stage_order:
+                        try:
+                            prereq_msgs = message_bus.get_prerequisite_context(
+                                project_id, current_stage, stage_order
+                            )
+                            if prereq_msgs:
+                                parts.append("\n## 前置阶段讨论摘要（最近 10 条）")
+                                for msg in prereq_msgs[-10:]:
+                                    sender = msg.metadata.get("sender_name", msg.sender_name)
+                                    content_preview = msg.content[:300]
+                                    parts.append(f"- **{sender}**: {content_preview}")
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+        # 4. 当前任务历史记录
+        try:
+            history = getattr(task, 'status_history', []) or []
+            if history:
+                parts.append("\n## 当前任务历史记录（最近 5 条）")
+                for h in history[-5:]:
+                    entry = f"{h.get('timestamp', '')} [{h.get('by', 'system')}] {h.get('from', '')}→{h.get('to', '')}"
+                    parts.append(f"- {entry}")
+        except Exception:
+            pass
+
+        # 5. 错误信息
+        if error_info:
+            parts.append(f"\n## 上次执行错误\n{error_info[:1000]}")
+
+        if parts:
+            parts.insert(0, "## 可执行反馈上下文\n请基于以下上下文修正执行方案，不要猜测：")
+
+        return "\n".join(parts)
+
+    async def execute_task_with_feedback(
+        self,
+        task_id: str,
+        agent_id: str,
+    ) -> Dict[str, Any]:
+        """
+        带可执行反馈的任务执行。
+        首次执行失败后，收集上下文自动重试一次。
+        """
+        task = task_board.get_task(task_id)
+        agent = agent_service.get_agent(agent_id) if agent_id else None
+
+        # 首次执行
+        result = await self.execute_task_with_agent(task_id, agent_id)
+
+        if result.get("success", False) or result.get("paused", False):
+            return result
+
+        # 首次失败 → 收集反馈上下文 → 注入提示词 → 重试
+        if task and agent:
+            error_info = result.get("error", "Unknown error")
+            feedback_context = self._build_feedback_context(task, agent, error_info)
+
+            if feedback_context:
+                task_board.add_comment(task_id, "首次执行失败，正在基于共享上下文重试...", "system")
+
+                # 将反馈上下文注入到任务描述中用于重试
+                original_desc = task.description or ""
+                enhanced_desc = f"{original_desc}\n\n{feedback_context}"
+
+                # 临时修改描述以便重试时使用上下文
+                try:
+                    task.description = enhanced_desc
+                    retry_result = await self.execute_task_with_agent(task_id, agent_id)
+                    task.description = original_desc  # 恢复
+
+                    if retry_result.get("success", False):
+                        task_board.add_comment(task_id, "基于上下文反馈重试成功", "system")
+                    else:
+                        task_board.add_comment(
+                            task_id,
+                            f"重试仍失败: {retry_result.get('error', 'Unknown')}",
+                            "system",
+                        )
+                    return retry_result
+                except Exception:
+                    task.description = original_desc  # 确保恢复
+
+        return result
 
 
 agent_executor = AgentExecutor()

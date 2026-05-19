@@ -54,10 +54,21 @@ async def retry_task(task_id: str, from_checkpoint: bool = Query(default=True)):
     return {"status": "retrying", "from_checkpoint": from_checkpoint}
 
 
+@router.post("/tasks/{task_id}/retry-with-feedback")
+async def retry_task_with_feedback(task_id: str, agent_id: str = Query(...)):
+    """带可执行反馈的重试：收集前置阶段上下文后自动重试"""
+    result = await agent_executor.execute_task_with_feedback(task_id, agent_id)
+    if result.get("success"):
+        return {"status": "completed", "result": result}
+    return {"status": "failed", "error": result.get("error", "Unknown")}
+
+
 @router.get("/stuck")
-async def get_stuck_tasks(threshold_seconds: int = Query(default=120)):
-    """列出所有疑似卡死的任务"""
+async def get_stuck_tasks(threshold_seconds: int = Query(default=120), project_id: Optional[str] = None):
+    """列出所有疑似卡死的任务，可按项目筛选"""
     stuck = await stuck_detector.check_stuck_tasks()
+    if project_id:
+        stuck = [s for s in stuck if s.get("project_id") == project_id]
     return {"stuck_tasks": stuck, "count": len(stuck)}
 
 
