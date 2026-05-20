@@ -48,8 +48,15 @@ function getAgentColor(agentId: string, role: string): string {
 
 const POOL_AGENT_COLORS = ['#58a6ff', '#a371f7', '#3fb950', '#f0883e', '#f85149', '#39d2c0', '#d29922', '#8b949e']
 
-export default function AgentTeamPanel() {
-  const { agents, globalLlmConfig, updateAgent, setInterventionMode, startProject } = useStore()
+interface Props { projectId?: string | null }
+
+export default function AgentTeamPanel({ projectId }: Props) {
+  const pid = projectId ?? ''
+  const agents = useStore((s) => s.agentsByProject[pid] ?? [])
+  const globalLlmConfig = useStore((s) => s.globalLlmConfig)
+  const updateAgent = useStore((s) => s.updateAgent)
+  const setInterventionMode = useStore((s) => s.setInterventionMode)
+  const startProject = useStore((s) => s.startProject)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showPool, setShowPool] = useState(false)
   const [llmEditorAgent, setLlmEditorAgent] = useState<string | null>(null)
@@ -77,7 +84,7 @@ export default function AgentTeamPanel() {
 
   const handleWhisper = (agentId: string) => {
     setSelectedId(agentId)
-    setInterventionMode('whisper')
+    setInterventionMode(pid,'whisper')
   }
 
   const handleAgentsSelected = (
@@ -108,7 +115,7 @@ export default function AgentTeamPanel() {
     // Stop previous simulation and start new project
     stopSimRef.current?.()
     startProject(taskName, taskDesc, newAgents)
-    stopSimRef.current = startSimulation(taskName, taskDesc)
+    stopSimRef.current = startSimulation(pid, taskName, taskDesc)
   }
 
   return (
@@ -208,7 +215,7 @@ export default function AgentTeamPanel() {
                     {!llmCfg ? (
                       <button
                         onClick={() => {
-                          updateAgent(agent.id, { llm_config: { ...globalLlmConfig } })
+                          updateAgent(pid, agent.id, { llm_config: { ...globalLlmConfig } })
                         }}
                         className="text-xs text-accent-cyan hover:text-accent-cyan/80"
                       >
@@ -217,7 +224,7 @@ export default function AgentTeamPanel() {
                     ) : (
                       <button
                         onClick={() => {
-                          updateAgent(agent.id, { llm_config: undefined })
+                          updateAgent(pid, agent.id, { llm_config: undefined })
                           setLlmEditorAgent(null)
                         }}
                         className="text-xs text-accent-red hover:text-accent-red/80"
@@ -237,7 +244,7 @@ export default function AgentTeamPanel() {
                             const newProvider = e.target.value
                             const modelsForProvider = Object.entries(availableModels).filter(([, info]) => info.provider === newProvider)
                             const newModel = modelsForProvider.length > 0 ? modelsForProvider[0][0] : effectiveCfg.model
-                            updateAgent(agent.id, { llm_config: { provider: newProvider, model: newModel, temperature: effectiveCfg.temperature, max_tokens: effectiveCfg.max_tokens } })
+                            updateAgent(pid, agent.id, { llm_config: { provider: newProvider, model: newModel, temperature: effectiveCfg.temperature, max_tokens: effectiveCfg.max_tokens } })
                           }}
                           className="w-full bg-gray-700 border border-gray-500 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent-cyan"
                         >
@@ -250,7 +257,7 @@ export default function AgentTeamPanel() {
                         <label className="block text-xs text-gray-500 mb-0.5">Model</label>
                         <select
                           value={effectiveCfg.model}
-                          onChange={(e) => updateAgent(agent.id, { llm_config: { ...effectiveCfg, model: e.target.value } })}
+                          onChange={(e) => updateAgent(pid, agent.id, { llm_config: { ...effectiveCfg, model: e.target.value } })}
                           className="w-full bg-gray-700 border border-gray-500 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent-cyan"
                         >
                           {filteredModels.map(([name, info]) => (
@@ -269,7 +276,7 @@ export default function AgentTeamPanel() {
                           max="2"
                           step="0.1"
                           value={effectiveCfg.temperature}
-                          onChange={(e) => updateAgent(agent.id, { llm_config: { ...effectiveCfg, temperature: parseFloat(e.target.value) } })}
+                          onChange={(e) => updateAgent(pid, agent.id, { llm_config: { ...effectiveCfg, temperature: parseFloat(e.target.value) } })}
                           className="w-full accent-accent-cyan"
                         />
                       </div>
@@ -278,7 +285,7 @@ export default function AgentTeamPanel() {
                         <input
                           type="number"
                           value={effectiveCfg.max_tokens || ''}
-                          onChange={(e) => updateAgent(agent.id, { llm_config: { ...effectiveCfg, max_tokens: e.target.value ? parseInt(e.target.value) : undefined } })}
+                          onChange={(e) => updateAgent(pid, agent.id, { llm_config: { ...effectiveCfg, max_tokens: e.target.value ? parseInt(e.target.value) : undefined } })}
                           placeholder="模型默认"
                           className="w-full bg-gray-700 border border-gray-500 rounded px-2 py-1 text-xs text-gray-200 placeholder:text-gray-500 focus:outline-none focus:border-accent-cyan"
                         />

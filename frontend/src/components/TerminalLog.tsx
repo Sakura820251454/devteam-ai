@@ -16,14 +16,15 @@ const LEVEL_PREFIXES: Record<string, string> = {
   debug: '›',
 }
 
-export default function TerminalLog() {
-  const {
-    logs,
-    terminalFullscreen,
-    setTerminalExpanded,
-    setTerminalFullscreen,
-    clearLogs,
-  } = useStore()
+interface Props { projectId?: string | null }
+
+export default function TerminalLog({ projectId }: Props) {
+  const pid = projectId ?? ''
+  const logs = useStore((s) => s.logsByProject[pid] ?? [])
+  const terminalFullscreen = useStore((s) => s.terminalFullscreen)
+  const setTerminalExpanded = useStore((s) => s.setTerminalExpanded)
+  const setTerminalFullscreen = useStore((s) => s.setTerminalFullscreen)
+  const clearLogs = useStore((s) => s.clearLogs)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const [filter, setFilter] = useState<string>('all')
@@ -92,7 +93,7 @@ export default function TerminalLog() {
           <span className="text-surface-600 mx-1">|</span>
 
           <button
-            onClick={clearLogs}
+            onClick={() => clearLogs(pid)}
             className="text-xs text-surface-500 hover:text-surface-300 font-mono transition-colors"
           >
             clear

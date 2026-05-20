@@ -10,10 +10,10 @@ from app.core.llm_models import (
 from app.core.llm_providers import (
     LLMProviderFactory,
     BaseLLMProvider,
-    MockLLMProvider,
     DeepSeekProvider,
     OpenAIProvider
 )
+from app.core.mock_llm import MockLLMProvider
 from app.core.llm import Message
 
 
@@ -41,7 +41,7 @@ class TestLLMModels:
 
     def test_get_model_info_default(self):
         model_info = get_model_info("unknown-model")
-        assert model_info.name == "mock-model"
+        assert model_info.name == "deepseek-chat"  # falls back to default provider model
 
     def test_calculate_cost_deepseek(self):
         cost = calculate_cost("deepseek-chat", 1000, 500)
@@ -60,42 +60,42 @@ class TestLLMModels:
 
 class TestMockProvider:
     @pytest.fixture
-    async def provider(self):
-        async with MockLLMProvider() as p:
-            yield p
+    def provider(self):
+        p = MockLLMProvider()
+        yield p
 
     @pytest.mark.asyncio
     async def test_chat_basic(self, provider):
         messages = [Message(role="user", content="你好")]
         response = await provider.chat(messages)
-        
+
         assert response.content is not None
         assert len(response.content) > 0
         assert response.model == "mock-model"
-        assert "usage" in response.usage
+        assert "total_tokens" in response.usage
 
     @pytest.mark.asyncio
     async def test_chat_greeting(self, provider):
         messages = [Message(role="user", content="你好！")]
         response = await provider.chat(messages)
-        
+
         assert "你好" in response.content or "开发者" in response.content
 
     @pytest.mark.asyncio
     async def test_chat_code(self, provider):
         messages = [Message(role="user", content="帮我写代码")]
         response = await provider.chat(messages)
-        
+
         assert "代码" in response.content or "```" in response.content
 
     @pytest.mark.asyncio
     async def test_stream_chat(self, provider):
         messages = [Message(role="user", content="你好")]
         chunks = []
-        
+
         async for chunk in provider.stream_chat(messages):
             chunks.append(chunk)
-        
+
         full_content = "".join(chunks)
         assert len(full_content) > 0
 
@@ -104,7 +104,7 @@ class TestMockProvider:
         messages = [Message(role="user", content="你好")]
         await provider.chat(messages)
         await provider.chat(messages)
-        
+
         stats = provider.get_stats()
         assert stats["call_count"] == 2
         assert stats["total_tokens"] > 0
@@ -114,7 +114,7 @@ class TestMockProvider:
         messages = [Message(role="user", content="你好")]
         await provider.chat(messages)
         provider.reset_stats()
-        
+
         stats = provider.get_stats()
         assert stats["call_count"] == 0
 
@@ -145,10 +145,10 @@ class TestLLMProviderFactory:
 class TestLLMConfig:
     def test_llm_config_defaults(self):
         from app.models.agent import LLMConfig, LLMProviderType
-        
+
         config = LLMConfig()
-        assert config.provider == LLMProviderType.MOCK
-        assert config.model == "mock-model"
+        assert config.provider == LLMProviderType.DEEPSEEK
+        assert config.model == "deepseek-chat"
         assert config.temperature == 0.7
 
     def test_llm_config_custom(self):

@@ -39,7 +39,8 @@ class ArbitrationIssue:
     task_id: str
     title: str
     description: str
-    proposals: List[Dict[str, str]]  # [{agent_id, agent_name, position, reasoning}]
+    project_id: str = ""
+    proposals: List[Dict[str, str]] = field(default_factory=list)  # [{agent_id, agent_name, position, reasoning}]
     status: ArbitrationStatus = ArbitrationStatus.PENDING
     votes: Dict[str, VoteType] = field(default_factory=dict)  # agent_id -> vote
     resolution: Optional[str] = None
@@ -290,7 +291,8 @@ class ConflictArbitrator:
     def list_issues(
         self,
         status: Optional[ArbitrationStatus] = None,
-        task_id: Optional[str] = None
+        task_id: Optional[str] = None,
+        project_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """列出仲裁议题"""
         issues = list(self._issues.values())
@@ -298,12 +300,15 @@ class ConflictArbitrator:
             issues = [i for i in issues if i.status == status]
         if task_id:
             issues = [i for i in issues if i.task_id == task_id]
+        if project_id:
+            issues = [i for i in issues if i.project_id == project_id]
         return [
             {
                 "id": i.id,
                 "task_id": i.task_id,
                 "title": i.title,
                 "description": i.description,
+                "project_id": i.project_id,
                 "status": i.status.value,
                 "proposals": i.proposals,
                 "votes": {k: v.value for k, v in i.votes.items()},
@@ -314,6 +319,15 @@ class ConflictArbitrator:
             }
             for i in issues
         ]
+
+    def clear_project_issues(self, project_id: str) -> None:
+        """清理指定项目的所有仲裁议题"""
+        to_remove = [
+            issue_id for issue_id, issue in self._issues.items()
+            if issue.project_id == project_id
+        ]
+        for issue_id in to_remove:
+            del self._issues[issue_id]
 
     def manually_resolve(
         self,

@@ -81,6 +81,7 @@ class AgentService:
         self._agents: Dict[str, Dict] = {}
         self._teams: Dict[str, List[str]] = {}  # team_id -> [agent_ids]
         self._sessions: Dict[str, Session] = {}
+        self._project_agents: Dict[str, set] = {}  # project_id -> set of agent_ids
 
         # 优先从 soul.md 加载，然后加载预设模板作为 fallback
         self._load_from_soul_files()
@@ -117,6 +118,8 @@ class AgentService:
                             "status": "idle",
                             "is_active": True,
                             "source": "soul",
+                            "assigned_project": None,
+                            "project_history": [],
                             "soul_data": {
                                 "name": soul.name,
                                 "core_principles": soul.core_principles,
@@ -285,6 +288,8 @@ class AgentService:
             "source": "template",
             "soul_data": None,
             "llm_config": llm_config,
+            "assigned_project": None,
+            "project_history": [],
         }
         
         # 如果模板是从 soul.md 加载的，保留 soul 数据
@@ -332,6 +337,8 @@ class AgentService:
             "status": "idle",
             "is_active": True,
             "source": "soul",
+            "assigned_project": None,
+            "project_history": [],
             "soul_data": {
                 "name": soul.name,
                 "core_principles": soul.core_principles,
@@ -398,9 +405,76 @@ class AgentService:
     def delete_agent(self, agent_id: str) -> bool:
         """删除 Agent"""
         if agent_id in self._agents:
+            # Release from any project first
+            project = self._agents[agent_id].get("assigned_project")
+            if project:
+                self.release_agent_from_project(agent_id, project)
             del self._agents[agent_id]
             return True
         return False
+
+    # ========== Agent-Project 绑定 ==========
+
+    def assign_agent_to_project(self, agent_id: str, project_id: str) -> bool:
+        """将 Agent 分配到项目（同一时间只能在一个项目）"""
+        agent = self._agents.get(agent_id)
+        if not agent:
+            return False
+        current = agent.get("assigned_project")
+        if current == project_id:
+            return True
+        if current is not None:
+            return False  # 已在其他项目中
+        agent["assigned_project"] = project_id
+        agent["project_history"].append({
+            "project_id": project_id,
+            "assigned_at": __import__("datetime").datetime.now().isoformat(),
+            "released_at": None
+        })
+        self._project_agents.setdefault(project_id, set()).add(agent_id)
+        return True
+
+    def release_agent_from_project(self, agent_id: str, project_id: str) -> bool:
+        """从项目释放 Agent"""
+        agent = self._agents.get(agent_id)
+        if not agent or agent.get("assigned_project") != project_id:
+            return False
+        agent["assigned_project"] = None
+        # Update history
+        for entry in agent.get("project_history", []):
+            if entry["project_id"] == project_id and entry["released_at"] is None:
+                entry["released_at"] = __import__("datetime").datetime.now().isoformat()
+        self._project_agents.get(project_id, set()).discard(agent_id)
+        if project_id in self._project_agents and not self._project_agents[project_id]:
+            del self._project_agents[project_id]
+        return True
+
+    def get_project_agents(self, project_id: str) -> List[Dict]:
+        """获取项目中的所有 Agent"""
+        agent_ids = self._project_agents.get(project_id, set())
+        return [self._agents[aid] for aid in agent_ids if aid in self._agents]
+
+    def get_agent_project(self, agent_id: str) -> Optional[str]:
+        """获取 Agent 当前所在项目"""
+        agent = self._agents.get(agent_id)
+        return agent.get("assigned_project") if agent else None
+
+    def is_agent_available(self, agent_id: str) -> bool:
+        """检查 Agent 是否空闲"""
+        agent = self._agents.get(agent_id)
+        return agent is not None and agent.get("assigned_project") is None
+
+    def list_available_agents(self) -> List[Dict]:
+        """列出所有空闲 Agent"""
+        return [a for a in self._agents.values() if a.get("assigned_project") is None]
+
+    def release_project_agents(self, project_id: str) -> int:
+        """释放项目中所有 Agent，返回释放数量"""
+        count = 0
+        for agent_id in list(self._project_agents.get(project_id, set())):
+            if self.release_agent_from_project(agent_id, project_id):
+                count += 1
+        return count
 
     # ========== 团队管理 ==========
 

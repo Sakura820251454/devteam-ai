@@ -160,11 +160,19 @@ async def list_projects(status: Optional[str] = None):
 
 
 @router.delete("/{project_id}")
-async def delete_project(project_id: str):
-    success = project_service.delete_project(project_id)
+async def delete_project(project_id: str, cascade: bool = True):
+    success = project_service.delete_project(project_id, cascade=cascade)
     if not success:
         raise HTTPException(status_code=404, detail="Project not found")
     return {"status": "ok"}
+
+
+@router.get("/{project_id}/summary")
+async def get_project_summary(project_id: str):
+    summary = project_service.get_project_summary(project_id)
+    if not summary:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return summary
 
 
 @router.post("/{project_id}/task-breakdown")
@@ -193,6 +201,7 @@ async def create_tasks_from_requirements(project_id: str):
     created_tasks = []
     for task_data in tasks_data:
         task = task_board.create_task(
+            project_id=project_id,
             title=task_data["title"],
             description=task_data["description"],
             priority=task_data["priority"],

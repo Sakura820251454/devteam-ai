@@ -43,6 +43,7 @@ class Task(BaseModel):
     id: str
     title: str
     description: str = ""
+    project_id: str = ""
     status: TaskStatus = Field(default=TaskStatus.BACKLOG)
     priority: Priority = Field(default=Priority.MEDIUM)
     risk_level: RiskLevel = Field(default=RiskLevel.LOW)

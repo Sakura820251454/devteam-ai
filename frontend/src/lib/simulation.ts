@@ -15,7 +15,7 @@ function s() { return useStore.getState() }
 
 type StepFn = () => void
 
-export function startSimulation(projectName: string, projectDesc: string): () => void {
+export function startSimulation(projectId: string, projectName: string, projectDesc: string): () => void {
   const timers: ReturnType<typeof setTimeout>[] = []
   let stopped = false
 
@@ -30,21 +30,17 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
 
   // Write artifact file to backend workspace
   function writeArtifact(stageKey: string, name: string, content: string) {
-    const pid = s().pipeline?.id
-    if (!pid) return
-    addArtifact(pid, stageKey, name, content).catch(() => {})
+    addArtifact(projectId, stageKey, name, content).catch(() => {})
   }
 
   // Write log to backend workspace
   function writeLog(level: string, source: string, message: string) {
-    const pid = s().pipeline?.id
-    if (!pid) return
-    addWorkspaceLog(pid, level, source, message).catch(() => {})
+    addWorkspaceLog(projectId, level, source, message).catch(() => {})
   }
 
   function chat(agent: typeof AGENTS.pm, content: string, delayMs: number) {
     schedule(delayMs, () => {
-      s().addChatMessage({ agentId: agent.id, agentName: agent.name, agentColor: agent.color, content })
+      s().addChatMessage(projectId, { agentId: agent.id, agentName: agent.name, agentColor: agent.color, content })
     })
   }
 
@@ -57,16 +53,16 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
     delayMs: number,
   ) {
     schedule(delayMs, () => {
-      s().addEvent({ type, agentId: agent.id, agentName: agent.name, agentColor: agent.color, content, detail, importance })
+      s().addEvent(projectId, { type, agentId: agent.id, agentName: agent.name, agentColor: agent.color, content, detail, importance })
     })
   }
 
   function log(level: 'info' | 'success' | 'warn' | 'error' | 'debug', source: string, message: string, delayMs: number) {
-    schedule(delayMs, () => { s().addLog({ level, source, message }) })
+    schedule(delayMs, () => { s().addLog(projectId, { level, source, message }) })
   }
 
   function updateStage(stageKey: string, updates: Record<string, unknown>, delayMs: number) {
-    schedule(delayMs, () => { s().updatePipelineStage(stageKey, updates as any) })
+    schedule(delayMs, () => { s().updatePipelineStage(projectId, stageKey, updates as any) })
   }
 
   function setStageStatus(stageKey: string, status: 'pending' | 'active' | 'completed' | 'blocked', delayMs: number) {
@@ -75,21 +71,21 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
       const updates: any = { status }
       if (status === 'active') updates.startedAt = now
       if (status === 'completed') updates.completedAt = now
-      s().updatePipelineStage(stageKey, updates)
+      s().updatePipelineStage(projectId, stageKey, updates)
     })
   }
 
   function setProgress(progress: number, currentStage: string, delayMs: number) {
     schedule(delayMs, () => {
-      const p = s().pipeline
-      if (p) s().setPipeline({ ...p, progress, currentStage })
+      const p = s().pipelines[projectId]
+      if (p) s().setPipeline(projectId, { ...p, progress, currentStage })
     })
   }
 
   function setCostData(delayMs: number) {
     schedule(delayMs, () => {
       const state = s()
-      const agents = state.agents
+      const agents = state.agentsByProject[projectId] || []
       const globalCfg = state.globalLlmConfig
 
       const agentCosts: Record<string, { cost: number; tokens: number; calls: number }> = {
@@ -148,7 +144,7 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
       const completionTokens = totalTokens - promptTokens
       const callCount = Object.values(byAgent).reduce((s, a) => s + a.calls, 0)
 
-      s().setCostData({
+      s().setCostData(projectId, {
         totalCost: Math.round(totalCost * 1000) / 1000,
         totalTokens,
         promptTokens,
@@ -164,16 +160,16 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
   // PHASE 1: Requirement Analysis (0s - 4s)
   // ================================================================
   schedule(200, () => {
-    s().updatePipelineStage('requirement_analysis', { status: 'active', startedAt: new Date().toISOString() })
-    s().updateAgentStatus('pm', 'thinking')
-    s().addLog({ level: 'info', source: 'pipeline', message: '阶段开始: 需求分析' })
-    s().addLog({ level: 'info', source: 'pm', message: '正在分析项目需求...' })
+    s().updatePipelineStage(projectId,'requirement_analysis', { status: 'active', startedAt: new Date().toISOString() })
+    s().updateAgentStatus(projectId,'pm', 'thinking')
+    s().addLog(projectId, { level: 'info', source: 'pipeline', message: '阶段开始: 需求分析' })
+    s().addLog(projectId, { level: 'info', source: 'pm', message: '正在分析项目需求...' })
   })
 
   chat(AGENTS.pm, `收到新项目需求：「${projectName}」。让我先梳理一下核心诉求。`, 800)
   chat(AGENTS.pm, `根据需求描述"${projectDesc.slice(0, 80)}${projectDesc.length > 80 ? '...' : ''}"，我识别出以下几个核心功能模块需要进一步细化。`, 1800)
 
-  schedule(2200, () => s().updateAgentStatus('architect', 'thinking'))
+  schedule(2200, () => s().updateAgentStatus(projectId,'architect', 'thinking'))
   chat(AGENTS.architect, '产品经理的分析很有条理，我现在开始考虑技术方案的可行性。', 2500)
 
   chat(AGENTS.pm, '我整理出了需求规格说明，包括用户故事、功能边界和非功能需求。架构师可以开始技术预研了。', 3000)
@@ -200,9 +196,9 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
   // PHASE 2: Task Breakdown (4s - 10s)
   // ================================================================
   schedule(4200, () => {
-    s().addLog({ level: 'info', source: 'pipeline', message: '阶段开始: 任务拆解' })
-    s().updateAgentStatus('pm', 'working')
-    s().updateAgentStatus('architect', 'working')
+    s().addLog(projectId, { level: 'info', source: 'pipeline', message: '阶段开始: 任务拆解' })
+    s().updateAgentStatus(projectId,'pm', 'working')
+    s().updateAgentStatus(projectId,'architect', 'working')
   })
   setStageStatus('task_breakdown', 'active', 4200)
 
@@ -264,7 +260,7 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
         tags: ['devops', 'ci/cd'], createdAt: now, updatedAt: now,
       },
     ]
-    s().setTasks(tasks)
+    s().setTasks(projectId,tasks)
   })
 
   event('action', AGENTS.pm, '任务拆解完成，共创建 5 个技术任务', '已按优先级排序并分配给对应 Agent', 'important', 8500)
@@ -287,9 +283,9 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
   // PHASE 3: Coding (10s - 35s)
   // ================================================================
   schedule(10000, () => {
-    s().addLog({ level: 'info', source: 'pipeline', message: '阶段开始: 编码实现' })
-    s().updateAgentStatus('backend', 'working')
-    s().updateAgentStatus('frontend', 'working')
+    s().addLog(projectId, { level: 'info', source: 'pipeline', message: '阶段开始: 编码实现' })
+    s().updateAgentStatus(projectId,'backend', 'working')
+    s().updateAgentStatus(projectId,'frontend', 'working')
   })
   setStageStatus('coding', 'active', 10000)
 
@@ -297,14 +293,14 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
   chat(AGENTS.frontend, '我先搭建 React 项目结构，配好路由和状态管理。', 11000)
 
   schedule(12000, () => {
-    s().updateAgentStatus('backend', 'working')
-    s().addLog({ level: 'info', source: 'backend', message: '正在创建数据库迁移脚本...' })
+    s().updateAgentStatus(projectId,'backend', 'working')
+    s().addLog(projectId, { level: 'info', source: 'backend', message: '正在创建数据库迁移脚本...' })
   })
   chat(AGENTS.backend, '数据库模型已创建完成：User, Role, Permission 三张表，外键关联正确。现在开始写认证 API。', 13000)
 
   schedule(13500, () => {
-    s().updateAgentStatus('frontend', 'working')
-    s().addLog({ level: 'info', source: 'frontend', message: '正在开发登录页面组件...' })
+    s().updateAgentStatus(projectId,'frontend', 'working')
+    s().addLog(projectId, { level: 'info', source: 'frontend', message: '正在开发登录页面组件...' })
   })
   chat(AGENTS.frontend, '登录表单组件写好了，包含邮箱/密码验证、错误提示、loading 状态。现在对接后端 API。', 15000)
 
@@ -315,7 +311,7 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
   // Update task statuses
   schedule(18000, () => {
     const now = new Date().toISOString()
-    s().setTasks([
+    s().setTasks(projectId,[
       {
         id: 'task-1', title: '数据库表结构设计', description: '设计用户、角色、权限等核心表', status: 'done', priority: 'high',
         stage: 'coding', assignedAgents: ['architect', 'backend'], createdBy: 'pm',
@@ -377,7 +373,7 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
   // Update tasks again
   schedule(28000, () => {
     const now = new Date().toISOString()
-    s().setTasks([
+    s().setTasks(projectId,[
       {
         id: 'task-1', title: '数据库表结构设计', description: '', status: 'done', priority: 'high',
         stage: 'coding', assignedAgents: ['architect', 'backend'], createdBy: 'pm',
@@ -452,11 +448,11 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
   // PHASE 4: Code Review (35s - 45s)
   // ================================================================
   schedule(33000, () => {
-    s().addLog({ level: 'info', source: 'pipeline', message: '阶段开始: 代码审查' })
-    s().updateAgentStatus('architect', 'working')
-    s().updateAgentStatus('tester', 'thinking')
-    s().updateAgentStatus('backend', 'idle')
-    s().updateAgentStatus('frontend', 'idle')
+    s().addLog(projectId, { level: 'info', source: 'pipeline', message: '阶段开始: 代码审查' })
+    s().updateAgentStatus(projectId,'architect', 'working')
+    s().updateAgentStatus(projectId,'tester', 'thinking')
+    s().updateAgentStatus(projectId,'backend', 'idle')
+    s().updateAgentStatus(projectId,'frontend', 'idle')
   })
   setStageStatus('review', 'active', 33000)
 
@@ -489,17 +485,17 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
   // PHASE 5: Testing (45s - 55s)
   // ================================================================
   schedule(44500, () => {
-    s().addLog({ level: 'info', source: 'pipeline', message: '阶段开始: 测试验证' })
-    s().updateAgentStatus('tester', 'working')
-    s().updateAgentStatus('architect', 'idle')
+    s().addLog(projectId, { level: 'info', source: 'pipeline', message: '阶段开始: 测试验证' })
+    s().updateAgentStatus(projectId,'tester', 'working')
+    s().updateAgentStatus(projectId,'architect', 'idle')
   })
   setStageStatus('testing', 'active', 44500)
 
   chat(AGENTS.tester, '开始执行测试计划。先跑单元测试，再跑集成测试。', 45500)
 
   schedule(46000, () => {
-    s().addLog({ level: 'info', source: 'tester', message: '运行单元测试: 24/24 通过' })
-    s().addLog({ level: 'info', source: 'tester', message: '运行集成测试: 8/8 通过' })
+    s().addLog(projectId, { level: 'info', source: 'tester', message: '运行单元测试: 24/24 通过' })
+    s().addLog(projectId, { level: 'info', source: 'tester', message: '运行集成测试: 8/8 通过' })
   })
   log('success', 'tester', '单元测试: 24/24 通过 ✓', 47000)
   log('success', 'tester', '集成测试: 8/8 通过 ✓', 47500)
@@ -511,7 +507,7 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
   // Update task 4 to done
   schedule(50000, () => {
     const now = new Date().toISOString()
-    s().setTasks([
+    s().setTasks(projectId,[
       {
         id: 'task-1', title: '数据库表结构设计', description: '', status: 'done', priority: 'high',
         stage: 'testing', assignedAgents: ['architect', 'backend'], createdBy: 'pm',
@@ -562,17 +558,17 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
   // PHASE 6: Delivery (55s - 65s)
   // ================================================================
   schedule(53500, () => {
-    s().addLog({ level: 'info', source: 'pipeline', message: '阶段开始: 交付部署' })
-    s().updateAgentStatus('devops', 'working')
-    s().updateAgentStatus('tester', 'idle')
+    s().addLog(projectId, { level: 'info', source: 'pipeline', message: '阶段开始: 交付部署' })
+    s().updateAgentStatus(projectId,'devops', 'working')
+    s().updateAgentStatus(projectId,'tester', 'idle')
   })
   setStageStatus('delivery', 'active', 53500)
 
   chat(AGENTS.devops, '开始配置部署流程。Dockerfile 已编写，GitHub Actions workflow 已配置。', 54500)
 
   schedule(55000, () => {
-    s().addLog({ level: 'info', source: 'devops', message: '构建 Docker 镜像...' })
-    s().addLog({ level: 'success', source: 'devops', message: '镜像构建成功: devteam-app:latest' })
+    s().addLog(projectId, { level: 'info', source: 'devops', message: '构建 Docker 镜像...' })
+    s().addLog(projectId, { level: 'success', source: 'devops', message: '镜像构建成功: devteam-app:latest' })
   })
 
   chat(AGENTS.devops, '部署完成！应用已上线。健康检查通过，监控面板已接入。', 56500)
@@ -582,7 +578,7 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
   // All tasks done
   schedule(58000, () => {
     const now = new Date().toISOString()
-    s().setTasks([
+    s().setTasks(projectId,[
       {
         id: 'task-1', title: '数据库表结构设计', description: '', status: 'done', priority: 'high',
         stage: 'delivery', assignedAgents: ['architect', 'backend'], createdBy: 'pm',
@@ -632,15 +628,16 @@ export function startSimulation(projectName: string, projectDesc: string): () =>
   schedule(60620, () => writeArtifact('delivery', '上线说明.md',
     `# 上线说明\n\n## 应用信息\n- 名称: ${projectName}\n- 版本: 1.0.0\n- 上线时间: ${new Date().toISOString()}\n\n## 健康检查\n- GET /health → {\"status\": \"healthy\"}\n\n## 监控\n- 日志: 已接入\n- 监控面板: 已配置\n- 告警: 已配置`))
 
-  schedule(60630, () => { writeLog('success', 'pipeline', '项目交付完成'); updateWorkspaceStatus(s().pipeline?.id || '', 'completed', 'delivery').catch(() => {}) })
+  schedule(60630, () => { writeLog('success', 'pipeline', '项目交付完成'); updateWorkspaceStatus(projectId || '', 'completed', 'delivery').catch(() => {}) })
 
   schedule(61000, () => {
-    const p = s().pipeline
-    if (p) s().setPipeline({ ...p, status: 'completed' })
+    const p = s().pipelines[projectId]
+    if (p) s().setPipeline(projectId, { ...p, status: 'completed' } as any)
     s().setLoading(false)
-    s().agents.forEach((a) => s().updateAgentStatus(a.id, 'idle'))
+    const projectAgents = s().agentsByProject[projectId] || []
+    projectAgents.forEach((a: { id: string }) => s().updateAgentStatus(projectId, a.id, 'idle'))
 
-    s().addEvent({
+    s().addEvent(projectId, {
       type: 'status_change',
       agentId: 'system',
       agentName: '系统',

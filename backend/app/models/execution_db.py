@@ -10,6 +10,7 @@ class TaskExecutionModel(Base):
     id = Column(String, primary_key=True, index=True)
     task_id = Column(String, nullable=False, index=True)
     agent_id = Column(String, nullable=False)
+    project_id = Column(String, nullable=True, index=True)
 
     status = Column(String, default="idle")
     current_step_index = Column(Integer, default=0)
@@ -31,6 +32,7 @@ class TaskExecutionModel(Base):
     __table_args__ = (
         Index("idx_execution_task_id", "task_id"),
         Index("idx_execution_status", "status"),
+        Index("idx_execution_project_id", "project_id"),
     )
 
     def __repr__(self):
@@ -43,6 +45,7 @@ class TaskCheckpointModel(Base):
 
     id = Column(String, primary_key=True, index=True)
     task_id = Column(String, nullable=False, index=True)
+    project_id = Column(String, nullable=True, index=True)
     step_index = Column(Integer, nullable=False)
 
     step_name = Column(String, nullable=True)
@@ -54,6 +57,7 @@ class TaskCheckpointModel(Base):
 
     __table_args__ = (
         Index("idx_checkpoint_task_step", "task_id", "step_index"),
+        Index("idx_checkpoint_project_id", "project_id"),
     )
 
     def __repr__(self):

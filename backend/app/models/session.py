@@ -52,6 +52,7 @@ class Message(BaseModel):
 class Session(BaseModel):
     id: str
     title: str = Field(default="新会话")
+    project_id: Optional[str] = None
     status: SessionStatus = Field(default=SessionStatus.ACTIVE)
     phase: SessionPhase = Field(default=SessionPhase.INITIATING)
     participants: List[str] = Field(default_factory=list)

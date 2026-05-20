@@ -40,8 +40,11 @@ function ChatBubble({ msg, isConsecutive }: { msg: ChatMessage; isConsecutive: b
   )
 }
 
-export default function AgentChatPanel() {
-  const { chatMessages, pipeline } = useStore()
+interface Props { projectId?: string | null }
+
+export default function AgentChatPanel({ projectId }: Props) {
+  const chatMessages = useStore((s) => projectId ? s.chatMessagesByProject[projectId] ?? [] : [])
+  const pipeline = useStore((s) => projectId ? s.pipelines[projectId] ?? null : null)
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {

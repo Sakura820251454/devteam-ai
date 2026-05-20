@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//mnt/d/AIproject/**)",
+      "Read(//mnt/c/**)",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:3000)",
+      "Bash(npx tsc *)"
+    ]
+  }
+}

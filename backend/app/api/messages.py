@@ -155,10 +155,15 @@ async def send_to_task(task_id: str, request: SendTaskMessageRequest):
 @router.get("/history", response_model=List[MessageResponse])
 async def get_history(
     channel: Optional[str] = None,
+    project_id: Optional[str] = None,
     limit: int = 100,
     offset: int = 0
 ):
-    messages = message_bus.get_history(channel, limit, offset)
+    if project_id:
+        channel = message_bus.get_project_channel(project_id)
+        messages = message_bus.get_history(channel, limit, offset)
+    else:
+        messages = message_bus.get_history(channel, limit, offset)
     return [
         MessageResponse(
             id=msg.id,

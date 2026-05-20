@@ -129,11 +129,17 @@ def get_soul_based_agents():
 
 
 @router.get("/")
-def list_agents():
-    """列出所有 Agent"""
+def list_agents(available: bool = False, project_id: str = None):
+    """列出 Agent，支持按可用状态和项目筛选"""
+    if available:
+        agents = agent_service.list_available_agents()
+    elif project_id:
+        agents = agent_service.get_project_agents(project_id)
+    else:
+        agents = agent_service.list_agents()
     return {
-        "agents": agent_service.list_agents(),
-        "total": len(agent_service.list_agents())
+        "agents": agents,
+        "total": len(agents)
     }
 
 
@@ -188,3 +194,43 @@ def get_team(team_id: str):
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
     return team
+
+
+# ========== Agent-Project 绑定 ==========
+
+class AssignAgentRequest(BaseModel):
+    project_id: str
+
+
+@router.post("/{agent_id}/assign")
+def assign_agent_to_project(agent_id: str, data: AssignAgentRequest):
+    """将 Agent 分配到项目"""
+    success = agent_service.assign_agent_to_project(agent_id, data.project_id)
+    if not success:
+        agent = agent_service.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        current = agent.get("assigned_project")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Agent 已在项目 {current} 中，无法分配到项目 {data.project_id}"
+        )
+    return {"status": "assigned", "agent_id": agent_id, "project_id": data.project_id}
+
+
+@router.post("/{agent_id}/release")
+def release_agent_from_project(agent_id: str, data: AssignAgentRequest):
+    """从项目释放 Agent"""
+    success = agent_service.release_agent_from_project(agent_id, data.project_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Agent 不在该项目中")
+    return {"status": "released", "agent_id": agent_id, "project_id": data.project_id}
+
+
+@router.get("/{agent_id}/project")
+def get_agent_project(agent_id: str):
+    """获取 Agent 当前所在项目"""
+    project_id = agent_service.get_agent_project(agent_id)
+    if not project_id:
+        return {"agent_id": agent_id, "project_id": None, "status": "available"}
+    return {"agent_id": agent_id, "project_id": project_id, "status": "busy"}

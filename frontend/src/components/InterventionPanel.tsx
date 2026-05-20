@@ -36,22 +36,23 @@ const ACTIONS: InterventionAction[] = [
   },
 ]
 
-export default function InterventionPanel() {
-  const {
-    interventionMode,
-    agents,
-    pipeline,
-    setInterventionMode,
-    addEvent,
-    addLog,
-  } = useStore()
+interface Props { projectId?: string | null }
+
+export default function InterventionPanel({ projectId }: Props) {
+  const pid = projectId ?? ''
+  const interventionMode = useStore((s) => s.interventionsByProject[pid] ?? null)
+  const agents = useStore((s) => s.agentsByProject[pid] ?? [])
+  const pipeline = useStore((s) => s.pipelines[pid] ?? null)
+  const setInterventionMode = useStore((s) => s.setInterventionMode)
+  const addEvent = useStore((s) => s.addEvent)
+  const addLog = useStore((s) => s.addLog)
 
   const [isOpen, setIsOpen] = useState(false)
   const [message, setMessage] = useState('')
   const [targetAgent, setTargetAgent] = useState('')
 
   const handleOpen = (mode: InterventionMode) => {
-    setInterventionMode(mode)
+    setInterventionMode(pid, mode)
     setMessage('')
     setTargetAgent('')
     setIsOpen(false)
@@ -64,7 +65,7 @@ export default function InterventionPanel() {
 
     if (interventionMode === 'whisper' && targetAgent && pipelineId) {
       const agent = agents.find((a) => a.id === targetAgent)
-      addEvent({
+      addEvent(pid, {
         type: 'message',
         agentId: 'human',
         agentName: '你',
@@ -72,7 +73,7 @@ export default function InterventionPanel() {
         content: `私信 ${agent?.name || targetAgent}: ${message}`,
         importance: 'normal',
       })
-      addLog({
+      addLog(pid, {
         level: 'info',
         source: 'intervention',
         message: `[whisper → ${agent?.name || targetAgent}] ${message}`,
@@ -80,10 +81,10 @@ export default function InterventionPanel() {
       try {
         await intervenePipeline(pipelineId, message, targetAgent)
       } catch (err) {
-        addLog({ level: 'error', source: 'intervention', message: `私信发送失败: ${err}` })
+        addLog(pid, { level: 'error', source: 'intervention', message: `私信发送失败: ${err}` })
       }
     } else if (interventionMode === 'broadcast' && pipelineId) {
-      addEvent({
+      addEvent(pid, {
         type: 'decision',
         agentId: 'human',
         agentName: '你',
@@ -92,7 +93,7 @@ export default function InterventionPanel() {
         detail: '此消息对所有 Agent 可见，将影响后续决策',
         importance: 'important',
       })
-      addLog({
+      addLog(pid, {
         level: 'warn',
         source: 'intervention',
         message: `[broadcast] ${message}`,
@@ -100,10 +101,10 @@ export default function InterventionPanel() {
       try {
         await intervenePipeline(pipelineId, message)
       } catch (err) {
-        addLog({ level: 'error', source: 'intervention', message: `广播发送失败: ${err}` })
+        addLog(pid, { level: 'error', source: 'intervention', message: `广播发送失败: ${err}` })
       }
     } else if (interventionMode === 'pause' && pipelineId) {
-      addEvent({
+      addEvent(pid, {
         type: 'action',
         agentId: 'human',
         agentName: '你',
@@ -111,7 +112,7 @@ export default function InterventionPanel() {
         content: `暂停 Pipeline${message ? `: ${message}` : ''}`,
         importance: 'critical',
       })
-      addLog({
+      addLog(pid, {
         level: 'warn',
         source: 'intervention',
         message: `[pause] Pipeline 已暂停${message ? ` — ${message}` : ''}`,
@@ -119,12 +120,12 @@ export default function InterventionPanel() {
       try {
         await pausePipeline(pipelineId)
       } catch (err) {
-        addLog({ level: 'error', source: 'intervention', message: `暂停失败: ${err}` })
+        addLog(pid, { level: 'error', source: 'intervention', message: `暂停失败: ${err}` })
       }
     }
 
     setMessage('')
-    setInterventionMode(null)
+    setInterventionMode(pid,null)
   }
 
   // Determine pipeline status for whether pause is available
@@ -277,7 +278,7 @@ export default function InterventionPanel() {
             {/* Actions */}
             <div className="px-5 py-3 border-t border-white/5 flex justify-end gap-2">
               <button
-                onClick={() => setInterventionMode(null)}
+                onClick={() => setInterventionMode(pid,null)}
                 className="px-4 py-2 text-sm text-surface-400 hover:text-surface-200 transition-colors"
               >
                 取消

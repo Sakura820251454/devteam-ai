@@ -67,8 +67,10 @@ function EventCard({ event }: { event: TimelineEvent }) {
   )
 }
 
-export default function EventTimeline() {
-  const { events } = useStore()
+interface Props { projectId?: string | null }
+
+export default function EventTimeline({ projectId }: Props) {
+  const events = useStore((s) => projectId ? s.eventsByProject[projectId] ?? [] : [])
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {

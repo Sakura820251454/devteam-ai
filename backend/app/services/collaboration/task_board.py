@@ -8,14 +8,21 @@ from app.models.task import Task, TaskStatus, Priority
 
 class TaskBoard:
     def __init__(self):
-        self._tasks: Dict[str, Task] = {}
-        self._status_index: Dict[TaskStatus, List[str]] = {status: [] for status in TaskStatus}
-        self._agent_tasks: Dict[str, List[str]] = {}
+        self._tasks: Dict[str, Dict[str, Task]] = {}  # project_id -> task_id -> Task
+        self._status_index: Dict[str, Dict[TaskStatus, List[str]]] = {}  # project_id -> status -> task_ids
+        self._agent_tasks: Dict[str, Dict[str, List[str]]] = {}  # project_id -> agent_id -> task_ids
         self._task_handlers: Dict[str, List[Callable]] = {}
         self._lock = None
 
+    def _ensure_project(self, project_id: str) -> None:
+        if project_id not in self._tasks:
+            self._tasks[project_id] = {}
+            self._status_index[project_id] = {status: [] for status in TaskStatus}
+            self._agent_tasks[project_id] = {}
+
     def create_task(
         self,
+        project_id: str,
         title: str,
         description: str = "",
         priority: Priority = Priority.MEDIUM,
@@ -23,37 +30,45 @@ class TaskBoard:
         created_by: str = "system",
         tags: List[str] = None
     ) -> Task:
+        self._ensure_project(project_id)
         task_id = str(uuid.uuid4())
         task = Task(
             id=task_id,
             title=title,
             description=description,
+            project_id=project_id,
             priority=priority,
             assigned_agents=assigned_agents or [],
             created_by=created_by,
             tags=tags or []
         )
-        self._tasks[task_id] = task
-        self._status_index[task.status].append(task_id)
+        self._tasks[project_id][task_id] = task
+        self._status_index[project_id][task.status].append(task_id)
         for agent_id in task.assigned_agents:
-            if agent_id not in self._agent_tasks:
-                self._agent_tasks[agent_id] = []
-            self._agent_tasks[agent_id].append(task_id)
+            if agent_id not in self._agent_tasks[project_id]:
+                self._agent_tasks[project_id][agent_id] = []
+            self._agent_tasks[project_id][agent_id].append(task_id)
         self._notify_handlers(task_id, "created", task)
         return task
 
-    def get_task(self, task_id: str) -> Optional[Task]:
-        return self._tasks.get(task_id)
+    def get_task(self, task_id: str, project_id: Optional[str] = None) -> Optional[Task]:
+        if project_id:
+            return self._tasks.get(project_id, {}).get(task_id)
+        for proj_tasks in self._tasks.values():
+            if task_id in proj_tasks:
+                return proj_tasks[task_id]
+        return None
 
     def update_task(
         self,
         task_id: str,
+        project_id: Optional[str] = None,
         title: str = None,
         description: str = None,
         priority: Priority = None,
         tags: List[str] = None
     ) -> Optional[Task]:
-        task = self._tasks.get(task_id)
+        task = self.get_task(task_id, project_id)
         if not task:
             return None
         if title is not None:
@@ -68,36 +83,43 @@ class TaskBoard:
         self._notify_handlers(task_id, "updated", task)
         return task
 
-    def assign_agents(self, task_id: str, agent_ids: List[str]) -> Optional[Task]:
-        task = self._tasks.get(task_id)
+    def assign_agents(self, task_id: str, agent_ids: List[str], project_id: Optional[str] = None) -> Optional[Task]:
+        task = self.get_task(task_id, project_id)
         if not task:
             return None
-        for old_agent in task.assigned_agents:
-            if old_agent in self._agent_tasks and task_id in self._agent_tasks[old_agent]:
-                self._agent_tasks[old_agent].remove(task_id)
+        pid = task.project_id or project_id
+        if pid and pid in self._agent_tasks:
+            for old_agent in task.assigned_agents:
+                if old_agent in self._agent_tasks[pid] and task_id in self._agent_tasks[pid][old_agent]:
+                    self._agent_tasks[pid][old_agent].remove(task_id)
         task.assigned_agents = agent_ids
-        for agent_id in agent_ids:
-            if agent_id not in self._agent_tasks:
-                self._agent_tasks[agent_id] = []
-            if task_id not in self._agent_tasks[agent_id]:
-                self._agent_tasks[agent_id].append(task_id)
+        if pid:
+            self._ensure_project(pid)
+            for agent_id in agent_ids:
+                if agent_id not in self._agent_tasks[pid]:
+                    self._agent_tasks[pid][agent_id] = []
+                if task_id not in self._agent_tasks[pid][agent_id]:
+                    self._agent_tasks[pid][agent_id].append(task_id)
         task.updated_at = datetime.now()
         self._notify_handlers(task_id, "agents_assigned", task)
         return task
 
-    def change_status(self, task_id: str, new_status: TaskStatus, changed_by: str = "system") -> Optional[Task]:
-        task = self._tasks.get(task_id)
+    def change_status(self, task_id: str, new_status: TaskStatus, changed_by: str = "system", project_id: Optional[str] = None) -> Optional[Task]:
+        task = self.get_task(task_id, project_id)
         if not task:
             return None
+        pid = task.project_id or project_id
         old_status = task.status
         if new_status == old_status:
             return task
         valid_transitions = task.get_valid_transitions()
         if new_status not in valid_transitions:
             raise ValueError(f"Invalid status transition from {old_status.value} to {new_status.value}")
-        self._status_index[old_status].remove(task_id)
+        if pid and pid in self._status_index:
+            if task_id in self._status_index[pid].get(old_status, []):
+                self._status_index[pid][old_status].remove(task_id)
+            self._status_index[pid][new_status].append(task_id)
         task.status = new_status
-        self._status_index[new_status].append(task_id)
         task.updated_at = datetime.now()
         task.add_history(
             f"Status changed from {old_status.value} to {new_status.value}",
@@ -106,28 +128,33 @@ class TaskBoard:
         self._notify_handlers(task_id, "status_changed", task)
         return task
 
-    def add_comment(self, task_id: str, comment: str, author: str = "system") -> Optional[Task]:
-        task = self._tasks.get(task_id)
+    def add_comment(self, task_id: str, comment: str, author: str = "system", project_id: Optional[str] = None) -> Optional[Task]:
+        task = self.get_task(task_id, project_id)
         if not task:
             return None
         task.add_history(comment, author)
         self._notify_handlers(task_id, "comment_added", task)
         return task
 
-    def delete_task(self, task_id: str) -> bool:
-        task = self._tasks.get(task_id)
+    def delete_task(self, task_id: str, project_id: Optional[str] = None) -> bool:
+        task = self.get_task(task_id, project_id)
         if not task:
             return False
-        self._status_index[task.status].remove(task_id)
-        for agent_id in task.assigned_agents:
-            if agent_id in self._agent_tasks and task_id in self._agent_tasks[agent_id]:
-                self._agent_tasks[agent_id].remove(task_id)
-        del self._tasks[task_id]
+        pid = task.project_id or project_id
+        if pid and pid in self._status_index:
+            if task_id in self._status_index[pid].get(task.status, []):
+                self._status_index[pid][task.status].remove(task_id)
+            for agent_id in task.assigned_agents:
+                if agent_id in self._agent_tasks.get(pid, {}) and task_id in self._agent_tasks[pid][agent_id]:
+                    self._agent_tasks[pid][agent_id].remove(task_id)
+        if pid and pid in self._tasks:
+            del self._tasks[pid][task_id]
         self._notify_handlers(task_id, "deleted", None)
         return True
 
     def list_tasks(
         self,
+        project_id: Optional[str] = None,
         status: TaskStatus = None,
         priority: Priority = None,
         assigned_agent: str = None,
@@ -136,7 +163,10 @@ class TaskBoard:
         limit: int = 100,
         offset: int = 0
     ) -> List[Task]:
-        tasks = list(self._tasks.values())
+        if project_id:
+            tasks = list(self._tasks.get(project_id, {}).values())
+        else:
+            tasks = [t for proj in self._tasks.values() for t in proj.values()]
         if status is not None:
             tasks = [t for t in tasks if t.status == status]
         if priority is not None:
@@ -150,26 +180,53 @@ class TaskBoard:
         tasks.sort(key=lambda t: (-t.priority.sort_value, t.created_at))
         return tasks[offset:offset + limit]
 
-    def get_tasks_by_status(self, status: TaskStatus) -> List[Task]:
-        task_ids = self._status_index.get(status, [])
-        return [self._tasks[tid] for tid in task_ids if tid in self._tasks]
+    def get_tasks_by_status(self, status: TaskStatus, project_id: Optional[str] = None) -> List[Task]:
+        if project_id:
+            task_ids = self._status_index.get(project_id, {}).get(status, [])
+            tasks_dict = self._tasks.get(project_id, {})
+            return [tasks_dict[tid] for tid in task_ids if tid in tasks_dict]
+        result = []
+        for pid in self._tasks:
+            task_ids = self._status_index.get(pid, {}).get(status, [])
+            tasks_dict = self._tasks[pid]
+            result.extend(tasks_dict[tid] for tid in task_ids if tid in tasks_dict)
+        return result
 
-    def get_tasks_by_agent(self, agent_id: str) -> List[Task]:
-        task_ids = self._agent_tasks.get(agent_id, [])
-        return [self._tasks[tid] for tid in task_ids if tid in self._tasks]
+    def get_tasks_by_agent(self, agent_id: str, project_id: Optional[str] = None) -> List[Task]:
+        if project_id:
+            task_ids = self._agent_tasks.get(project_id, {}).get(agent_id, [])
+            tasks_dict = self._tasks.get(project_id, {})
+            return [tasks_dict[tid] for tid in task_ids if tid in tasks_dict]
+        result = []
+        for pid in self._tasks:
+            task_ids = self._agent_tasks.get(pid, {}).get(agent_id, [])
+            tasks_dict = self._tasks[pid]
+            result.extend(tasks_dict[tid] for tid in task_ids if tid in tasks_dict)
+        return result
 
-    def get_tasks_by_board(self) -> Dict[TaskStatus, List[Task]]:
-        return {status: self.get_tasks_by_status(status) for status in TaskStatus}
+    def get_tasks_by_board(self, project_id: Optional[str] = None) -> Dict[TaskStatus, List[Task]]:
+        return {status: self.get_tasks_by_status(status, project_id) for status in TaskStatus}
 
-    def get_task_count(self, status: TaskStatus = None) -> int:
+    def get_task_count(self, status: TaskStatus = None, project_id: Optional[str] = None) -> int:
+        if project_id:
+            if status is not None:
+                return len(self._status_index.get(project_id, {}).get(status, []))
+            return len(self._tasks.get(project_id, {}))
         if status is not None:
-            return len(self._status_index.get(status, []))
-        return len(self._tasks)
+            return sum(len(idx.get(status, [])) for idx in self._status_index.values())
+        return sum(len(t) for t in self._tasks.values())
 
-    def search_tasks(self, query: str) -> List[Task]:
+    def search_tasks(self, query: str, project_id: Optional[str] = None) -> List[Task]:
         query_lower = query.lower()
+        if project_id:
+            tasks_dict = self._tasks.get(project_id, {})
+            return [
+                task for task in tasks_dict.values()
+                if query_lower in task.title.lower() or query_lower in task.description.lower()
+            ]
         return [
-            task for task in self._tasks.values()
+            task for proj_tasks in self._tasks.values()
+            for task in proj_tasks.values()
             if query_lower in task.title.lower() or query_lower in task.description.lower()
         ]
 
@@ -192,8 +249,14 @@ class TaskBoard:
 
     def clear_all(self) -> None:
         self._tasks.clear()
-        self._status_index = {status: [] for status in TaskStatus}
+        self._status_index.clear()
         self._agent_tasks.clear()
+
+    def clear_project_tasks(self, project_id: str) -> None:
+        """清理指定项目的所有任务"""
+        self._tasks.pop(project_id, None)
+        self._status_index.pop(project_id, None)
+        self._agent_tasks.pop(project_id, None)
 
 
 task_board = TaskBoard()

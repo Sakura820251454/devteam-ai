@@ -10,6 +10,7 @@ router = APIRouter(prefix="/api/tasks", tags=["任务看板"])
 
 
 class CreateTaskRequest(BaseModel):
+    project_id: str = ""
     title: str
     description: str = ""
     priority: Priority = Priority.MEDIUM
@@ -43,6 +44,7 @@ class TaskResponse(BaseModel):
     id: str
     title: str
     description: str
+    project_id: str = ""
     status: TaskStatus
     priority: Priority
     assigned_agents: List[str]
@@ -62,6 +64,7 @@ def task_to_response(task: Task) -> TaskResponse:
         id=task.id,
         title=task.title,
         description=task.description,
+        project_id=getattr(task, 'project_id', ''),
         status=task.status,
         priority=task.priority,
         assigned_agents=task.assigned_agents,
@@ -80,6 +83,7 @@ def task_to_response(task: Task) -> TaskResponse:
 @router.post("/", response_model=TaskResponse)
 async def create_task(request: CreateTaskRequest):
     task = task_board.create_task(
+        project_id=request.project_id,
         title=request.title,
         description=request.description,
         priority=request.priority,
@@ -152,6 +156,7 @@ async def list_tasks(
     status: Optional[TaskStatus] = None,
     priority: Optional[Priority] = None,
     assigned_agent: Optional[str] = None,
+    project_id: Optional[str] = None,
     tags: Optional[str] = None,
     created_by: Optional[str] = None,
     limit: int = 100,
@@ -159,6 +164,7 @@ async def list_tasks(
 ):
     tags_list = tags.split(",") if tags else None
     tasks = task_board.list_tasks(
+        project_id=project_id,
         status=status,
         priority=priority,
         assigned_agent=assigned_agent,
@@ -171,22 +177,22 @@ async def list_tasks(
 
 
 @router.get("/status/{status}", response_model=List[TaskResponse])
-async def get_tasks_by_status(status: TaskStatus):
-    tasks = task_board.get_tasks_by_status(status)
+async def get_tasks_by_status(status: TaskStatus, project_id: Optional[str] = None):
+    tasks = task_board.get_tasks_by_status(status, project_id=project_id)
     return [task_to_response(t) for t in tasks]
 
 
 @router.get("/agent/{agent_id}", response_model=List[TaskResponse])
-async def get_tasks_by_agent(agent_id: str):
-    tasks = task_board.get_tasks_by_agent(agent_id)
+async def get_tasks_by_agent(agent_id: str, project_id: Optional[str] = None):
+    tasks = task_board.get_tasks_by_agent(agent_id, project_id=project_id)
     return [task_to_response(t) for t in tasks]
 
 
 @router.get("/board/all", response_model=dict)
-async def get_board():
-    board = task_board.get_tasks_by_board()
+async def get_board(project_id: Optional[str] = None):
+    board = task_board.get_tasks_by_board(project_id=project_id)
     return {
-        "total": task_board.get_task_count(),
+        "total": task_board.get_task_count(project_id=project_id),
         "columns": {
             status.value: [task_to_response(t) for t in tasks]
             for status, tasks in board.items()
@@ -195,12 +201,12 @@ async def get_board():
 
 
 @router.get("/count/{status}")
-async def get_task_count(status: Optional[TaskStatus] = None):
-    count = task_board.get_task_count(status)
+async def get_task_count(status: Optional[TaskStatus] = None, project_id: Optional[str] = None):
+    count = task_board.get_task_count(status, project_id=project_id)
     return {"status": status.value if status else "all", "count": count}
 
 
 @router.get("/search/{query}", response_model=List[TaskResponse])
-async def search_tasks(query: str):
-    tasks = task_board.search_tasks(query)
+async def search_tasks(query: str, project_id: Optional[str] = None):
+    tasks = task_board.search_tasks(query, project_id=project_id)
     return [task_to_response(t) for t in tasks]

@@ -50,6 +50,8 @@ class Pipeline:
         self.progress: float = 0.0
         self.logs: List[Dict[str, Any]] = []
         self.context: Dict[str, Any] = {}
+        self.paused: bool = False
+        self.stop_requested: bool = False
 
     def add_log(self, stage: str, message: str, level: str = "info") -> None:
         self.logs.append({
@@ -63,12 +65,10 @@ class Pipeline:
 class PipelineOrchestrator:
     def __init__(self):
         self._pipelines: Dict[str, Pipeline] = {}
-        self._active_pipeline: Optional[str] = None
+        self._active_pipelines: Dict[str, str] = {}  # project_id -> pipeline_id
         self._execution_tasks: Dict[str, asyncio.Task] = {}
         self._human_intervention_queue: List[Dict[str, Any]] = []
         self._lock = asyncio.Lock()
-        self._human_paused: bool = False
-        self._stop_requested: bool = False
 
     async def create_pipeline(
         self,
@@ -76,6 +76,12 @@ class PipelineOrchestrator:
         name: str,
         agent_ids: List[str]
     ) -> Pipeline:
+        # 验证所有 Agent 均空闲，并分配到项目
+        for agent_id in agent_ids:
+            if not agent_service.assign_agent_to_project(agent_id, project_id):
+                already_in = agent_service.get_agent_project(agent_id)
+                raise ValueError(f"Agent {agent_id} 已在项目 {already_in} 中，无法分配到项目 {project_id}")
+
         async with self._lock:
             pipeline = Pipeline()
             pipeline.project_id = project_id
@@ -102,7 +108,7 @@ class PipelineOrchestrator:
             pipeline.status = PipelineStatus.RUNNING
             pipeline.started_at = datetime.now()
             pipeline.current_stage = PipelineStage.REQUIREMENT_ANALYSIS
-            self._active_pipeline = pipeline_id
+            self._active_pipelines[pipeline.project_id] = pipeline_id
 
             asyncio.create_task(self._run_pipeline(pipeline_id))
             return True
@@ -121,20 +127,23 @@ class PipelineOrchestrator:
 
             await self._stage_requirement_analysis(pipeline)
 
-            if self._stop_requested:
+            if pipeline.stop_requested:
                 pipeline.status = PipelineStatus.FAILED
+                self._cleanup_pipeline_agents(pipeline)
                 return
 
             await self._stage_task_breakdown(pipeline, project)
 
-            if self._stop_requested:
+            if pipeline.stop_requested:
                 pipeline.status = PipelineStatus.FAILED
+                self._cleanup_pipeline_agents(pipeline)
                 return
 
             await self._stage_task_execution(pipeline)
 
-            if self._stop_requested:
+            if pipeline.stop_requested:
                 pipeline.status = PipelineStatus.FAILED
+                self._cleanup_pipeline_agents(pipeline)
                 return
 
             await self._stage_review(pipeline)
@@ -149,6 +158,13 @@ class PipelineOrchestrator:
             pipeline.status = PipelineStatus.FAILED
             pipeline.add_log("error", f"Pipeline failed: {str(e)}", "error")
             raise
+        finally:
+            self._cleanup_pipeline_agents(pipeline)
+            self._active_pipelines.pop(pipeline.project_id, None)
+
+    def _cleanup_pipeline_agents(self, pipeline: Pipeline) -> None:
+        for agent_id in pipeline.agents:
+            agent_service.release_agent_from_project(agent_id, pipeline.project_id)
 
     async def _stage_requirement_analysis(self, pipeline: Pipeline) -> None:
         pipeline.current_stage = PipelineStage.REQUIREMENT_ANALYSIS
@@ -269,6 +285,7 @@ class PipelineOrchestrator:
             
             for task_data in tasks:
                 task = task_board.create_task(
+                    project_id=pipeline.project_id,
                     title=task_data["title"],
                     description=task_data["description"],
                     priority=Priority(task_data.get("priority", "medium")),
@@ -424,7 +441,7 @@ class PipelineOrchestrator:
         failed_tasks: set = set()
 
         for level_idx, level in enumerate(execution_levels):
-            if self._human_paused or self._stop_requested or security_guard.is_emergency:
+            if pipeline.paused or pipeline.stop_requested or security_guard.is_emergency:
                 pipeline.add_log("task_execution", "Execution paused/stopped/emergency", "warning")
                 break
 
@@ -695,7 +712,7 @@ class PipelineOrchestrator:
         )
         await message_bus.broadcast(msg)
 
-        completed_tasks = task_board.get_tasks_by_status(TaskStatus.REVIEW)
+        completed_tasks = task_board.get_tasks_by_status(TaskStatus.REVIEW, project_id=pipeline.project_id)
         
         if completed_tasks:
             review_prompt = self._build_review_prompt(completed_tasks)
@@ -765,8 +782,8 @@ class PipelineOrchestrator:
                 return False
 
             pipeline.status = PipelineStatus.PAUSED
-            self._human_paused = True
-            await agent_executor.pause_all()
+            pipeline.paused = True
+            await agent_executor.pause_project(pipeline.project_id)
             speaking_controller.set_mode(pipeline_id, SpeakingMode.FREE_STYLE)
 
             pipeline.add_log("control", "Pipeline paused by human intervention")
@@ -779,8 +796,8 @@ class PipelineOrchestrator:
                 return False
 
             pipeline.status = PipelineStatus.RUNNING
-            self._human_paused = False
-            await agent_executor.resume_all()
+            pipeline.paused = False
+            await agent_executor.resume_project(pipeline.project_id)
             speaking_controller.set_mode(pipeline_id, SpeakingMode.PRIORITY_BASED)
 
             pipeline.add_log("control", "Pipeline resumed")
@@ -792,9 +809,10 @@ class PipelineOrchestrator:
             if not pipeline:
                 return False
 
-            self._stop_requested = True
+            pipeline.stop_requested = True
             pipeline.status = PipelineStatus.FAILED
-            self._active_pipeline = None
+            self._cleanup_pipeline_agents(pipeline)
+            self._active_pipelines.pop(pipeline.project_id, None)
 
             pipeline.add_log("control", "Pipeline stopped by human intervention")
             return True
@@ -855,10 +873,23 @@ class PipelineOrchestrator:
     def list_pipelines(self) -> List[Dict[str, Any]]:
         return [self.get_pipeline(pid) for pid in self._pipelines.keys()]
 
-    def get_active_pipeline(self) -> Optional[Dict[str, Any]]:
-        if self._active_pipeline:
-            return self.get_pipeline(self._active_pipeline)
+    def get_active_pipeline(self, project_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        if project_id:
+            pipeline_id = self._active_pipelines.get(project_id)
+            if pipeline_id:
+                return self.get_pipeline(pipeline_id)
+            return None
+        # 向后兼容：返回第一个活跃 pipeline
+        for pipeline_id in self._active_pipelines.values():
+            return self.get_pipeline(pipeline_id)
         return None
+
+    def list_pipelines_by_project(self, project_id: str) -> List[Dict[str, Any]]:
+        return [
+            self.get_pipeline(pid)
+            for pid, p in self._pipelines.items()
+            if p.project_id == project_id
+        ]
 
     def get_intervention_queue(self) -> List[Dict[str, Any]]:
         return self._human_intervention_queue.copy()

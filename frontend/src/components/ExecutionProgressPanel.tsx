@@ -78,8 +78,15 @@ function MiniStuckList({ stuck }: { stuck: StuckTaskInfo[] }) {
   )
 }
 
-export function ExecutionProgressPanel() {
-  const { pipeline, taskExecutions, stuckTasks, setStuckTasks, setStuckPolling } = useStore()
+interface Props { projectId?: string | null }
+
+export function ExecutionProgressPanel({ projectId }: Props) {
+  const pid = projectId ?? ''
+  const pipeline = useStore((s) => s.pipelines[pid] ?? null)
+  const taskExecutions = useStore((s) => s.taskExecutionsByProject[pid] ?? {})
+  const stuckTasks = useStore((s) => s.stuckTasksByProject[pid] ?? [])
+  const setStuckTasks = useStore((s) => s.setStuckTasks)
+  const setStuckPolling = useStore((s) => s.setStuckPolling)
   const [expandedTask, setExpandedTask] = useState<string | null>(null)
 
   useEffect(() => {
@@ -90,10 +97,10 @@ export function ExecutionProgressPanel() {
     const pollExecutions = async () => {
       try {
         const stuck = await getStuckTasks(120)
-        setStuckTasks(stuck)
-        setStuckPolling(true)
+        setStuckTasks(pid, stuck)
+        setStuckPolling(pid, true)
       } catch {
-        setStuckPolling(false)
+        setStuckPolling(pid, false)
       }
     }
 
@@ -102,7 +109,7 @@ export function ExecutionProgressPanel() {
 
     return () => {
       if (pollTimer) clearInterval(pollTimer)
-      setStuckPolling(false)
+      setStuckPolling(pid, false)
     }
   }, [pipeline?.id, pipeline?.status])
 

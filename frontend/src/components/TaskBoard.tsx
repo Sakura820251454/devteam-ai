@@ -15,7 +15,8 @@ const STATUS_STYLES: Record<string, string> = {
 }
 
 function TaskCard({ task }: { task: Task }) {
-  const agents = useStore((s) => s.agents)
+  const pid = useStore((s) => s.activeProjectId) ?? ''
+  const agents = useStore((s) => s.agentsByProject[pid] ?? [])
   const priorityColor = PRIORITY_COLORS[task.priority] || 'bg-surface-400'
   const priorityHex = { low: '#8b949e', medium: '#58a6ff', high: '#d29922', urgent: '#f85149' }[task.priority] || '#8b949e'
 
@@ -102,14 +103,22 @@ function TaskCard({ task }: { task: Task }) {
   )
 }
 
-export default function TaskBoard() {
-  const { tasks, tasksLoading, selectedStage, pipeline, setTasks, setTasksLoading, addLog } = useStore()
+interface Props { projectId?: string | null; selectedStage?: string | null }
+
+export default function TaskBoard({ projectId, selectedStage }: Props) {
+  const pid = projectId ?? ''
+  const tasks = useStore((s) => s.tasksByProject[pid] ?? [])
+  const tasksLoading = useStore((s) => s.tasksLoadingByProject[pid] ?? false)
+  const pipeline = useStore((s) => s.pipelines[pid] ?? null)
+  const setTasks = useStore((s) => s.setTasks)
+  const setTasksLoading = useStore((s) => s.setTasksLoading)
+  const addLog = useStore((s) => s.addLog)
   const stage = pipeline?.stages.find((s) => s.key === selectedStage)
 
   useEffect(() => {
     if (!selectedStage) return
-    setTasksLoading(true)
-    addLog({ level: 'info', source: 'taskboard', message: `加载阶段 "${stage?.label || selectedStage}" 的任务...` })
+    setTasksLoading(pid,true)
+    addLog(pid, { level: 'info', source: 'taskboard', message: `加载阶段 "${stage?.label || selectedStage}" 的任务...` })
 
     const timer = setTimeout(() => {
       const mockTasks: Task[] = [
@@ -150,9 +159,9 @@ export default function TaskBoard() {
         },
       ]
 
-      setTasks(mockTasks)
-      setTasksLoading(false)
-      addLog({ level: 'success', source: 'taskboard', message: `加载完成: ${mockTasks.length} 个任务` })
+      setTasks(pid,mockTasks)
+      setTasksLoading(pid,false)
+      addLog(pid, { level: 'success', source: 'taskboard', message: `加载完成: ${mockTasks.length} 个任务` })
     }, 800)
 
     return () => clearTimeout(timer)

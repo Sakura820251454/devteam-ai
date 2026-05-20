@@ -11,8 +11,10 @@ function formatTokens(n: number): string {
   return String(n)
 }
 
-export default function CostPanel() {
-  const { costData } = useStore()
+interface Props { projectId?: string | null }
+
+export default function CostPanel({ projectId }: Props) {
+  const costData = useStore((s) => projectId ? s.costDataByProject[projectId] ?? null : null)
 
   if (!costData) {
     return (
