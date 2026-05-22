@@ -61,18 +61,6 @@ const getAvatarEmoji = (type: string): string => {
   return emojiMap[type] || '👤'
 }
 
-const getRoleLabel = (type: string): string => {
-  const roleMap: Record<string, string> = {
-    product_manager: '产品经理',
-    architect: '架构师',
-    backend_developer: '后端开发',
-    frontend_developer: '前端开发',
-    tester: '测试工程师',
-    devops: '运维工程师',
-    custom: '自定义'
-  }
-  return roleMap[type] || type
-}
 
 export default function AgentPoolModal({ isOpen, onClose, onAgentsSelected, currentTask }: AgentPoolModalProps) {
   const [agents, setAgents] = useState<Agent[]>([])
@@ -228,7 +216,6 @@ export default function AgentPoolModal({ isOpen, onClose, onAgentsSelected, curr
                               <div className="flex items-center justify-between">
                                 <div>
                                   <span className="font-medium text-white">{agent.name}</span>
-                                  <span className="text-xs text-gray-400 ml-2">({getRoleLabel(agent.type)})</span>
                                   {agent.source === 'soul' && (
                                     <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded ml-1">
                                       soul
@@ -344,7 +331,6 @@ export default function AgentPoolModal({ isOpen, onClose, onAgentsSelected, curr
                         <div className="flex items-center gap-2 mb-3">
                           <span className="text-lg">{getAvatarEmoji(agent.type)}</span>
                           <span className="font-medium text-white">{agent.name}</span>
-                          <span className="text-xs text-gray-400">({getRoleLabel(agent.type)})</span>
                         </div>
                         
                         <div className="space-y-2">

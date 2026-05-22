@@ -43,12 +43,12 @@ class SendMessageRequest(BaseModel):
 @router.post("", response_model=SessionResponse)
 async def create_session(request: CreateSessionRequest = None):
     if request:
-        session = agent_service.create_session(
+        session = await agent_service.create_session(
             title=request.title,
             participant_ids=request.participant_ids
         )
     else:
-        session = agent_service.create_session()
+        session = await agent_service.create_session()
     return SessionResponse.from_session(session)
 
 

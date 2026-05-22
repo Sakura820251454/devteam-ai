@@ -55,7 +55,7 @@ class ProjectResponse(BaseModel):
 
 @router.post("/", response_model=ProjectResponse)
 async def create_project(request: CreateProjectRequest):
-    project = project_service.create_project(
+    project = await project_service.create_project(
         name=request.name,
         description=request.description,
         requirements=request.requirements,
@@ -98,7 +98,7 @@ async def update_project(project_id: str, request: UpdateProjectRequest):
     status = ProjectStatus(request.status) if request.status else None
     phase = ProjectPhase(request.current_phase) if request.current_phase else None
 
-    project = project_service.update_project(
+    project = await project_service.update_project(
         project_id=project_id,
         name=request.name,
         description=request.description,
@@ -122,7 +122,7 @@ async def update_project(project_id: str, request: UpdateProjectRequest):
 
 @router.post("/{project_id}/advance-phase", response_model=ProjectResponse)
 async def advance_phase(project_id: str):
-    project = project_service.advance_phase(project_id)
+    project = await project_service.advance_phase(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return ProjectResponse(
@@ -161,7 +161,7 @@ async def list_projects(status: Optional[str] = None):
 
 @router.delete("/{project_id}")
 async def delete_project(project_id: str, cascade: bool = True):
-    success = project_service.delete_project(project_id, cascade=cascade)
+    success = await project_service.delete_project(project_id, cascade=cascade)
     if not success:
         raise HTTPException(status_code=404, detail="Project not found")
     return {"status": "ok"}
@@ -200,7 +200,7 @@ async def create_tasks_from_requirements(project_id: str):
 
     created_tasks = []
     for task_data in tasks_data:
-        task = task_board.create_task(
+        task = await task_board.create_task(
             project_id=project_id,
             title=task_data["title"],
             description=task_data["description"],

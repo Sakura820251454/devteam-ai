@@ -63,8 +63,16 @@ class ProjectService:
     def __init__(self):
         self._projects: Dict[str, Project] = {}
         self._task_breakdown_prompts: Dict[str, str] = {}
+        self._db = None
 
-    def create_project(
+    def initialize(self, db_service) -> None:
+        self._db = db_service
+
+    async def load_all(self) -> None:
+        if self._db:
+            self._projects = await self._db.load_all()
+
+    async def create_project(
         self,
         name: str,
         description: str = "",
@@ -80,19 +88,21 @@ class ProjectService:
             team_config=team_config or {}
         )
         self._projects[project.id] = project
+        if self._db:
+            await self._db.save(project)
         return project
 
     def get_project(self, project_id: str) -> Optional[Project]:
         return self._projects.get(project_id)
 
-    def update_project(
+    async def update_project(
         self,
         project_id: str,
         name: str = None,
         description: str = None,
         requirements: str = None,
-        status: ProjectStatus = None,
-        current_phase: ProjectPhase = None
+        status: str = None,
+        current_phase: str = None
     ) -> Optional[Project]:
         project = self._projects.get(project_id)
         if not project:
@@ -105,11 +115,13 @@ class ProjectService:
         if requirements is not None:
             project.requirements = requirements
         if status is not None:
-            project.status = status
+            project.status = ProjectStatus(status) if isinstance(status, str) else status
         if current_phase is not None:
-            project.current_phase = current_phase
+            project.current_phase = ProjectPhase(current_phase) if isinstance(current_phase, str) else current_phase
 
         project.updated_at = datetime.now()
+        if self._db:
+            await self._db.save(project)
         return project
 
     def list_projects(self, status: ProjectStatus = None) -> List[Project]:
@@ -118,17 +130,19 @@ class ProjectService:
             projects = [p for p in projects if p.status == status]
         return sorted(projects, key=lambda p: p.updated_at, reverse=True)
 
-    def delete_project(self, project_id: str, cascade: bool = True) -> bool:
+    async def delete_project(self, project_id: str, cascade: bool = True) -> bool:
         if project_id not in self._projects:
             return False
         if cascade:
-            self._cleanup_project(project_id)
+            await self._cleanup_project(project_id)
         del self._projects[project_id]
         if project_id in self._task_breakdown_prompts:
             del self._task_breakdown_prompts[project_id]
+        if self._db:
+            await self._db.delete(project_id)
         return True
 
-    def _cleanup_project(self, project_id: str) -> None:
+    async def _cleanup_project(self, project_id: str) -> None:
         """级联清理项目相关资源"""
         from app.services.collaboration.pipeline_orchestrator import pipeline_orchestrator
         from app.services.collaboration.task_board import task_board
@@ -142,13 +156,13 @@ class ProjectService:
         for pid in list(pipeline_orchestrator._active_pipelines.keys()):
             if pid == project_id:
                 pipeline_id = pipeline_orchestrator._active_pipelines[pid]
-                pipeline_orchestrator.stop_pipeline(pipeline_id)
+                await pipeline_orchestrator.stop_pipeline(pipeline_id)
 
         # 释放 Agent
         agent_service.release_project_agents(project_id)
 
         # 清理任务
-        task_board.clear_project_tasks(project_id)
+        await task_board.clear_project_tasks(project_id)
 
         # 清理消息
         message_bus.clear_project_history(project_id)
@@ -193,7 +207,7 @@ class ProjectService:
             "agents": [{"id": a["id"], "name": a.get("name", ""), "type": a.get("type", "")} for a in agents],
         }
 
-    def advance_phase(self, project_id: str) -> Optional[Project]:
+    async def advance_phase(self, project_id: str) -> Optional[Project]:
         project = self._projects.get(project_id)
         if not project:
             return None
@@ -211,6 +225,8 @@ class ProjectService:
             if current_idx < len(phase_order) - 1:
                 project.current_phase = phase_order[current_idx + 1]
                 project.updated_at = datetime.now()
+                if self._db:
+                    await self._db.save(project)
                 return project
         except ValueError:
             pass

@@ -14,7 +14,7 @@ class LLMProviderType(str, Enum):
 
 class LLMConfig(BaseModel):
     provider: LLMProviderType = Field(default=LLMProviderType.DEEPSEEK, description="LLM提供商")
-    model: str = Field(default="deepseek-chat", description="模型名称")
+    model: str = Field(default="deepseek-v4-flash", description="模型名称")
     temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="温度参数")
     max_tokens: Optional[int] = Field(default=None, description="最大token数")
 

@@ -14,8 +14,33 @@ async def lifespan(app: FastAPI):
     await init_db()
     init_default_tools()
 
-    task_persistence_service.initialize(async_session_maker)
+    # Initialize persistence services
+    from app.services.persistence import (
+        project_persistence, task_persistence, pipeline_persistence, session_persistence
+    )
+    from app.services.collaboration.project_service import project_service
+    from app.services.collaboration.task_board import task_board
+    from app.services.collaboration.pipeline_orchestrator import pipeline_orchestrator
+    from app.services.agent.agent_service import agent_service
 
+    project_persistence.initialize(async_session_maker)
+    task_persistence.initialize(async_session_maker)
+    pipeline_persistence.initialize(async_session_maker)
+    session_persistence.initialize(async_session_maker)
+
+    project_service.initialize(project_persistence)
+    task_board.initialize(task_persistence)
+    pipeline_orchestrator.initialize(pipeline_persistence)
+    agent_service.initialize(session_persistence)
+
+    # Load persisted state into memory
+    await project_service.load_all()
+    await task_board.load_all()
+    await pipeline_orchestrator.load_all()
+    await agent_service.load_all_sessions()
+
+    # Existing initializations
+    task_persistence_service.initialize(async_session_maker)
     await stuck_detector.start_monitoring()
 
     yield

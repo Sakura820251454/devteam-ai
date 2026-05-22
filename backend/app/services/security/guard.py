@@ -314,10 +314,12 @@ class SecurityGuard:
             self._operation_counters[key] = self._operation_counters.get(key, 0) + 1
             if not success:
                 self._error_counters[key] = self._error_counters.get(key, 0) + 1
+            else:
+                self._error_counters.setdefault(key, 0)
 
             # 检查是否需要触发断路器
             total = self._operation_counters[key]
-            errors = self._error_counters[key]
+            errors = self._error_counters.get(key, 0)
             if total >= 5:  # 至少 5 次操作才评估
                 error_rate = errors / total
                 if error_rate > self._circuit_breaker_threshold:

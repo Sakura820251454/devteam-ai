@@ -7,7 +7,7 @@ from app.core.llm_models import AVAILABLE_MODELS, get_model_info
 from app.services.llm.cost_tracker import cost_tracker, prompt_cache_service
 
 
-router = APIRouter(prefix="/llm", tags=["LLM"])
+router = APIRouter(prefix="/api/llm", tags=["LLM"])
 
 
 class ChatRequest(BaseModel):

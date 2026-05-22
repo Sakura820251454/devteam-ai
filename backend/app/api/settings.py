@@ -41,6 +41,7 @@ class UpdateSettingsRequest(BaseModel):
 
 @router.get("/")
 def get_settings():
+    from app.core.config import get_settings as get_core_settings
     settings = load_settings()
     root = settings.get("workspace_root", _get_default_workspace_root())
     resolved = root
@@ -49,6 +50,7 @@ def get_settings():
     return {
         "workspace_root": root,
         "workspace_root_resolved": resolved,
+        "llm_mode": get_core_settings().llm_mode.value,
     }
 
 

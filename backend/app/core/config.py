@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
     
     deepseek_api_key: str = ""
-    deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-chat"
+    deepseek_base_url: str = "https://api.deepseek.com/v1"
+    deepseek_model: str = "deepseek-v4-flash"
     
     anthropic_api_key: str = ""
     anthropic_base_url: str = "https://api.anthropic.com"
@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     azure_api_version: str = "2024-02-15-preview"
     
     default_llm_provider: str = "deepseek"
-    default_llm_model: str = "deepseek-chat"
+    default_llm_model: str = "deepseek-v4-flash"
     
     database_url: str = "sqlite+aiosqlite:///./data/devteam.db"
     

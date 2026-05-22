@@ -220,7 +220,7 @@ class TestAgentContextFactory:
         context = AgentContextFactory.from_soul(soul_dict, "session1")
         
         assert context.agent_id == "test_agent"
-        assert context.role == "frontend"
+        assert context.role == "agent"
         assert "Be creative" in context.personality["core_principles"]
     
     def test_from_soul_file(self):
@@ -236,7 +236,7 @@ class TestAgentContextFactory:
         context = AgentContextFactory.from_soul_file(soul_file, "session1")
         
         assert context.agent_id == "frontend_dev"
-        assert context.role == "frontend"
+        assert context.role == "agent"
         assert "Focus on UX" in context.personality["core_principles"]
         assert "Test first" in context.personality["execution_rules"]
         assert context.soul_data == soul_file

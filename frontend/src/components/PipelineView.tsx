@@ -194,9 +194,10 @@ interface PipelineViewProps {
   projectId?: string | null
   onCreateProject: () => void
   onOpenExample: () => void
+  onOpenExisting: () => void
 }
 
-export default function PipelineView({ projectId, onCreateProject, onOpenExample }: PipelineViewProps) {
+export default function PipelineView({ projectId, onCreateProject, onOpenExample, onOpenExisting }: PipelineViewProps) {
   const pid = projectId ?? ''
   const pipeline = useStore((s) => s.pipelines[pid] ?? null)
   const agents = useStore((s) => s.agentsByProject[pid] ?? [])
@@ -229,6 +230,12 @@ export default function PipelineView({ projectId, onCreateProject, onOpenExample
             className="px-5 py-2.5 bg-accent-cyan text-white rounded-lg font-medium text-sm hover:bg-accent-cyan/90 transition-all shadow-glow-cyan"
           >
             🚀 启动新项目
+          </button>
+          <button
+            onClick={onOpenExisting}
+            className="px-5 py-2.5 bg-accent-cyan/20 text-accent-cyan rounded-lg font-medium text-sm hover:bg-accent-cyan/30 transition-all"
+          >
+            📂 打开已有项目
           </button>
           <button
             onClick={onOpenExample}

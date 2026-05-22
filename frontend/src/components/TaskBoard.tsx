@@ -117,6 +117,11 @@ export default function TaskBoard({ projectId, selectedStage }: Props) {
 
   useEffect(() => {
     if (!selectedStage) return
+
+    // 如果已有真实任务则不覆盖（来自后端 polling 或 simulation）
+    const currentTasks = useStore.getState().tasksByProject[pid] ?? []
+    if (currentTasks.length > 0) return
+
     setTasksLoading(pid,true)
     addLog(pid, { level: 'info', source: 'taskboard', message: `加载阶段 "${stage?.label || selectedStage}" 的任务...` })
 
@@ -165,7 +170,7 @@ export default function TaskBoard({ projectId, selectedStage }: Props) {
     }, 800)
 
     return () => clearTimeout(timer)
-  }, [selectedStage])
+  }, [selectedStage, pid])
 
   const tasksByStatus = useMemo(() => {
     const map: Record<string, Task[]> = {}

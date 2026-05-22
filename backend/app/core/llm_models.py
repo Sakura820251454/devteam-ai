@@ -54,21 +54,39 @@ AVAILABLE_MODELS = {
         max_tokens=16385,
         description="经典模型，稳定可靠"
     ),
+    "deepseek-v4-flash": LLMModelInfo(
+        name="deepseek-v4-flash",
+        provider=LLMProviderType.DEEPSEEK,
+        input_cost_per_1k=0.001,
+        output_cost_per_1k=0.002,
+        max_tokens=384000,
+        supports_streaming=True,
+        description="DeepSeek V4 Flash — 快速低成本模型 (284B/13B active)，1M上下文"
+    ),
+    "deepseek-v4-pro": LLMModelInfo(
+        name="deepseek-v4-pro",
+        provider=LLMProviderType.DEEPSEEK,
+        input_cost_per_1k=0.012,
+        output_cost_per_1k=0.024,
+        max_tokens=384000,
+        supports_streaming=True,
+        description="DeepSeek V4 Pro — 旗舰模型 (1.6T/49B active)，1M上下文"
+    ),
     "deepseek-chat": LLMModelInfo(
         name="deepseek-chat",
         provider=LLMProviderType.DEEPSEEK,
-        input_cost_per_1k=0.1,
-        output_cost_per_1k=0.3,
+        input_cost_per_1k=0.001,
+        output_cost_per_1k=0.002,
         max_tokens=64000,
-        description="DeepSeek通用对话模型，性价比极高"
+        description="[旧版] DeepSeek V3 通用对话模型，将于2026-07-24退役，请迁移至 deepseek-v4-flash"
     ),
     "deepseek-coder": LLMModelInfo(
         name="deepseek-coder",
         provider=LLMProviderType.DEEPSEEK,
-        input_cost_per_1k=0.14,
-        output_cost_per_1k=0.28,
+        input_cost_per_1k=0.001,
+        output_cost_per_1k=0.002,
         max_tokens=64000,
-        description="DeepSeek代码专用模型"
+        description="[旧版] DeepSeek代码专用模型，将于2026-07-24退役"
     ),
     "claude-3-5-sonnet": LLMModelInfo(
         name="claude-3-5-sonnet",
@@ -98,7 +116,7 @@ AVAILABLE_MODELS = {
 
 
 def get_model_info(model_name: str) -> LLMModelInfo:
-    return AVAILABLE_MODELS.get(model_name, AVAILABLE_MODELS["deepseek-chat"])
+    return AVAILABLE_MODELS.get(model_name, AVAILABLE_MODELS["deepseek-v4-flash"])
 
 
 def calculate_cost(model_name: str, prompt_tokens: int, completion_tokens: int) -> float:

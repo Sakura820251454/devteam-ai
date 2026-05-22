@@ -16,6 +16,7 @@ class CreatePipelineRequest(BaseModel):
     project_id: str
     name: str
     agent_ids: List[str]
+    team_config: Optional[dict] = None
 
 
 class InterveneRequest(BaseModel):
@@ -23,13 +24,16 @@ class InterveneRequest(BaseModel):
     agent_id: Optional[str] = None
 
 
+# ========== Collection routes ==========
+
 @router.post("/")
 async def create_pipeline(request: CreatePipelineRequest):
     try:
         pipeline = await pipeline_orchestrator.create_pipeline(
             project_id=request.project_id,
             name=request.name,
-            agent_ids=request.agent_ids
+            agent_ids=request.agent_ids,
+            team_config=request.team_config or {},
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -50,6 +54,8 @@ async def list_pipelines(project_id: Optional[str] = None):
     return {"pipelines": pipelines}
 
 
+# ========== Static routes (MUST be before /{pipeline_id}) ==========
+
 @router.get("/active")
 async def get_active_pipeline(project_id: Optional[str] = None):
     pipeline = pipeline_orchestrator.get_active_pipeline(project_id=project_id)
@@ -57,6 +63,96 @@ async def get_active_pipeline(project_id: Optional[str] = None):
         return {"pipeline": None, "message": "No active pipeline"}
     return {"pipeline": pipeline}
 
+
+@router.get("/interventions/queue")
+async def get_intervention_queue():
+    queue = pipeline_orchestrator.get_intervention_queue()
+    return {"queue": queue}
+
+
+# ========== Pipeline Template API ==========
+
+@router.get("/templates")
+async def list_pipeline_templates(category: str = None):
+    if category:
+        templates = get_templates_by_category(category)
+    else:
+        templates = get_all_templates()
+    return {
+        "templates": [t.to_dict() for t in templates],
+        "categories": [
+            {"key": "simple", "label": "简单任务"},
+            {"key": "development", "label": "开发项目"},
+            {"key": "design", "label": "方案设计"},
+            {"key": "complex", "label": "复杂系统"},
+        ],
+    }
+
+
+@router.get("/templates/{template_id}")
+async def get_pipeline_template(template_id: str):
+    template = get_template_by_id(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template not found: {template_id}")
+    return template.to_dict()
+
+
+class AdjustTemplateRequest(BaseModel):
+    project_name: str
+    project_description: str
+    template_id: str
+
+
+class StrategyRecommendRequest(BaseModel):
+    project_name: str
+    project_description: str
+    requirements: str = ""
+    agent_ids: List[str]
+    template_id: Optional[str] = None
+
+
+@router.post("/recommend-strategy")
+async def recommend_strategy(request: StrategyRecommendRequest):
+    from app.services.collaboration.strategy_recommender import strategy_recommender
+
+    recommendation = await strategy_recommender.recommend(
+        project_name=request.project_name,
+        project_description=request.project_description,
+        requirements=request.requirements,
+        agent_ids=request.agent_ids,
+        template_id=request.template_id,
+    )
+    return {
+        "recommended_strategy": recommendation.recommended_strategy,
+        "confidence": recommendation.confidence,
+        "reasoning": recommendation.reasoning,
+        "suggested_coordinator": recommendation.suggested_coordinator,
+        "alternative_strategies": recommendation.alternative_strategies,
+    }
+
+
+@router.post("/templates/adjust")
+async def adjust_pipeline_template(request: AdjustTemplateRequest):
+    suggestions = await suggest_stage_adjustments(
+        project_name=request.project_name,
+        project_description=request.project_description,
+        template_id=request.template_id,
+    )
+    return suggestions
+
+
+class ApplyAdjustmentRequest(BaseModel):
+    template_id: str
+    adjustments: dict
+
+
+@router.post("/templates/apply")
+async def apply_pipeline_adjustment(request: ApplyAdjustmentRequest):
+    stages = apply_stage_adjustments(request.template_id, request.adjustments)
+    return {"stages": stages}
+
+
+# ========== /{pipeline_id} routes (MUST be after all static routes) ==========
 
 @router.get("/{pipeline_id}")
 async def get_pipeline(pipeline_id: str):
@@ -134,66 +230,3 @@ async def get_pipeline_status(pipeline_id: str):
         "running_tasks": running_tasks,
         "is_paused": agent_executor.is_project_paused(pipeline.get("project_id", ""))
     }
-
-
-@router.get("/interventions/queue")
-async def get_intervention_queue():
-    queue = pipeline_orchestrator.get_intervention_queue()
-    return {"queue": queue}
-
-
-# ========== Pipeline Template API ==========
-
-@router.get("/templates")
-async def list_pipeline_templates(category: str = None):
-    """获取所有 Pipeline 阶段模板，可按类别筛选"""
-    if category:
-        templates = get_templates_by_category(category)
-    else:
-        templates = get_all_templates()
-    return {
-        "templates": [t.to_dict() for t in templates],
-        "categories": [
-            {"key": "simple", "label": "简单任务"},
-            {"key": "development", "label": "开发项目"},
-            {"key": "design", "label": "方案设计"},
-            {"key": "complex", "label": "复杂系统"},
-        ],
-    }
-
-
-@router.get("/templates/{template_id}")
-async def get_pipeline_template(template_id: str):
-    template = get_template_by_id(template_id)
-    if not template:
-        raise HTTPException(status_code=404, detail=f"Template not found: {template_id}")
-    return template.to_dict()
-
-
-class AdjustTemplateRequest(BaseModel):
-    project_name: str
-    project_description: str
-    template_id: str
-
-
-@router.post("/templates/adjust")
-async def adjust_pipeline_template(request: AdjustTemplateRequest):
-    """LLM 分析需求，建议调整 Pipeline 模板阶段"""
-    suggestions = await suggest_stage_adjustments(
-        project_name=request.project_name,
-        project_description=request.project_description,
-        template_id=request.template_id,
-    )
-    return suggestions
-
-
-class ApplyAdjustmentRequest(BaseModel):
-    template_id: str
-    adjustments: dict
-
-
-@router.post("/templates/apply")
-async def apply_pipeline_adjustment(request: ApplyAdjustmentRequest):
-    """应用 LLM 建议的阶段调整，返回调整后的阶段列表"""
-    stages = apply_stage_adjustments(request.template_id, request.adjustments)
-    return {"stages": stages}

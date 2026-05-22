@@ -244,21 +244,20 @@ class TestAgentServiceWithSoul:
         
         assert template is not None
         assert template.name == "xiaowang"
-        # 应该从 role 字段推断出 BACKEND 类型
-        assert template.type == AgentType.BACKEND, f"Expected BACKEND but got {template.type}"
+        # 类型统一为 CUSTOM——配置阶段不预设职位
+        assert template.type == AgentType.CUSTOM, f"Expected CUSTOM but got {template.type}"
         assert template.avatar_color == "#3B82F6"
         assert template.is_preset is False
         assert "soul-based" in template.tags
     
     def test_infer_agent_type(self):
-        """测试 Agent 类型推断"""
-        # 测试各种名称
-        assert self.service._infer_agent_type("产品经理") == AgentType.PM
-        assert self.service._infer_agent_type("backend_dev") == AgentType.BACKEND
-        assert self.service._infer_agent_type("前端小王") == AgentType.FRONTEND
-        assert self.service._infer_agent_type("测试工程师") == AgentType.TESTER
-        assert self.service._infer_agent_type("运维") == AgentType.DEVOPS
-        assert self.service._infer_agent_type("架构师") == AgentType.ARCHITECT
+        """测试 Agent 类型推断——统一返回 CUSTOM（不预设职位）"""
+        assert self.service._infer_agent_type("产品经理") == AgentType.CUSTOM
+        assert self.service._infer_agent_type("backend_dev") == AgentType.CUSTOM
+        assert self.service._infer_agent_type("前端小王") == AgentType.CUSTOM
+        assert self.service._infer_agent_type("测试工程师") == AgentType.CUSTOM
+        assert self.service._infer_agent_type("运维") == AgentType.CUSTOM
+        assert self.service._infer_agent_type("架构师") == AgentType.CUSTOM
         assert self.service._infer_agent_type("未知角色") == AgentType.CUSTOM
     
     def test_create_agent_from_soul(self):

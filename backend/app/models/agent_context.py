@@ -180,7 +180,7 @@ class AgentContextFactory:
         return AgentContext(
             agent_id=soul_data.get("name", "unknown"),
             session_id=session_id,
-            role=soul_data.get("role", "agent"),
+            role="agent",
             system_prompt=soul_data.get("system_prompt", ""),
             personality={
                 "core_principles": soul_data.get("core_principles", []),
@@ -199,7 +199,7 @@ class AgentContextFactory:
         return AgentContext(
             agent_id=soul_file.name,
             session_id=session_id,
-            role=soul_file.role if soul_file.role else "agent",
+            role="agent",
             system_prompt=system_prompt,
             personality={
                 "core_principles": soul_file.core_principles,

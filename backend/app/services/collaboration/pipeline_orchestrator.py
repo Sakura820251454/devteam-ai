@@ -52,14 +52,26 @@ class Pipeline:
         self.context: Dict[str, Any] = {}
         self.paused: bool = False
         self.stop_requested: bool = False
+        self.team_config: Dict[str, Any] = {}
+        self.agent_roles: Dict[str, str] = {}  # agent_id -> inferred role label
+        self._assignment_queue: List[str] = []  # FIFO queue for round-robin assignment
 
     def add_log(self, stage: str, message: str, level: str = "info") -> None:
-        self.logs.append({
+        entry = {
             "stage": stage,
             "message": message,
             "level": level,
             "timestamp": datetime.now().isoformat()
-        })
+        }
+        self.logs.append(entry)
+
+        # Persist to workspace log file on disk
+        if self.project_id:
+            try:
+                from app.services.project.workspace_manager import workspace_manager
+                workspace_manager.add_log(self.project_id, level, stage, message)
+            except Exception:
+                pass  # best-effort: don't break pipeline if workspace logging fails
 
 
 class PipelineOrchestrator:
@@ -69,12 +81,25 @@ class PipelineOrchestrator:
         self._execution_tasks: Dict[str, asyncio.Task] = {}
         self._human_intervention_queue: List[Dict[str, Any]] = []
         self._lock = asyncio.Lock()
+        self._db = None
+
+    def initialize(self, db_service) -> None:
+        self._db = db_service
+
+    async def load_all(self) -> None:
+        if self._db:
+            loaded = await self._db.load_all()
+            for pid, pipeline in loaded.items():
+                self._pipelines[pid] = pipeline
+                if pipeline.status == PipelineStatus.RUNNING:
+                    self._active_pipelines[pipeline.project_id] = pid
 
     async def create_pipeline(
         self,
         project_id: str,
         name: str,
-        agent_ids: List[str]
+        agent_ids: List[str],
+        team_config: Dict[str, Any] = None,
     ) -> Pipeline:
         # 验证所有 Agent 均空闲，并分配到项目
         for agent_id in agent_ids:
@@ -87,9 +112,18 @@ class PipelineOrchestrator:
             pipeline.project_id = project_id
             pipeline.name = name
             pipeline.agents = agent_ids
+            pipeline.team_config = team_config or {}
+
+            # 使用 agent name 作为角色标签（配置阶段不预设职位）
+            for agent_id in agent_ids:
+                agent = agent_service.get_agent(agent_id)
+                if agent:
+                    pipeline.agent_roles[agent_id] = agent.get("name", agent_id)
 
             self._pipelines[pipeline.id] = pipeline
-            self.add_log(f"Pipeline created: {name}", "init")
+            self.add_log(f"流水线创建: {name}", "init")
+            if self._db:
+                await self._db.save(pipeline)
             return pipeline
 
     async def start_pipeline(self, pipeline_id: str) -> bool:
@@ -111,6 +145,8 @@ class PipelineOrchestrator:
             self._active_pipelines[pipeline.project_id] = pipeline_id
 
             asyncio.create_task(self._run_pipeline(pipeline_id))
+            if self._db:
+                await self._db.save(pipeline)
             return True
 
     async def _run_pipeline(self, pipeline_id: str) -> None:
@@ -123,27 +159,53 @@ class PipelineOrchestrator:
             return
 
         try:
-            pipeline.add_log("init", f"Pipeline started for project: {project.name}")
+            pipeline.add_log("init", f"流水线启动，项目: {project.name}")
+
+            # 确保 workspace 存在
+            from app.services.project.workspace_manager import workspace_manager
+            try:
+                ws = workspace_manager.get_workspace(pipeline.project_id)
+                if not ws:
+                    workspace_manager.create_workspace(
+                        project_id=pipeline.project_id,
+                        name=project.name,
+                        description=project.description or "",
+                    )
+                    pipeline.add_log("init", "Workspace 已创建")
+            except Exception as e:
+                pipeline.add_log("init", f"Workspace 创建失败: {e}", "warning")
 
             await self._stage_requirement_analysis(pipeline)
+            if self._db:
+                await self._db.save(pipeline)
 
             if pipeline.stop_requested:
                 pipeline.status = PipelineStatus.FAILED
                 self._cleanup_pipeline_agents(pipeline)
+                if self._db:
+                    await self._db.save(pipeline)
                 return
 
             await self._stage_task_breakdown(pipeline, project)
+            if self._db:
+                await self._db.save(pipeline)
 
             if pipeline.stop_requested:
                 pipeline.status = PipelineStatus.FAILED
                 self._cleanup_pipeline_agents(pipeline)
+                if self._db:
+                    await self._db.save(pipeline)
                 return
 
             await self._stage_task_execution(pipeline)
+            if self._db:
+                await self._db.save(pipeline)
 
             if pipeline.stop_requested:
                 pipeline.status = PipelineStatus.FAILED
                 self._cleanup_pipeline_agents(pipeline)
+                if self._db:
+                    await self._db.save(pipeline)
                 return
 
             await self._stage_review(pipeline)
@@ -152,7 +214,9 @@ class PipelineOrchestrator:
             pipeline.completed_at = datetime.now()
             pipeline.current_stage = PipelineStage.COMPLETED
 
-            project_service.update_project(pipeline.project_id, status="completed")
+            await project_service.update_project(pipeline.project_id, status="completed")
+            if self._db:
+                await self._db.save(pipeline)
 
         except Exception as e:
             pipeline.status = PipelineStatus.FAILED
@@ -168,8 +232,8 @@ class PipelineOrchestrator:
 
     async def _stage_requirement_analysis(self, pipeline: Pipeline) -> None:
         pipeline.current_stage = PipelineStage.REQUIREMENT_ANALYSIS
-        pipeline.add_log("requirement_analysis", "Starting requirement analysis with LLM...")
-        
+        pipeline.add_log("requirement_analysis", "启动多 Agent 需求分析...")
+
         project = project_service.get_project(pipeline.project_id)
         if not project:
             return
@@ -178,7 +242,7 @@ class PipelineOrchestrator:
             sender_id="system",
             sender_name="Pipeline",
             channel=f"project:{pipeline.project_id}",
-            content=f"🔍 开始使用AI分析需求: {project.requirements[:200]}...",
+            content=f"🔍 启动多 Agent 需求分析: {project.requirements[:200]}...",
             message_type=MessageType.SYSTEM
         )
         await message_bus.broadcast(msg)
@@ -186,36 +250,128 @@ class PipelineOrchestrator:
         speaking_controller.set_mode(pipeline.id, SpeakingMode.PRIORITY_BASED)
         speaking_controller.set_token_budget(pipeline.id, 100000)
 
-        analysis_prompt = self._build_requirement_analysis_prompt(project)
-        
+        # 选择参与分析的 agent（PM + 架构师优先）
+        participants = self._select_stage_participants(pipeline, ["PM", "架构师"])
+
+        if len(participants) < 2:
+            # 不足 2 人 → 回退单 LLM
+            pipeline.add_log("requirement_analysis", "参与讨论的 Agent 不足，回退到单 LLM 分析")
+            return await self._single_llm_requirement_analysis(pipeline, project)
+
         try:
-            llm_messages = [
-                LLMMessage(role="system", content="你是一位资深产品经理，擅长深入分析需求，发现潜在问题和改进机会。"),
-                LLMMessage(role="user", content=analysis_prompt)
-            ]
-            
-            response = await llm_service.chat(llm_messages, track_cost=True, task_id=pipeline.project_id)
-            
-            analysis_result = response.content
-            
-            pipeline.context["requirement_analysis"] = analysis_result
-            
+            result = await self._run_agent_discussion(
+                pipeline=pipeline,
+                stage_key="requirement_analysis",
+                topic=f"分析项目需求: {project.name}",
+                context={
+                    "项目名称": project.name,
+                    "项目描述": project.description or "无",
+                    "需求内容": project.requirements or "无",
+                    "分析角度": "需求完整性、技术可行性、潜在风险、改进建议、优先级建议",
+                    "团队成员": ", ".join(
+                        f"{pipeline.agent_roles.get(aid, aid)}" for aid in participants
+                    ),
+                },
+                agent_ids=participants,
+                max_rounds=2,
+            )
+
+            # 合并多 agent 观点为完整分析报告
+            final_analysis = await self._merge_discussion_into_analysis(result, project)
+
+            pipeline.context["requirement_analysis"] = final_analysis
+            pipeline.context["requirement_discussion"] = {
+                "transcript": [m.model_dump(mode='json') for m in result.transcript],
+                "consensus": result.consensus_reached,
+                "participants": participants,
+            }
+
+            # 保存需求分析报告到 workspace
+            from app.services.project.workspace_manager import workspace_manager
+            try:
+                workspace_manager.add_artifact(
+                    pipeline.project_id, "requirement_analysis",
+                    "requirement_analysis.md", final_analysis,
+                )
+            except Exception:
+                pass
+
             msg = Message(
                 sender_id="system",
                 sender_name="Pipeline",
                 channel=f"project:{pipeline.project_id}",
-                content=f"✅ 需求分析完成:\n{analysis_result[:500]}...",
+                content=f"✅ 多 Agent 需求分析完成 ({len(result.transcript)} 条发言, {len(participants)} 人参与)",
                 message_type=MessageType.SYSTEM
             )
             await message_bus.broadcast(msg)
-            
-            pipeline.add_log("requirement_analysis", f"Analysis complete: {len(analysis_result)} chars")
-            
+
+            pipeline.add_log("requirement_analysis",
+                f"多 Agent 分析完成: {len(result.transcript)} 条发言, 报告 {len(final_analysis)} 字符")
+
         except Exception as e:
-            pipeline.add_log("requirement_analysis", f"Analysis failed: {str(e)}", "error")
-            pipeline.context["requirement_analysis"] = f"Error: {str(e)}"
+            pipeline.add_log("requirement_analysis", f"Agent 讨论失败: {e}，回退到单 LLM", "warning")
+            await self._single_llm_requirement_analysis(pipeline, project)
 
         pipeline.progress = 0.2
+
+    async def _single_llm_requirement_analysis(self, pipeline: Pipeline, project) -> None:
+        """单 LLM 需求分析的兜底方案"""
+        analysis_prompt = self._build_requirement_analysis_prompt(project)
+        try:
+            response = await llm_service.chat(
+                messages=[
+                    LLMMessage(role="system", content="你是一位资深产品经理，擅长深入分析需求，发现潜在问题和改进机会。"),
+                    LLMMessage(role="user", content=analysis_prompt),
+                ],
+                track_cost=True,
+                task_id=pipeline.project_id,
+            )
+            pipeline.context["requirement_analysis"] = response.content
+            pipeline.add_log("requirement_analysis", f"单 LLM 分析完成: {len(response.content)} 字符")
+        except Exception as e:
+            pipeline.add_log("requirement_analysis", f"分析失败: {str(e)}", "error")
+            pipeline.context["requirement_analysis"] = f"Error: {str(e)}"
+
+    async def _merge_discussion_into_analysis(self, discussion, project) -> str:
+        """将多 agent 讨论记录合并为一份完整的需求分析报告"""
+        transcript_text = "\n\n".join(
+            f"### {dm.agent_name} ({dm.role_label})\n{dm.content}"
+            for dm in discussion.transcript
+        )
+
+        try:
+            response = await llm_service.chat(
+                messages=[
+                    LLMMessage(
+                        role="system",
+                        content="你是一位资深产品经理。请将以下多 Agent 讨论合并为一份完整的需求分析报告。保留所有有价值的分歧和不同视角。",
+                    ),
+                    LLMMessage(
+                        role="user",
+                        content=f"""项目: {project.name}
+描述: {project.description}
+需求: {project.requirements}
+
+多 Agent 讨论记录:
+{transcript_text}
+
+请合并为一份结构化的需求分析报告，包含:
+1. 需求完整性分析
+2. 技术可行性分析
+3. 潜在风险
+4. 改进建议
+5. 优先级建议
+
+保留各 Agent 的独特视角和有价值的分歧点。""",
+                    ),
+                ],
+                track_cost=True,
+                task_id=project.id,
+            )
+            return response.content
+        except Exception as e:
+            # 合并失败 → 直接拼接讨论记录
+            return f"# 需求分析（多 Agent 讨论记录）\n\n{transcript_text}"
 
     def _build_requirement_analysis_prompt(self, project) -> str:
         return f"""请分析以下项目需求:
@@ -235,7 +391,7 @@ class PipelineOrchestrator:
 
     async def _stage_task_breakdown(self, pipeline: Pipeline, project) -> None:
         pipeline.current_stage = PipelineStage.TASK_BREAKDOWN
-        pipeline.add_log("task_breakdown", "Starting task breakdown with LLM...")
+        pipeline.add_log("task_breakdown", "启动 LLM 任务拆解...")
 
         previous_analysis = pipeline.context.get("requirement_analysis", "")
 
@@ -269,11 +425,14 @@ class PipelineOrchestrator:
       "priority": "high/medium/low",
       "phase": "design/development/testing",
       "dependencies": ["前置任务标题"],
-      "acceptance_criteria": ["验收标准1", "验收标准2"]
+      "acceptance_criteria": ["验收标准1", "验收标准2"],
+      "required_skills": ["需要的技能1", "需要的技能2"]
     }
   ],
   "summary": "整体拆解说明"
-}"""),
+}
+
+required_skills 字段说明：列出执行此任务所需的具体技能，如"数据库设计"、"API开发"、"前端组件开发"、"测试用例设计"、"CI/CD配置"、"架构评审"、"性能优化"等。这会用于后续匹配最合适的Agent来执行。"""),
                 LLMMessage(role="user", content=breakdown_prompt)
             ]
             
@@ -282,9 +441,13 @@ class PipelineOrchestrator:
             breakdown_result = response.content
             
             tasks = self._parse_task_breakdown(breakdown_result)
-            
+
+            # 第一遍：创建所有任务，建立 title→task_id 映射
+            title_to_id: Dict[str, str] = {}
+            created_tasks: List[tuple] = []  # (task_obj, task_data)
             for task_data in tasks:
-                task = task_board.create_task(
+                required_skills = task_data.get("required_skills", []) or []
+                task = await task_board.create_task(
                     project_id=pipeline.project_id,
                     title=task_data["title"],
                     description=task_data["description"],
@@ -292,14 +455,39 @@ class PipelineOrchestrator:
                     created_by="pipeline",
                     tags=[task_data.get("assigned_role", ""), task_data.get("phase", "development")]
                 )
+                # 将 required_skills 存入 task.metadata 供后续 trait 匹配
+                if required_skills:
+                    task.metadata["required_skills"] = required_skills
+                    task.updated_at = datetime.now()
+                    await task_board.update_task(
+                        task.id,
+                        project_id=pipeline.project_id,
+                        metadata=task.metadata,
+                    )
+
+                title_to_id[task_data["title"]] = task.id
+                created_tasks.append((task, task_data))
                 pipeline.task_ids.append(task.id)
-                
-                task_board.add_comment(
+
+                await task_board.add_comment(
                     task.id,
                     f"Phase: {task_data.get('phase', 'development')}\n"
                     f"Acceptance Criteria:\n" + "\n".join(task_data.get('acceptance_criteria', [])),
                     "pipeline"
                 )
+
+            # 第二遍：解析依赖关系（将标题转为 task_id）
+            for task, task_data in created_tasks:
+                dep_titles = task_data.get("dependencies", []) or []
+                dep_ids = [title_to_id[t] for t in dep_titles if t in title_to_id]
+                if dep_ids:
+                    task.dependencies = dep_ids
+                    task.updated_at = datetime.now()
+                    await task_board.update_task(
+                        task.id,
+                        project_id=pipeline.project_id,
+                        dependencies=dep_ids,
+                    )
             
             pipeline.context["task_breakdown"] = breakdown_result
             
@@ -322,10 +510,10 @@ class PipelineOrchestrator:
                 )
                 await message_bus.broadcast(msg)
             
-            pipeline.add_log("task_breakdown", f"Breakdown complete: {len(tasks)} tasks created")
+            pipeline.add_log("task_breakdown", f"任务拆解完成: 创建了 {len(tasks)} 个任务")
             
         except Exception as e:
-            pipeline.add_log("task_breakdown", f"Breakdown failed: {str(e)}", "error")
+            pipeline.add_log("task_breakdown", f"任务拆解失败: {str(e)}", "error")
             pipeline.context["task_breakdown"] = f"Error: {str(e)}"
 
         pipeline.progress = 0.4
@@ -409,7 +597,10 @@ class PipelineOrchestrator:
     async def _stage_task_execution(self, pipeline: Pipeline) -> None:
         """DAG 并行执行阶段 — 拓扑排序 + 依赖阻塞 + 安全守卫"""
         pipeline.current_stage = PipelineStage.TASK_EXECUTION
-        pipeline.add_log("task_execution", "Starting DAG-based task execution...")
+        pipeline.add_log("task_execution", "启动 DAG 任务执行...")
+
+        # 层级策略下确保有 coordinator
+        await self._ensure_coordinator(pipeline)
 
         msg = Message(
             sender_id="system",
@@ -442,7 +633,7 @@ class PipelineOrchestrator:
 
         for level_idx, level in enumerate(execution_levels):
             if pipeline.paused or pipeline.stop_requested or security_guard.is_emergency:
-                pipeline.add_log("task_execution", "Execution paused/stopped/emergency", "warning")
+                pipeline.add_log("task_execution", "执行已暂停/停止/紧急中断", "warning")
                 break
 
             pipeline.add_log("task_execution",
@@ -553,12 +744,12 @@ class PipelineOrchestrator:
         deps = getattr(task, 'dependencies', []) or []
         for dep_id in deps:
             if dep_id in failed_tasks:
-                task_board.change_status(task_id, TaskStatus.CANCELLED, "pipeline")
-                task_board.add_comment(task_id, f"取消: 依赖任务 {dep_id} 失败", "pipeline")
+                await task_board.change_status(task_id, TaskStatus.CANCELLED, "pipeline")
+                await task_board.add_comment(task_id, f"取消: 依赖任务 {dep_id} 失败", "pipeline")
                 return False
             if dep_id not in completed_tasks:
-                task_board.change_status(task_id, TaskStatus.BLOCKED, "pipeline")
-                task_board.add_comment(task_id, f"阻塞: 等待依赖任务 {dep_id}", "pipeline")
+                await task_board.change_status(task_id, TaskStatus.BLOCKED, "pipeline")
+                await task_board.add_comment(task_id, f"阻塞: 等待依赖任务 {dep_id}", "pipeline")
                 return False
 
         # 安全守卫检查
@@ -579,8 +770,8 @@ class PipelineOrchestrator:
                 message_type=MessageType.SYSTEM
             )
             await message_bus.send_to_task(msg, task_id)
-            task_board.change_status(task_id, TaskStatus.BLOCKED, "security_guard")
-            task_board.add_comment(task_id, f"等待审批: 风险级别 {risk_level.value}", "security_guard")
+            await task_board.change_status(task_id, TaskStatus.BLOCKED, "security_guard")
+            await task_board.add_comment(task_id, f"等待审批: 风险级别 {risk_level.value}", "security_guard")
 
             # 审计日志
             audit_logger.log(
@@ -604,7 +795,7 @@ class PipelineOrchestrator:
         # 分配 Agent
         agent_id = await self._assign_task_to_agent(task, pipeline)
         if not agent_id:
-            task_board.add_comment(task_id, "无可用Agent", "pipeline")
+            await task_board.add_comment(task_id, "无可用Agent", "pipeline")
             return False
 
         # 通知
@@ -642,11 +833,11 @@ class PipelineOrchestrator:
             )
 
             if success:
-                task_board.change_status(task_id, TaskStatus.REVIEW, agent_id)
-                pipeline.add_log("task_execution", f"Task {task.title} completed by {agent_id}")
+                await task_board.change_status(task_id, TaskStatus.REVIEW, agent_id)
+                pipeline.add_log("task_execution", f"任务「{task.title}」由 {agent_id} 完成")
             else:
-                task_board.change_status(task_id, TaskStatus.TODO, agent_id)
-                task_board.add_comment(task_id,
+                await task_board.change_status(task_id, TaskStatus.TODO, agent_id)
+                await task_board.add_comment(task_id,
                     f"执行失败: {result.get('error', 'Unknown')}", "pipeline")
                 pipeline.add_log("task_execution",
                     f"Task {task.title} failed: {result.get('error', '')}", "error")
@@ -661,8 +852,8 @@ class PipelineOrchestrator:
                 success=False
             )
 
-            pipeline.add_log("task_execution", f"Task {task_id} error: {str(e)}", "error")
-            task_board.add_comment(task_id, f"执行异常: {str(e)}", "pipeline")
+            pipeline.add_log("task_execution", f"任务 {task_id} 执行异常: {str(e)}", "error")
+            await task_board.add_comment(task_id, f"执行异常: {str(e)}", "pipeline")
 
             audit_logger.log(
                 action=AuditAction.TASK_EXECUTED,
@@ -676,32 +867,185 @@ class PipelineOrchestrator:
             return False
 
     async def _assign_task_to_agent(self, task, pipeline: Pipeline) -> Optional[str]:
+        """策略感知的 Agent 分配。核心流程：trait 匹配优先 → 队列兜底。"""
+        if not pipeline.agents:
+            return None
+        if len(pipeline.agents) == 1:
+            return pipeline.agents[0]
+
+        strategy = pipeline.team_config.get("strategy", "auto")
         task_tags = set(task.tags)
-        
-        role_priority = {
-            "前端开发": 1,
-            "后端开发": 2,
-            "架构师": 3,
-            "测试工程师": 4,
-            "PM": 5
-        }
-        
+
+        # 尝试 LLM trait 匹配（如果任务带有 required_skills）
+        required_skills = task.metadata.get("required_skills", []) if task.metadata else []
+        if required_skills:
+            try:
+                from app.services.agent.agent_trait_service import agent_trait_service
+                matches = await agent_trait_service.match_task_to_agent(
+                    required_skills, pipeline.agents
+                )
+                if matches and matches[0][1] > 0:
+                    pipeline.add_log("task_execution",
+                        f"Trait-matched task '{task.title}' to {matches[0][0]} (score={matches[0][1]:.2f})")
+                    return matches[0][0]
+            except Exception:
+                pass  # trait 匹配失败 → 走队列兜底
+
+        # 策略感知分配
+        if strategy == "sequential":
+            return self._assign_sequential(task_tags, pipeline)
+        elif strategy == "hierarchical":
+            return await self._assign_hierarchical(task_tags, pipeline)
+        elif strategy == "discussion":
+            return self._assign_discussion(task_tags, pipeline)
+        else:  # "auto"
+            return self._assign_best_match(task_tags, pipeline)
+
+    def _assign_queue(self, pipeline: Pipeline) -> str:
+        """FIFO 轮询队列 — 默认兜底策略。队首出列，推到队尾。"""
+        if not pipeline._assignment_queue:
+            pipeline._assignment_queue = list(pipeline.agents)
+        if not pipeline._assignment_queue:
+            pipeline._assignment_queue = list(pipeline.agents)
+
+        agent_id = pipeline._assignment_queue.pop(0)
+        pipeline._assignment_queue.append(agent_id)
+        return agent_id
+
+    def _assign_sequential(self, task_tags: set, pipeline: Pipeline) -> Optional[str]:
+        """顺序策略：按角色标签匹配度分配，匹配不到走队列。"""
+        best_agent = None
+        best_score = -1
+
         for agent_id in pipeline.agents:
-            agent = agent_service.get_agent(agent_id)
-            if not agent:
-                continue
-            
-            agent_type = agent.get("type", "")
-            
-            for tag in task_tags:
-                if any(role in agent_type or role in tag for role in role_priority.keys()):
-                    return agent_id
-        
-        return pipeline.agents[0] if pipeline.agents else None
+            role = pipeline.agent_roles.get(agent_id, "")
+            score = sum(1 for tag in task_tags if role in tag or tag in role)
+            if score > best_score:
+                best_score = score
+                best_agent = agent_id
+
+        return best_agent if best_score > 0 else self._assign_queue(pipeline)
+
+    async def _assign_hierarchical(self, task_tags: set, pipeline: Pipeline) -> Optional[str]:
+        """层级委派策略：coordinator 优先，无 coordinator 时选 PM 型 agent，
+        都没有时降级为顺序匹配。"""
+        coordinator_id = pipeline.team_config.get("coordinatorId")
+        elected = pipeline.context.get("elected_coordinator")
+        effective_coordinator = coordinator_id or elected
+
+        if effective_coordinator and effective_coordinator in pipeline.agents:
+            return self._assign_sequential(task_tags, pipeline)
+
+        # 查找 PM 型 agent
+        for aid in pipeline.agents:
+            if pipeline.agent_roles.get(aid, "") == "PM":
+                return self._assign_sequential(task_tags, pipeline)
+
+        # 没有 PM → 将在首次调用时触发选举（由调用方处理）
+        return self._assign_sequential(task_tags, pipeline)
+
+    def _assign_discussion(self, task_tags: set, pipeline: Pipeline) -> Optional[str]:
+        """讨论策略：负载均衡分配。执行阶段不启动讨论（讨论在规划阶段进行）。
+        此处用队列保证任务均匀分配。"""
+        return self._assign_queue(pipeline)
+
+    def _assign_best_match(self, task_tags: set, pipeline: Pipeline) -> Optional[str]:
+        """最佳匹配策略：角色不预设，直接走队列分配。"""
+        return self._assign_queue(pipeline)
+
+    async def _ensure_coordinator(self, pipeline: Pipeline) -> None:
+        """层级委派策略下，若无 PM 型 agent 且无手动指定的 coordinator，
+        通过 agent 讨论选举一位。只在第一次调用时执行。"""
+        strategy = pipeline.team_config.get("strategy", "")
+        if strategy != "hierarchical":
+            return
+
+        coordinator_id = pipeline.team_config.get("coordinatorId")
+        if coordinator_id and coordinator_id in pipeline.agents:
+            return
+        if "elected_coordinator" in pipeline.context:
+            return
+
+        # 没有预设 PM → 通过讨论选举 coordinator
+        pipeline.add_log("task_execution",
+            "No PM agent in team — running coordinator election...", "info")
+
+        try:
+            from app.services.collaboration.discussion_orchestrator import discussion_orchestrator
+
+            project = project_service.get_project(pipeline.project_id)
+            elected = await discussion_orchestrator.run_coordinator_election(
+                pipeline_id=pipeline.id,
+                project_id=pipeline.project_id,
+                agent_ids=pipeline.agents,
+                project_context={
+                    "name": project.name if project else "",
+                    "description": project.description if project else "",
+                    "requirements": project.requirements if project else "",
+                },
+            )
+            pipeline.context["elected_coordinator"] = elected
+            pipeline.add_log("task_execution",
+                f"Coordinator elected via discussion: {elected}", "info")
+        except Exception as e:
+            pipeline.add_log("task_execution",
+                f"Coordinator election failed: {e}, using first agent", "warning")
+            pipeline.context["elected_coordinator"] = pipeline.agents[0]
+
+    async def _run_agent_discussion(
+        self,
+        pipeline: Pipeline,
+        stage_key: str,
+        topic: str,
+        context: Dict[str, Any],
+        agent_ids: List[str] = None,
+        max_rounds: int = 2,
+    ) -> "DiscussionResult":
+        """在流水线阶段中运行一次 agent 讨论的便捷方法。"""
+        from app.services.collaboration.discussion_orchestrator import (
+            discussion_orchestrator, DiscussionMode
+        )
+
+        participant_ids = agent_ids or pipeline.agents
+        if len(participant_ids) < 2:
+            from app.services.collaboration.discussion_orchestrator import DiscussionResult, DiscussionMessage
+            return DiscussionResult(
+                topic=topic, concluded=False, consensus_reached=False,
+                summary="不足 2 个 agent，无法进行讨论",
+                participant_agents=participant_ids,
+            )
+
+        pipeline.add_log(stage_key,
+            f"Starting agent discussion: {topic[:80]}... ({len(participant_ids)} agents)")
+
+        result = await discussion_orchestrator.conduct_discussion(
+            pipeline_id=pipeline.id,
+            project_id=pipeline.project_id,
+            topic=topic,
+            context=context,
+            agent_ids=participant_ids,
+            mode=DiscussionMode.ROUND_ROBIN,
+            max_rounds=max_rounds,
+        )
+
+        pipeline.add_log(stage_key,
+            f"Discussion complete: {result.rounds_conducted} rounds, "
+            f"{len(result.transcript)} messages, "
+            f"consensus={'yes' if result.consensus_reached else 'no'}")
+
+        return result
+
+    def _select_stage_participants(
+        self,
+        pipeline: Pipeline,
+        preferred_roles: List[str] = None,
+    ) -> List[str]:
+        """所有 agent 参与所有阶段——配置阶段不预设角色分工。"""
+        return list(pipeline.agents)
 
     async def _stage_review(self, pipeline: Pipeline) -> None:
         pipeline.current_stage = PipelineStage.REVIEW
-        pipeline.add_log("review", "Starting review stage...")
+        pipeline.add_log("review", "启动审查阶段...")
 
         msg = Message(
             sender_id="system",
@@ -713,37 +1057,73 @@ class PipelineOrchestrator:
         await message_bus.broadcast(msg)
 
         completed_tasks = task_board.get_tasks_by_status(TaskStatus.REVIEW, project_id=pipeline.project_id)
-        
-        if completed_tasks:
-            review_prompt = self._build_review_prompt(completed_tasks)
-            
-            try:
-                llm_messages = [
-                    LLMMessage(role="system", content="你是一位资深技术专家，擅长代码审查和质量把控。"),
-                    LLMMessage(role="user", content=review_prompt)
-                ]
-                
-                response = await llm_service.chat(llm_messages, track_cost=True, task_id=pipeline.project_id)
-                
-                review_result = response.content
-                
-                pipeline.context["review"] = review_result
-                
-                msg = Message(
-                    sender_id="system",
-                    sender_name="Pipeline",
-                    channel=f"project:{pipeline.project_id}",
-                    content=f"✅ 审核完成:\n{review_result[:500]}...",
-                    message_type=MessageType.SYSTEM
-                )
-                await message_bus.broadcast(msg)
-                
-                pipeline.add_log("review", "Review complete")
-                
-            except Exception as e:
-                pipeline.add_log("review", f"Review failed: {str(e)}", "error")
+
+        if not completed_tasks:
+            pipeline.add_log("review", "无任务需要审查", "warning")
+            msg = Message(
+                sender_id="system",
+                sender_name="Pipeline",
+                channel=f"project:{pipeline.project_id}",
+                content="🎉 项目完成！所有阶段都已完成。",
+                message_type=MessageType.SYSTEM
+            )
+            await message_bus.broadcast(msg)
+            pipeline.progress = 1.0
+            return
+
+        # 选择参与者（测试 + 架构师优先，确保多视角审查）
+        participants = self._select_stage_participants(pipeline, ["测试工程师", "架构师"])
+
+        if len(participants) < 2:
+            # 单人审查 — 直接用 LLM
+            review_result = await self._single_llm_review(pipeline, completed_tasks)
         else:
-            pipeline.add_log("review", "No tasks to review", "warning")
+            # 多 Agent 审查讨论
+            tasks_summary = self._build_tasks_summary_for_discussion(completed_tasks)
+            try:
+                result = await self._run_agent_discussion(
+                    pipeline=pipeline,
+                    stage_key="review",
+                    topic=f"审查已完成的任务 — 项目: {pipeline.name}",
+                    context={
+                        "已完成任务": tasks_summary,
+                        "审查角度": "完成度、代码质量、安全性、改进建议",
+                    },
+                    agent_ids=participants,
+                    max_rounds=2,
+                )
+                review_result = await self._merge_discussion_into_review(result, completed_tasks)
+                pipeline.context["review_discussion"] = {
+                    "transcript": [m.model_dump(mode='json') for m in result.transcript],
+                    "consensus": result.consensus_reached,
+                    "participants": participants,
+                }
+            except Exception as e:
+                pipeline.add_log("review", f"Agent 讨论失败: {e}，回退到单 LLM", "warning")
+                review_result = await self._single_llm_review(pipeline, completed_tasks)
+
+        pipeline.context["review"] = review_result
+
+        # 保存审查报告到 workspace
+        from app.services.project.workspace_manager import workspace_manager
+        try:
+            workspace_manager.add_artifact(
+                pipeline.project_id, "review",
+                "review_report.md", review_result,
+            )
+        except Exception:
+            pass
+
+        msg = Message(
+            sender_id="system",
+            sender_name="Pipeline",
+            channel=f"project:{pipeline.project_id}",
+            content=f"✅ 审核完成",
+            message_type=MessageType.SYSTEM
+        )
+        await message_bus.broadcast(msg)
+
+        pipeline.add_log("review", f"审查完成: {len(participants)} 位 Agent 参与")
 
         msg = Message(
             sender_id="system",
@@ -755,7 +1135,65 @@ class PipelineOrchestrator:
         await message_bus.broadcast(msg)
 
         pipeline.progress = 1.0
-        pipeline.add_log("review", "Review completed")
+        pipeline.add_log("review", "审查阶段结束")
+
+    async def _single_llm_review(self, pipeline: Pipeline, completed_tasks) -> str:
+        """单 LLM 审查的兜底方案"""
+        review_prompt = self._build_review_prompt(completed_tasks)
+        response = await llm_service.chat(
+            messages=[
+                LLMMessage(role="system", content="你是一位资深技术专家，擅长代码审查和质量把控。"),
+                LLMMessage(role="user", content=review_prompt),
+            ],
+            track_cost=True,
+            task_id=pipeline.project_id,
+        )
+        return response.content
+
+    def _build_tasks_summary_for_discussion(self, completed_tasks) -> str:
+        """构建审查讨论用的任务摘要"""
+        return "\n".join(
+            f"- [{task.priority.value.upper()}] {task.title}: {task.description[:200]}"
+            for task in completed_tasks
+        )
+
+    async def _merge_discussion_into_review(self, discussion, completed_tasks) -> str:
+        """将多 agent 审查讨论合并为一份审查报告"""
+        transcript_text = "\n\n".join(
+            f"### {dm.agent_name} ({dm.role_label})\n{dm.content}"
+            for dm in discussion.transcript
+        )
+
+        tasks_text = self._build_tasks_summary_for_discussion(completed_tasks)
+
+        response = await llm_service.chat(
+            messages=[
+                LLMMessage(
+                    role="system",
+                    content="你是一位资深技术专家。请将以下多 Agent 审查讨论合并为一份代码审查报告。",
+                ),
+                LLMMessage(
+                    role="user",
+                    content=f"""已完成任务:
+{tasks_text}
+
+审查讨论记录:
+{transcript_text}
+
+请合并为一份结构化审查报告，包含:
+1. 完成度评估
+2. 代码质量
+3. 安全性
+4. 改进建议""",
+                ),
+            ],
+            track_cost=True,
+            task_id=completed_tasks[0].project_id if completed_tasks else "",
+        )
+        return response.content
+
+        pipeline.progress = 1.0
+        pipeline.add_log("review", "审查阶段结束")
 
     def _build_review_prompt(self, completed_tasks) -> str:
         tasks_summary = "\n".join([
@@ -786,7 +1224,9 @@ class PipelineOrchestrator:
             await agent_executor.pause_project(pipeline.project_id)
             speaking_controller.set_mode(pipeline_id, SpeakingMode.FREE_STYLE)
 
-            pipeline.add_log("control", "Pipeline paused by human intervention")
+            pipeline.add_log("control", "流水线已暂停（人工干预）")
+            if self._db:
+                await self._db.save(pipeline)
             return True
 
     async def resume_pipeline(self, pipeline_id: str) -> bool:
@@ -800,7 +1240,9 @@ class PipelineOrchestrator:
             await agent_executor.resume_project(pipeline.project_id)
             speaking_controller.set_mode(pipeline_id, SpeakingMode.PRIORITY_BASED)
 
-            pipeline.add_log("control", "Pipeline resumed")
+            pipeline.add_log("control", "流水线已恢复")
+            if self._db:
+                await self._db.save(pipeline)
             return True
 
     async def stop_pipeline(self, pipeline_id: str) -> bool:
@@ -814,7 +1256,9 @@ class PipelineOrchestrator:
             self._cleanup_pipeline_agents(pipeline)
             self._active_pipelines.pop(pipeline.project_id, None)
 
-            pipeline.add_log("control", "Pipeline stopped by human intervention")
+            pipeline.add_log("control", "流水线已停止（人工干预）")
+            if self._db:
+                await self._db.save(pipeline)
             return True
 
     async def intervene(
@@ -847,7 +1291,7 @@ class PipelineOrchestrator:
             else:
                 await message_bus.broadcast(msg)
 
-            pipeline.add_log("intervention", f"Human intervened: {message}")
+            pipeline.add_log("intervention", f"人工干预: {message}")
 
     def get_pipeline(self, pipeline_id: str) -> Optional[Dict[str, Any]]:
         pipeline = self._pipelines.get(pipeline_id)
@@ -866,7 +1310,7 @@ class PipelineOrchestrator:
             "created_at": pipeline.created_at.isoformat(),
             "started_at": pipeline.started_at.isoformat() if pipeline.started_at else None,
             "completed_at": pipeline.completed_at.isoformat() if pipeline.completed_at else None,
-            "logs": pipeline.logs[-20:],
+            "logs": pipeline.logs[-50:],
             "context": pipeline.context
         }
 

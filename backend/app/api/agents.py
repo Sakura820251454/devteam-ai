@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/agents", tags=["Agent管理"])
 
 class LLMConfigRequest(BaseModel):
     provider: str = "deepseek"
-    model: str = "deepseek-chat"
+    model: str = "deepseek-v4-flash"
     temperature: float = 0.7
     max_tokens: Optional[int] = None
 

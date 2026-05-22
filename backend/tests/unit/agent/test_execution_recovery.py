@@ -321,12 +321,12 @@ class TestPauseCancel:
         from app.services.collaboration.task_board import task_board
         self.executor = AgentExecutor()
         self.task_board = task_board
-        self.task = task_board.create_task(
+        self.task = asyncio.run(task_board.create_task(
             title="Pause Test Task",
             priority=Priority.MEDIUM
-        )
-        task_board.change_status(self.task.id, TaskStatus.TODO)
-        task_board.change_status(self.task.id, TaskStatus.IN_PROGRESS)
+        ))
+        asyncio.run(task_board.change_status(self.task.id, TaskStatus.TODO))
+        asyncio.run(task_board.change_status(self.task.id, TaskStatus.IN_PROGRESS))
 
     def _setup_running_task(self, agent_id="agent1", status=ExecutionStatus.RUNNING):
         """Manually set up a running task in the executor."""
@@ -380,9 +380,9 @@ class TestPauseCancel:
     @pytest.mark.asyncio
     async def test_pause_all_pauses_running_tasks(self):
         """pause_all should pause all RUNNING tasks."""
-        task2 = self.task_board.create_task(title="Task 2", priority=Priority.MEDIUM)
-        self.task_board.change_status(task2.id, TaskStatus.TODO)
-        self.task_board.change_status(task2.id, TaskStatus.IN_PROGRESS)
+        task2 = await self.task_board.create_task(title="Task 2", priority=Priority.MEDIUM)
+        await self.task_board.change_status(task2.id, TaskStatus.TODO)
+        await self.task_board.change_status(task2.id, TaskStatus.IN_PROGRESS)
 
         self._setup_running_task("agent1", ExecutionStatus.RUNNING)
         self.executor._running_tasks[task2.id] = {
@@ -485,10 +485,10 @@ class TestResumeExecution:
         from app.services.collaboration.task_board import task_board
         self.executor = AgentExecutor()
         self.task_board = task_board
-        self.task = task_board.create_task(
+        self.task = asyncio.run(task_board.create_task(
             title="Resume Test Task",
             priority=Priority.MEDIUM
-        )
+        ))
 
     @pytest.mark.asyncio
     async def test_resume_from_paused_status(self):
@@ -535,11 +535,11 @@ class TestFallbackExecution:
         from app.services.collaboration.task_board import task_board
         self.executor = AgentExecutor()
         self.task_board = task_board
-        self.task = task_board.create_task(
+        self.task = asyncio.run(task_board.create_task(
             title="Fallback Test",
             description="Test fallback execution",
             priority=Priority.MEDIUM
-        )
+        ))
 
     @pytest.mark.asyncio
     async def test_fallback_execution_when_no_steps(self):
@@ -612,11 +612,11 @@ class TestExecuteTaskWithSteps:
         self.executor = AgentExecutor()
         self.executor._step_timeout = 1.0
         self.task_board = task_board
-        self.task = task_board.create_task(
+        self.task = asyncio.run(task_board.create_task(
             title="Multi-step Test",
             description="Test multi-step execution",
             priority=Priority.MEDIUM
-        )
+        ))
 
     @pytest.mark.asyncio
     async def test_execute_with_valid_steps(self):
@@ -765,17 +765,17 @@ class TestExecuteTaskWithAgent:
         from app.services.collaboration.task_board import task_board
         self.executor = AgentExecutor()
         self.task_board = task_board
-        self.task = task_board.create_task(
+        self.task = asyncio.run(task_board.create_task(
             title="Integration Test Task",
             description="Full integration test",
             priority=Priority.MEDIUM
-        )
+        ))
 
     @pytest.mark.asyncio
     async def test_execute_with_steps_success(self):
         """Should successfully execute task with planned steps."""
-        self.task_board.change_status(self.task.id, TaskStatus.TODO)
-        self.task_board.change_status(self.task.id, TaskStatus.IN_PROGRESS)
+        await self.task_board.change_status(self.task.id, TaskStatus.TODO)
+        await self.task_board.change_status(self.task.id, TaskStatus.IN_PROGRESS)
 
         with patch("app.services.agent.agent_executor.agent_service") as mock_agent_svc:
             mock_agent_svc.get_agent.return_value = {
@@ -813,8 +813,8 @@ class TestExecuteTaskWithAgent:
     @pytest.mark.asyncio
     async def test_execute_with_cancellation(self):
         """Should return paused=True when cancelled."""
-        self.task_board.change_status(self.task.id, TaskStatus.TODO)
-        self.task_board.change_status(self.task.id, TaskStatus.IN_PROGRESS)
+        await self.task_board.change_status(self.task.id, TaskStatus.TODO)
+        await self.task_board.change_status(self.task.id, TaskStatus.IN_PROGRESS)
 
         with patch("app.services.agent.agent_executor.agent_service") as mock_agent_svc:
             mock_agent_svc.get_agent.return_value = {

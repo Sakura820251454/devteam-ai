@@ -133,7 +133,7 @@ class TestAgentServiceLLMConfig:
             "max_tokens": 2048,
         }
         agent = self.service.create_agent(templates[0]["id"], "Chat-Test", llm_cfg)
-        session = self.service.create_session("Test Session")
+        session = await self.service.create_session("Test Session")
         session_id = session.id
 
         with patch(
@@ -165,7 +165,7 @@ class TestAgentServiceLLMConfig:
         """无 llm_config 时 agent_chat 传 agent=None 给 LLMService"""
         templates = self.service.get_all_templates()
         agent = self.service.create_agent(templates[0]["id"], "NoConfig-Chat")
-        session = self.service.create_session("Test Session")
+        session = await self.service.create_session("Test Session")
         session_id = session.id
 
         with patch(

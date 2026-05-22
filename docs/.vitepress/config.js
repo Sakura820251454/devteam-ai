@@ -117,7 +117,8 @@ export default defineConfig({
             { text: '共享服务', link: '/04-modules/backend/shared-services' },
             { text: '执行持久化', link: '/04-modules/backend/execution-persistence' },
             { text: '检查点管理', link: '/04-modules/backend/execution-checkpoint' },
-            { text: '卡死检测', link: '/04-modules/backend/execution-stuck-detector' }
+            { text: '卡死检测', link: '/04-modules/backend/execution-stuck-detector' },
+            { text: '持久化层', link: '/04-modules/backend/persistence-layer' }
           ]
         },
         {

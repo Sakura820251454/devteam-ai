@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Any, Dict
 from enum import Enum
 from datetime import datetime
 
@@ -60,6 +60,7 @@ class Task(BaseModel):
     approval_required: bool = False
     approved_by: Optional[str] = None
     approved_at: Optional[datetime] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
     def get_valid_transitions(self) -> List[TaskStatus]:
         valid_transitions = {

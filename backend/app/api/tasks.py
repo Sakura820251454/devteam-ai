@@ -82,7 +82,7 @@ def task_to_response(task: Task) -> TaskResponse:
 
 @router.post("/", response_model=TaskResponse)
 async def create_task(request: CreateTaskRequest):
-    task = task_board.create_task(
+    task = await task_board.create_task(
         project_id=request.project_id,
         title=request.title,
         description=request.description,
@@ -104,7 +104,7 @@ async def get_task(task_id: str):
 
 @router.patch("/{task_id}", response_model=TaskResponse)
 async def update_task(task_id: str, request: UpdateTaskRequest):
-    task = task_board.update_task(
+    task = await task_board.update_task(
         task_id=task_id,
         title=request.title,
         description=request.description,
@@ -118,7 +118,7 @@ async def update_task(task_id: str, request: UpdateTaskRequest):
 
 @router.post("/{task_id}/assign", response_model=TaskResponse)
 async def assign_agents(task_id: str, request: AssignAgentsRequest):
-    task = task_board.assign_agents(task_id, request.agent_ids)
+    task = await task_board.assign_agents(task_id, request.agent_ids)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task_to_response(task)
@@ -127,7 +127,7 @@ async def assign_agents(task_id: str, request: AssignAgentsRequest):
 @router.post("/{task_id}/status", response_model=TaskResponse)
 async def change_status(task_id: str, request: ChangeStatusRequest):
     try:
-        task = task_board.change_status(task_id, request.status, request.changed_by)
+        task = await task_board.change_status(task_id, request.status, request.changed_by)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not task:
@@ -137,7 +137,7 @@ async def change_status(task_id: str, request: ChangeStatusRequest):
 
 @router.post("/{task_id}/comment", response_model=TaskResponse)
 async def add_comment(task_id: str, request: AddCommentRequest):
-    task = task_board.add_comment(task_id, request.comment, request.author)
+    task = await task_board.add_comment(task_id, request.comment, request.author)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task_to_response(task)
@@ -145,7 +145,7 @@ async def add_comment(task_id: str, request: AddCommentRequest):
 
 @router.delete("/{task_id}")
 async def delete_task(task_id: str):
-    success = task_board.delete_task(task_id)
+    success = await task_board.delete_task(task_id)
     if not success:
         raise HTTPException(status_code=404, detail="Task not found")
     return {"status": "ok"}

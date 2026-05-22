@@ -162,7 +162,7 @@ class DeepSeekProvider(BaseLLMProvider):
         timeout: Optional[float] = None,
         cancellation_token: Optional[asyncio.Event] = None
     ) -> LLMResponse:
-        model = model or "deepseek-chat"
+        model = model or "deepseek-v4-flash"
 
         payload = {
             "model": model,
@@ -199,7 +199,7 @@ class DeepSeekProvider(BaseLLMProvider):
         timeout: Optional[float] = None,
         cancellation_token: Optional[asyncio.Event] = None
     ) -> AsyncIterator[str]:
-        model = model or "deepseek-chat"
+        model = model or "deepseek-v4-flash"
 
         payload = {
             "model": model,

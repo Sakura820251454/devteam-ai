@@ -1,9 +1,9 @@
 import uuid
 from datetime import datetime
-from typing import Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional, Callable
 from enum import Enum
 
-from app.models.task import Task, TaskStatus, Priority
+from app.models.task import Task, TaskStatus, Priority, RiskLevel
 
 
 class TaskBoard:
@@ -13,6 +13,23 @@ class TaskBoard:
         self._agent_tasks: Dict[str, Dict[str, List[str]]] = {}  # project_id -> agent_id -> task_ids
         self._task_handlers: Dict[str, List[Callable]] = {}
         self._lock = None
+        self._db = None
+
+    def initialize(self, db_service) -> None:
+        self._db = db_service
+
+    async def load_all(self) -> None:
+        if self._db:
+            loaded = await self._db.load_all()
+            for pid, tasks_dict in loaded.items():
+                self._ensure_project(pid)
+                for task_id, task in tasks_dict.items():
+                    self._tasks[pid][task_id] = task
+                    self._status_index[pid][task.status].append(task_id)
+                    for agent_id in task.assigned_agents:
+                        if agent_id not in self._agent_tasks[pid]:
+                            self._agent_tasks[pid][agent_id] = []
+                        self._agent_tasks[pid][agent_id].append(task_id)
 
     def _ensure_project(self, project_id: str) -> None:
         if project_id not in self._tasks:
@@ -20,7 +37,7 @@ class TaskBoard:
             self._status_index[project_id] = {status: [] for status in TaskStatus}
             self._agent_tasks[project_id] = {}
 
-    def create_task(
+    async def create_task(
         self,
         project_id: str,
         title: str,
@@ -28,7 +45,9 @@ class TaskBoard:
         priority: Priority = Priority.MEDIUM,
         assigned_agents: List[str] = None,
         created_by: str = "system",
-        tags: List[str] = None
+        tags: List[str] = None,
+        dependencies: List[str] = None,
+        risk_level: RiskLevel = RiskLevel.LOW,
     ) -> Task:
         self._ensure_project(project_id)
         task_id = str(uuid.uuid4())
@@ -38,9 +57,11 @@ class TaskBoard:
             description=description,
             project_id=project_id,
             priority=priority,
+            risk_level=risk_level,
             assigned_agents=assigned_agents or [],
             created_by=created_by,
-            tags=tags or []
+            tags=tags or [],
+            dependencies=dependencies or [],
         )
         self._tasks[project_id][task_id] = task
         self._status_index[project_id][task.status].append(task_id)
@@ -49,6 +70,8 @@ class TaskBoard:
                 self._agent_tasks[project_id][agent_id] = []
             self._agent_tasks[project_id][agent_id].append(task_id)
         self._notify_handlers(task_id, "created", task)
+        if self._db:
+            await self._db.save(task)
         return task
 
     def get_task(self, task_id: str, project_id: Optional[str] = None) -> Optional[Task]:
@@ -59,14 +82,16 @@ class TaskBoard:
                 return proj_tasks[task_id]
         return None
 
-    def update_task(
+    async def update_task(
         self,
         task_id: str,
         project_id: Optional[str] = None,
         title: str = None,
         description: str = None,
         priority: Priority = None,
-        tags: List[str] = None
+        tags: List[str] = None,
+        dependencies: List[str] = None,
+        metadata: Dict[str, Any] = None,
     ) -> Optional[Task]:
         task = self.get_task(task_id, project_id)
         if not task:
@@ -79,11 +104,17 @@ class TaskBoard:
             task.priority = priority
         if tags is not None:
             task.tags = tags
+        if dependencies is not None:
+            task.dependencies = dependencies
+        if metadata is not None:
+            task.metadata = metadata
         task.updated_at = datetime.now()
         self._notify_handlers(task_id, "updated", task)
+        if self._db:
+            await self._db.save(task)
         return task
 
-    def assign_agents(self, task_id: str, agent_ids: List[str], project_id: Optional[str] = None) -> Optional[Task]:
+    async def assign_agents(self, task_id: str, agent_ids: List[str], project_id: Optional[str] = None) -> Optional[Task]:
         task = self.get_task(task_id, project_id)
         if not task:
             return None
@@ -102,9 +133,11 @@ class TaskBoard:
                     self._agent_tasks[pid][agent_id].append(task_id)
         task.updated_at = datetime.now()
         self._notify_handlers(task_id, "agents_assigned", task)
+        if self._db:
+            await self._db.save(task)
         return task
 
-    def change_status(self, task_id: str, new_status: TaskStatus, changed_by: str = "system", project_id: Optional[str] = None) -> Optional[Task]:
+    async def change_status(self, task_id: str, new_status: TaskStatus, changed_by: str = "system", project_id: Optional[str] = None) -> Optional[Task]:
         task = self.get_task(task_id, project_id)
         if not task:
             return None
@@ -126,17 +159,21 @@ class TaskBoard:
             changed_by
         )
         self._notify_handlers(task_id, "status_changed", task)
+        if self._db:
+            await self._db.save(task)
         return task
 
-    def add_comment(self, task_id: str, comment: str, author: str = "system", project_id: Optional[str] = None) -> Optional[Task]:
+    async def add_comment(self, task_id: str, comment: str, author: str = "system", project_id: Optional[str] = None) -> Optional[Task]:
         task = self.get_task(task_id, project_id)
         if not task:
             return None
         task.add_history(comment, author)
         self._notify_handlers(task_id, "comment_added", task)
+        if self._db:
+            await self._db.save(task)
         return task
 
-    def delete_task(self, task_id: str, project_id: Optional[str] = None) -> bool:
+    async def delete_task(self, task_id: str, project_id: Optional[str] = None) -> bool:
         task = self.get_task(task_id, project_id)
         if not task:
             return False
@@ -150,6 +187,8 @@ class TaskBoard:
         if pid and pid in self._tasks:
             del self._tasks[pid][task_id]
         self._notify_handlers(task_id, "deleted", None)
+        if self._db:
+            await self._db.delete(task_id)
         return True
 
     def list_tasks(
@@ -252,11 +291,13 @@ class TaskBoard:
         self._status_index.clear()
         self._agent_tasks.clear()
 
-    def clear_project_tasks(self, project_id: str) -> None:
+    async def clear_project_tasks(self, project_id: str) -> None:
         """清理指定项目的所有任务"""
         self._tasks.pop(project_id, None)
         self._status_index.pop(project_id, None)
         self._agent_tasks.pop(project_id, None)
+        if self._db:
+            await self._db.delete_by_project(project_id)
 
 
 task_board = TaskBoard()

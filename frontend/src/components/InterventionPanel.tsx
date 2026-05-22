@@ -229,17 +229,11 @@ export default function InterventionPanel({ projectId }: Props) {
                     <option value="">选择 Agent...</option>
                     {agents.map((a) => (
                       <option key={a.id} value={a.id}>
-                        {a.name} ({a.role})
+                        {a.name}
                       </option>
                     ))}
                     {agents.length === 0 && (
-                      <>
-                        <option value="pm">产品经理</option>
-                        <option value="architect">架构师</option>
-                        <option value="backend">后端开发</option>
-                        <option value="frontend">前端开发</option>
-                        <option value="tester">测试工程师</option>
-                      </>
+                      <option value="">暂无可用 Agent</option>
                     )}
                   </select>
                 </div>

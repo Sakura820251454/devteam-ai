@@ -109,18 +109,6 @@ const MOCK_SOUL_AGENTS: SoulAgent[] = [
   },
 ]
 
-function getRoleLabel(type: string): string {
-  const roleMap: Record<string, string> = {
-    product_manager: '产品经理',
-    architect: '架构师',
-    backend_developer: '后端开发',
-    frontend_developer: '前端开发',
-    tester: '测试工程师',
-    devops: '运维工程师',
-    custom: '通用型',
-  }
-  return roleMap[type] || type
-}
 
 export default function AgentConfigModal({ isOpen, onClose, onAgentsConfigured }: AgentConfigModalProps) {
   const { globalLlmConfig } = useStore()
@@ -309,9 +297,6 @@ export default function AgentConfigModal({ isOpen, onClose, onAgentsConfigured }
                             <div className="flex items-center justify-between">
                               <div>
                                 <span className="font-medium text-white text-sm">{agent.name}</span>
-                                <span className="text-xs text-gray-400 ml-1.5">
-                                  {getRoleLabel(agent.type)}
-                                </span>
                               </div>
                               {isUnavailable && (
                                 <span className="text-xs bg-gray-600 text-gray-300 px-1.5 py-0.5 rounded">

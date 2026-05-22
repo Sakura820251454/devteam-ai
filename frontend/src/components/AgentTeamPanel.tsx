@@ -6,14 +6,6 @@ import { getAvailableModels, getAvailableProviders } from '../lib/api'
 import type { LLMModelInfo } from '../lib/api'
 import AgentPoolModal from './AgentPoolModal'
 
-const AGENT_COLORS: Record<string, string> = {
-  pm: '#58a6ff',
-  architect: '#a371f7',
-  backend: '#3fb950',
-  frontend: '#f0883e',
-  tester: '#f85149',
-  devops: '#39d2c0',
-}
 
 const STATUS_LABELS: Record<string, string> = {
   idle: '空闲',
@@ -39,11 +31,15 @@ const PROVIDER_LABELS: Record<string, string> = {
   mock: 'Mock',
 }
 
-function getAgentColor(agentId: string, role: string): string {
-  for (const [key, color] of Object.entries(AGENT_COLORS)) {
-    if (role.includes(key) || agentId.includes(key)) return color
+function getAgentColor(agentId: string, _role: string): string {
+  // 使用 agent id 的简单哈希选择一个颜色
+  const colors = ['#58a6ff', '#a371f7', '#3fb950', '#f0883e', '#f85149', '#39d2c0', '#d29922', '#8b949e']
+  let hash = 0
+  for (let i = 0; i < agentId.length; i++) {
+    hash = ((hash << 5) - hash) + agentId.charCodeAt(i)
+    hash |= 0
   }
-  return '#8b949e'
+  return colors[Math.abs(hash) % colors.length]
 }
 
 const POOL_AGENT_COLORS = ['#58a6ff', '#a371f7', '#3fb950', '#f0883e', '#f85149', '#39d2c0', '#d29922', '#8b949e']
@@ -57,20 +53,49 @@ export default function AgentTeamPanel({ projectId }: Props) {
   const updateAgent = useStore((s) => s.updateAgent)
   const setInterventionMode = useStore((s) => s.setInterventionMode)
   const startProject = useStore((s) => s.startProject)
+  const llmMode = useStore((s) => s.llmMode)
+  const startRealPipeline = useStore((s) => s.startRealPipeline)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showPool, setShowPool] = useState(false)
   const [llmEditorAgent, setLlmEditorAgent] = useState<string | null>(null)
   const [availableProviders, setAvailableProviders] = useState<string[]>([])
   const [availableModels, setAvailableModels] = useState<Record<string, LLMModelInfo>>({})
+  const [apiAgents, setApiAgents] = useState<Agent[] | null>(null)
+  const [agentsLoading, setAgentsLoading] = useState(false)
   const stopSimRef = useRef<(() => void) | null>(null)
 
-  const presetAgents = agents.length > 0 ? agents : [
-    { id: 'pm', name: '产品经理', role: '产品经理', status: 'idle' as const, avatarColor: '#58a6ff' },
-    { id: 'architect', name: '架构师', role: '架构师', status: 'idle' as const, avatarColor: '#a371f7' },
-    { id: 'backend', name: '后端开发', role: '后端开发', status: 'idle' as const, avatarColor: '#3fb950' },
-    { id: 'frontend', name: '前端开发', role: '前端开发', status: 'idle' as const, avatarColor: '#f0883e' },
-    { id: 'tester', name: '测试工程师', role: '测试工程师', status: 'idle' as const, avatarColor: '#f85149' },
-  ]
+  // Fetch real agents from backend when no project is active
+  useEffect(() => {
+    if (!pid) {
+      setAgentsLoading(true)
+      fetch('/api/agents')
+        .then((res) => {
+          if (!res.ok) throw new Error('Backend not available')
+          return res.json()
+        })
+        .then((data) => {
+          const list: any[] = data.agents || []
+          const mapped: Agent[] = list.map((a: any) => ({
+            id: a.id,
+            name: a.name,
+            role: '团队成员',
+            status: (a.status as Agent['status']) || 'idle',
+            avatarColor: a.avatar_color || '#8b949e',
+            description: a.description,
+            llm_config: a.llm_config,
+          }))
+          setApiAgents(mapped)
+        })
+        .catch(() => setApiAgents(null))
+        .finally(() => setAgentsLoading(false))
+    }
+  }, [pid])
+
+  const presetAgents =
+    agents.length > 0 ? agents :
+    apiAgents && apiAgents.length > 0 ? apiAgents :
+    agentsLoading ? [] :
+    []
 
   useEffect(() => {
     getAvailableProviders().then(setAvailableProviders).catch(() => setAvailableProviders(['openai', 'deepseek', 'anthropic', 'azure', 'mock']))
@@ -92,21 +117,10 @@ export default function AgentTeamPanel({ projectId }: Props) {
     taskName: string,
     taskDesc: string,
   ) => {
-    const roleLabels: Record<string, string> = {
-      requirement: '需求分析',
-      design: '架构设计',
-      backend: '后端开发',
-      frontend: '前端开发',
-      testing: '测试验证',
-      review: '代码评审',
-      deploy: '部署运维',
-      document: '文档编写',
-    }
-
     const newAgents: Agent[] = assignments.map((a, i) => ({
       id: a.agentId,
       name: a.agentId,
-      role: roleLabels[a.tempRole] || a.tempRole || a.agentId,
+      role: '团队成员',
       status: 'idle' as const,
       avatarColor: POOL_AGENT_COLORS[i % POOL_AGENT_COLORS.length],
       description: a.tempDescription || undefined,
@@ -115,14 +129,21 @@ export default function AgentTeamPanel({ projectId }: Props) {
     // Stop previous simulation and start new project
     stopSimRef.current?.()
     startProject(taskName, taskDesc, newAgents)
-    stopSimRef.current = startSimulation(pid, taskName, taskDesc)
+
+    if (llmMode === 'real') {
+      const agentIds = newAgents.map((a) => a.id)
+      const tc = useStore.getState().teamConfigs[pid] || undefined
+      startRealPipeline(pid, taskName, taskDesc, agentIds, tc)
+    } else {
+      stopSimRef.current = startSimulation(pid, taskName, taskDesc)
+    }
   }
 
   return (
     <div className="flex flex-col h-full">
       <div className="px-3 py-2.5 border-b border-white/5 flex items-center justify-between">
         <span className="text-sm text-surface-300">
-          {presetAgents.length} 位成员
+          {agentsLoading ? '加载中...' : `${presetAgents.length} 位成员`}
         </span>
         <button
           onClick={() => setShowPool(true)}
@@ -133,7 +154,17 @@ export default function AgentTeamPanel({ projectId }: Props) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
-        {presetAgents.map((agent) => {
+        {agentsLoading && (
+          <div className="flex items-center justify-center py-8">
+            <div className="w-5 h-5 border-2 border-accent-cyan/30 border-t-accent-cyan rounded-full animate-spin" />
+          </div>
+        )}
+        {!agentsLoading && presetAgents.length === 0 && (
+          <div className="text-center py-8 text-surface-500 text-sm">
+            暂无可用 Agent
+          </div>
+        )}
+        {!agentsLoading && presetAgents.map((agent) => {
           const color = agent.avatarColor || getAgentColor(agent.id, agent.role)
           const isSelected = selectedId === agent.id
           const isEditingLlm = llmEditorAgent === agent.id
@@ -166,9 +197,11 @@ export default function AgentTeamPanel({ projectId }: Props) {
                     <span className="text-sm font-medium text-surface-50 truncate">
                       {agent.name}
                     </span>
-                    <span className="text-xs text-surface-400 truncate">
-                      {agent.role}
-                    </span>
+                    {pid && (
+                      <span className="text-xs text-surface-400 truncate">
+                        {agent.role}
+                      </span>
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation()

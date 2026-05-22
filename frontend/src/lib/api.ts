@@ -489,6 +489,7 @@ export async function deleteWorkspace(projectId: string): Promise<void> {
 export interface AppSettings {
   workspace_root: string
   workspace_root_resolved: string
+  llm_mode?: string
 }
 
 export async function getSettings(): Promise<AppSettings> {
@@ -600,6 +601,76 @@ export async function resumePipeline(pipelineId: string): Promise<void> {
 export async function stopPipeline(pipelineId: string): Promise<void> {
   const response = await fetch(`${API_BASE}/pipelines/${pipelineId}/stop`, { method: 'POST' })
   if (!response.ok) throw new Error('停止流水线失败')
+}
+
+export async function createPipeline(projectId: string, name: string, agentIds: string[], teamConfig?: { strategy: string; coordinatorId?: string }): Promise<{ id: string; project_id: string; name: string; status: string }> {
+  const response = await fetch(`${API_BASE}/pipelines/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: projectId, name, agent_ids: agentIds, team_config: teamConfig || {} }),
+  })
+  if (!response.ok) throw new Error('创建流水线失败')
+  return response.json()
+}
+
+export async function startPipeline(pipelineId: string): Promise<{ status: string; pipeline_id: string }> {
+  const response = await fetch(`${API_BASE}/pipelines/${pipelineId}/start`, { method: 'POST' })
+  if (!response.ok) throw new Error('启动流水线失败')
+  return response.json()
+}
+
+export async function getPipeline(pipelineId: string): Promise<Record<string, unknown>> {
+  const response = await fetch(`${API_BASE}/pipelines/${pipelineId}`)
+  if (!response.ok) throw new Error('获取流水线失败')
+  return response.json()
+}
+
+export async function getPipelineLogs(pipelineId: string, limit: number = 50): Promise<{ logs: Array<{ stage: string; message: string; level: string; timestamp: string }> }> {
+  const response = await fetch(`${API_BASE}/pipelines/${pipelineId}/logs?limit=${limit}`)
+  if (!response.ok) throw new Error('获取流水线日志失败')
+  return response.json()
+}
+
+export async function listTasks(projectId?: string, status?: string): Promise<Array<Record<string, unknown>>> {
+  const params = new URLSearchParams()
+  if (projectId) params.set('project_id', projectId)
+  if (status) params.set('status', status)
+  const qs = params.toString()
+  const response = await fetch(`${API_BASE}/tasks/${qs ? '?' + qs : ''}`)
+  if (!response.ok) throw new Error('获取任务列表失败')
+  return response.json()
+}
+
+// ========== Strategy Recommendation API ==========
+
+export interface StrategyRecommendation {
+  recommended_strategy: string
+  confidence: number
+  reasoning: string
+  suggested_coordinator: string | null
+  alternative_strategies: Array<{ strategy: string; reason: string }>
+}
+
+export async function recommendStrategy(
+  projectName: string,
+  projectDescription: string,
+  agentIds: string[],
+  requirements: string = '',
+  templateId?: string,
+): Promise<StrategyRecommendation> {
+  const response = await fetch(`${API_BASE}/pipelines/recommend-strategy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      project_name: projectName,
+      project_description: projectDescription,
+      requirements,
+      agent_ids: agentIds,
+      template_id: templateId || null,
+    }),
+  })
+  if (!response.ok) throw new Error('策略推荐失败')
+  return response.json()
 }
 
 // ========== Pipeline Template Adjustment API ==========

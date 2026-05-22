@@ -1,8 +1,13 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../lib/store'
 import type { ChatMessage } from '../lib/store'
 
+const MAX_CONTENT_PREVIEW = 300
+
 function ChatBubble({ msg, isConsecutive }: { msg: ChatMessage; isConsecutive: boolean }) {
+  const [expanded, setExpanded] = useState(false)
+  const isLong = msg.content.length > MAX_CONTENT_PREVIEW
+
   return (
     <div className={`flex gap-2.5 ${isConsecutive ? 'mt-0.5' : 'mt-3'}`}>
       {isConsecutive ? (
@@ -33,7 +38,17 @@ function ChatBubble({ msg, isConsecutive }: { msg: ChatMessage; isConsecutive: b
             paddingLeft: isConsecutive ? '0' : undefined,
           }}
         >
-          <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+          <p className="whitespace-pre-wrap break-words">
+            {isLong && !expanded ? msg.content.slice(0, MAX_CONTENT_PREVIEW) + '...' : msg.content}
+          </p>
+          {isLong && (
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="text-xs text-accent-cyan hover:text-accent-cyan/80 mt-1 transition-colors"
+            >
+              {expanded ? '收起' : `展开 (${msg.content.length} 字)`}
+            </button>
+          )}
         </div>
       </div>
     </div>

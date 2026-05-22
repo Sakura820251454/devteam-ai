@@ -82,10 +82,19 @@ class AgentService:
         self._teams: Dict[str, List[str]] = {}  # team_id -> [agent_ids]
         self._sessions: Dict[str, Session] = {}
         self._project_agents: Dict[str, set] = {}  # project_id -> set of agent_ids
+        self._session_db = None
 
         # 优先从 soul.md 加载，然后加载预设模板作为 fallback
         self._load_from_soul_files()
         self._load_preset_templates()
+
+    def initialize(self, session_db=None) -> None:
+        if session_db:
+            self._session_db = session_db
+
+    async def load_all_sessions(self) -> None:
+        if self._session_db:
+            self._sessions = await self._session_db.load_all_sessions()
 
     def _load_from_soul_files(self):
         """从 soul.md 文件加载 Agent 定义（优先数据源）"""
@@ -110,7 +119,7 @@ class AgentService:
                             "id": agent_id,
                             "template_id": template.id,
                             "name": soul.name,
-                            "type": template.type.value,
+                            "type": "custom",
                             "description": template.description,
                             "avatar_color": template.avatar_color,
                             "system_prompt": template.system_prompt,
@@ -132,8 +141,7 @@ class AgentService:
 
     def _soul_to_template(self, soul: SoulFile) -> Optional[AgentTemplate]:
         """将 SoulFile 转换为 AgentTemplate"""
-        # 优先从 role 字段推断，其次从名称推断
-        agent_type = self._infer_agent_type(soul.role or soul.name)
+        agent_type = AgentType.CUSTOM
         
         # 构建系统提示词
         system_prompt = self._build_prompt_from_soul(soul)
@@ -161,25 +169,8 @@ class AgentService:
         )
 
     def _infer_agent_type(self, name: str) -> AgentType:
-        """从名称或角色推断 Agent 类型"""
-        if not name:
-            return AgentType.CUSTOM
-            
-        name_lower = name.lower()
-        if '产品' in name_lower or 'pm' in name_lower or 'product' in name_lower:
-            return AgentType.PM
-        elif '架构' in name_lower or 'architect' in name_lower:
-            return AgentType.ARCHITECT
-        elif '后端' in name_lower or 'backend' in name_lower or 'back-end' in name_lower:
-            return AgentType.BACKEND
-        elif '前端' in name_lower or 'frontend' in name_lower or 'front-end' in name_lower:
-            return AgentType.FRONTEND
-        elif '测试' in name_lower or 'tester' in name_lower or 'qa' in name_lower:
-            return AgentType.TESTER
-        elif '运维' in name_lower or 'devops' in name_lower or 'ops' in name_lower:
-            return AgentType.DEVOPS
-        else:
-            return AgentType.CUSTOM
+        """Agent 类型统一为 CUSTOM——配置阶段不预设职位。"""
+        return AgentType.CUSTOM
 
     def _build_prompt_from_soul(self, soul: SoulFile) -> str:
         """从 SoulFile 构建系统提示词"""
@@ -383,7 +374,7 @@ class AgentService:
             return AgentContextFactory.create(
                 agent_id=agent_id,
                 session_id=session_id,
-                role=agent.get("type", "agent"),
+                role=agent.get("name", "agent"),
                 system_prompt=agent.get("system_prompt", "")
             )
 
@@ -506,7 +497,7 @@ class AgentService:
 
     # ========== Session 管理 ==========
 
-    def create_session(
+    async def create_session(
         self,
         title: str = "新会话",
         participant_ids: Optional[List[str]] = None
@@ -519,6 +510,8 @@ class AgentService:
             participants=participant_ids or []
         )
         self._sessions[session_id] = session
+        if self._session_db:
+            await self._session_db.save_session(session)
         return session
 
     def list_sessions(self) -> List[Session]:
@@ -558,6 +551,8 @@ class AgentService:
             message_type=MessageType.TEXT
         )
         session.add_message(user_msg)
+        if self._session_db:
+            await self._session_db.save_message(user_msg)
 
         # Build LLM messages with system prompt
         system_prompt = agent.get("system_prompt", "You are a helpful assistant.")
@@ -575,10 +570,10 @@ class AgentService:
                 id=agent["id"],
                 config=AgentConfigModel(
                     name=agent.get("name", "Agent"),
-                    role=agent.get("type", "agent"),
+                    role=agent.get("name", "agent"),
                     llm_config=AgentLLMConfig(
                         provider=agent_llm_config.get("provider", "deepseek"),
-                        model=agent_llm_config.get("model", "deepseek-chat"),
+                        model=agent_llm_config.get("model", "deepseek-v4-flash"),
                         temperature=agent_llm_config.get("temperature", 0.7),
                         max_tokens=agent_llm_config.get("max_tokens"),
                     )
@@ -597,6 +592,8 @@ class AgentService:
             message_type=MessageType.TEXT
         )
         session.add_message(assistant_msg)
+        if self._session_db:
+            await self._session_db.save_message(assistant_msg)
 
         return response.content
 
@@ -627,6 +624,8 @@ class AgentService:
             message_type=MessageType.TEXT
         )
         session.add_message(user_msg)
+        if self._session_db:
+            await self._session_db.save_message(user_msg)
 
         # Build LLM messages
         system_prompt = agent.get("system_prompt", "You are a helpful assistant.")
@@ -644,10 +643,10 @@ class AgentService:
                 id=agent["id"],
                 config=AgentConfigModel(
                     name=agent.get("name", "Agent"),
-                    role=agent.get("type", "agent"),
+                    role=agent.get("name", "agent"),
                     llm_config=AgentLLMConfig(
                         provider=agent_llm_config.get("provider", "deepseek"),
-                        model=agent_llm_config.get("model", "deepseek-chat"),
+                        model=agent_llm_config.get("model", "deepseek-v4-flash"),
                         temperature=agent_llm_config.get("temperature", 0.7),
                         max_tokens=agent_llm_config.get("max_tokens"),
                     )
@@ -669,6 +668,8 @@ class AgentService:
             message_type=MessageType.TEXT
         )
         session.add_message(assistant_msg)
+        if self._session_db:
+            await self._session_db.save_message(assistant_msg)
 
 
 def get_preset_templates() -> List[AgentTemplate]:

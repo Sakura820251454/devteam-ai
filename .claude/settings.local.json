@@ -75,7 +75,13 @@
       "Bash(node _fix_store.js)",
       "Bash(node _fix_store2.js)",
       "Bash(node _fix_final.js)",
-      "Bash(node -e \"const fs=require\\('fs'\\);let lines=fs.readFileSync\\('frontend/src/lib/store.ts','utf8'\\).split\\('\\\\n'\\);lines[534]=lines[534].replace\\('      const role','        const role'\\);fs.writeFileSync\\('frontend/src/lib/store.ts',lines.join\\('\\\\n'\\)\\);console.log\\('done'\\)\")"
+      "Bash(node -e \"const fs=require\\('fs'\\);let lines=fs.readFileSync\\('frontend/src/lib/store.ts','utf8'\\).split\\('\\\\n'\\);lines[534]=lines[534].replace\\('      const role','        const role'\\);fs.writeFileSync\\('frontend/src/lib/store.ts',lines.join\\('\\\\n'\\)\\);console.log\\('done'\\)\")",
+      "Bash(export LLM_MODE=mock)",
+      "Bash(rm -f data/devteam.db)",
+      "Read(//c/Users/AA/AppData/Local/Temp/claude/D--AIproject-devteam-ai/c3b186ab-5105-4323-9888-4f7748300a70/tasks/**)",
+      "Bash(grep *)",
+      "Bash(curl *)",
+      "Bash(./venv/Scripts/python -c ' *)"
     ]
   }
 }

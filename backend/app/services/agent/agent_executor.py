@@ -89,7 +89,7 @@ class AgentExecutor:
             task = task_board.get_task(task_id)
             if task:
                 try:
-                    task_board.change_status(task_id, TaskStatus.IN_PROGRESS, "system")
+                    await task_board.change_status(task_id, TaskStatus.IN_PROGRESS, "system")
                 except ValueError:
                     pass
 
@@ -127,20 +127,20 @@ class AgentExecutor:
 
             if result.get("success", False):
                 execution["status"] = ExecutionStatus.COMPLETED
-                task_board.change_status(task_id, TaskStatus.REVIEW, "system")
-                task_board.add_comment(task_id, f"任务完成: {result.get('summary', '')}", "system")
+                await task_board.change_status(task_id, TaskStatus.REVIEW, "system")
+                await task_board.add_comment(task_id, f"任务完成: {result.get('summary', '')}", "system")
             else:
                 execution["status"] = ExecutionStatus.FAILED
-                task_board.add_comment(task_id, f"任务失败: {result.get('error', 'Unknown error')}", "system")
+                await task_board.add_comment(task_id, f"任务失败: {result.get('error', 'Unknown error')}", "system")
 
         except asyncio.CancelledError:
             execution["status"] = ExecutionStatus.PAUSED
-            task_board.add_comment(task_id, "任务被暂停/取消", "system")
-            task_board.change_status(task_id, TaskStatus.PAUSED, "system")
+            await task_board.add_comment(task_id, "任务被暂停/取消", "system")
+            await task_board.change_status(task_id, TaskStatus.PAUSED, "system")
 
         except Exception as e:
             execution["status"] = ExecutionStatus.FAILED
-            task_board.add_comment(task_id, f"执行异常: {str(e)}", "system")
+            await task_board.add_comment(task_id, f"执行异常: {str(e)}", "system")
 
         finally:
             execution["completed_at"] = datetime.now()
@@ -175,7 +175,10 @@ class AgentExecutor:
             "total_steps": 1,
         }
 
-        task_board.change_status(task_id, TaskStatus.IN_PROGRESS, agent_id)
+        # 状态转换: BACKLOG -> TODO -> IN_PROGRESS
+        if task.status == TaskStatus.BACKLOG:
+            await task_board.change_status(task_id, TaskStatus.TODO, agent_id)
+        await task_board.change_status(task_id, TaskStatus.IN_PROGRESS, agent_id)
 
         msg = Message(
             sender_id=agent_id,
@@ -201,7 +204,7 @@ class AgentExecutor:
                 )
 
             if result.get("success", False):
-                task_board.change_status(task_id, TaskStatus.REVIEW, agent_id)
+                await task_board.change_status(task_id, TaskStatus.REVIEW, agent_id)
                 self._running_tasks[task_id]["status"] = ExecutionStatus.COMPLETED
                 return result
             else:
@@ -210,13 +213,13 @@ class AgentExecutor:
 
         except asyncio.CancelledError:
             self._running_tasks[task_id]["status"] = ExecutionStatus.PAUSED
-            task_board.add_comment(task_id, "任务被暂停/取消", "system")
-            task_board.change_status(task_id, TaskStatus.PAUSED, "system")
+            await task_board.add_comment(task_id, "任务被暂停/取消", "system")
+            await task_board.change_status(task_id, TaskStatus.PAUSED, "system")
             return {"success": False, "error": "Task cancelled", "paused": True}
 
         except Exception as e:
             self._running_tasks[task_id]["status"] = ExecutionStatus.FAILED
-            task_board.add_comment(task_id, f"执行失败: {str(e)}", agent_id)
+            await task_board.add_comment(task_id, f"执行失败: {str(e)}", agent_id)
             return {"success": False, "error": str(e)}
 
         finally:
@@ -261,7 +264,7 @@ class AgentExecutor:
             execution["current_step"] = step_idx
             self._send_heartbeat(task_id)
 
-            task_board.add_comment(
+            await task_board.add_comment(
                 task_id,
                 f"[{step_idx + 1}/{total_steps}] 执行步骤: {step_name}",
                 agent_id
@@ -285,6 +288,9 @@ class AgentExecutor:
 
                 step_result = response.content
                 accumulated_output += f"\n\n## 步骤 {step_idx + 1}: {step_name}\n{step_result}"
+
+                # 提取代码块写入 workspace（按任务名去重，每次覆盖旧版）
+                self._save_artifacts_from_response(task, step_result)
 
                 await self._save_checkpoint(task_id, step_idx, step_name, llm_messages, accumulated_output)
                 await task_persistence_service.update_heartbeat(task_id, step_idx, total_steps)
@@ -438,7 +444,8 @@ class AgentExecutor:
             raise asyncio.CancelledError("Task cancelled after LLM response")
 
         result_content = response.content
-        task_board.add_comment(task.id, f"执行结果:\n{result_content}", agent.get("id", "system"))
+        self._save_artifacts_from_response(task, result_content, task.title.replace(" ", "_"))
+        await task_board.add_comment(task.id, f"执行结果:\n{result_content}", agent.get("id", "system"))
 
         return {
             "success": True,
@@ -472,6 +479,90 @@ class AgentExecutor:
         if len(result) > 500:
             return f"{task_title}: {result[:200]}..."
         return f"{task_title}: {result}"
+
+    @staticmethod
+    def _save_artifacts_from_response(task, response_text: str) -> None:
+        """从 LLM 响应中提取代码块，写入项目 workspace。
+
+        文件名基于任务标题 + 代码内容（类名/函数名）组合生成。
+        同一步骤重试时，相同文件名自然覆盖旧版，不会留下迭代残渣。
+        不同步骤产生不同文件（不同类/函数名），互不干扰。
+        """
+        import re
+
+        project_id = getattr(task, "project_id", None)
+        if not project_id:
+            return
+
+        code_blocks = re.findall(r"```(\w*)\n(.*?)```", response_text, re.DOTALL)
+        if not code_blocks:
+            return
+
+        from app.services.project.workspace_manager import workspace_manager
+
+        ext_map = {
+            "python": ".py", "py": ".py",
+            "javascript": ".js", "js": ".js", "jsx": ".jsx",
+            "typescript": ".ts", "ts": ".ts", "tsx": ".tsx",
+            "html": ".html", "css": ".css", "scss": ".scss",
+            "json": ".json", "yaml": ".yaml", "yml": ".yml",
+            "sql": ".sql", "sh": ".sh", "bash": ".sh",
+            "dockerfile": "", "docker": "",
+            "markdown": ".md", "md": ".md",
+        }
+
+        # Sanitize task title for use in filenames
+        task_title = getattr(task, "title", "unknown") or "unknown"
+        safe_title = re.sub(r'[\s\\/:*?"<>|]+', '_', task_title).strip('_')
+
+        stage_key = "coding"
+
+        for i, (lang, code) in enumerate(code_blocks):
+            code = code.strip()
+            if not code:
+                continue
+            lang_lower = lang.strip().lower()
+            ext = ext_map.get(lang_lower, ".txt")
+
+            # Try to extract a meaningful name from the code block
+            code_name = _extract_code_name(code, lang_lower)
+            if code_name:
+                filename = f"{safe_title}_{code_name}{ext}"
+            elif len(code_blocks) == 1:
+                filename = f"{safe_title}{ext}"
+            else:
+                filename = f"{safe_title}_{i + 1}{ext}"
+
+            try:
+                workspace_manager.add_artifact(project_id, stage_key, filename, code)
+            except Exception as e:
+                logger.warning(f"Failed to save artifact {filename}: {e}")
+
+
+def _extract_code_name(code: str, lang: str) -> str:
+    """从代码块中提取有意义的名称（类名或函数名）作为文件名片段。"""
+    import re
+
+    if lang in ("python", "py"):
+        m = re.search(r'class\s+(\w+)', code)
+        if m:
+            return m.group(1).lower()
+        m = re.search(r'def\s+(\w+)', code)
+        if m:
+            return m.group(1).lower()
+
+    if lang in ("typescript", "ts", "tsx", "javascript", "js", "jsx"):
+        m = re.search(r'(?:export\s+)?class\s+(\w+)', code)
+        if m:
+            return m.group(1).lower()
+        m = re.search(r'(?:export\s+)?(?:async\s+)?function\s+(\w+)', code)
+        if m:
+            return m.group(1).lower()
+        m = re.search(r'(?:const|let|var)\s+(\w+)\s*=', code)
+        if m:
+            return m.group(1).lower()
+
+    return ""
 
     async def pause_execution(self, task_id: str) -> bool:
         async with self._lock:

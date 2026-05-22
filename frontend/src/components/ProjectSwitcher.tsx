@@ -2,9 +2,10 @@ import { useStore, type ProjectSummary } from '../lib/store'
 
 interface ProjectSwitcherProps {
   onNewProject: () => void
+  onOpenExisting: () => void
 }
 
-export default function ProjectSwitcher({ onNewProject }: ProjectSwitcherProps) {
+export default function ProjectSwitcher({ onNewProject, onOpenExisting }: ProjectSwitcherProps) {
   const projects = useStore((s) => s.projects)
   const activeProjectId = useStore((s) => s.activeProjectId)
   const switchProject = useStore((s) => s.switchProject)
@@ -19,6 +20,12 @@ export default function ProjectSwitcher({ onNewProject }: ProjectSwitcherProps) 
           className="px-3 py-1 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
         >
           + 新项目
+        </button>
+        <button
+          onClick={onOpenExisting}
+          className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors"
+        >
+          📂 打开
         </button>
       </div>
     )
