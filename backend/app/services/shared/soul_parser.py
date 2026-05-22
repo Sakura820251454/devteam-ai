@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 
+from app.services.shared.prompt_registry import registry
+
 
 @dataclass
 class SoulFile:
@@ -133,21 +135,21 @@ def load_all_agents(agents_dir: str = "agents") -> Dict[str, SoulFile]:
 def soul_to_system_prompt(soul: SoulFile) -> str:
     """将 SoulFile 转换为系统提示词"""
     parts = []
-    
-    parts.append("# Agent Soul\n")
-    
+
+    parts.append(registry.render("shared.soul.header", {}))
+
     if soul.core_principles:
-        parts.append("## Core Principles\n")
-        for principle in soul.core_principles:
-            parts.append(f"- {principle}")
-        parts.append("")
-    
+        principles_lines = "\n".join(f"- {p}" for p in soul.core_principles)
+        parts.append(registry.render("shared.soul.core_principles", {
+            "principles_lines": principles_lines,
+        }))
+
     if soul.execution_rules:
-        parts.append("## Execution Rules\n")
-        for rule in soul.execution_rules:
-            parts.append(f"- {rule}")
-        parts.append("")
-    
+        rules_lines = "\n".join(f"- {r}" for r in soul.execution_rules)
+        parts.append(registry.render("shared.soul.execution_rules", {
+            "rules_lines": rules_lines,
+        }))
+
     # 如果有角色定义，添加角色定义
     if soul.role_definitions:
         for section, content in soul.role_definitions.items():
@@ -158,10 +160,9 @@ def soul_to_system_prompt(soul: SoulFile) -> str:
             else:
                 parts.append(f"## {section.title()}\n{content}")
             parts.append("")
-    
+
     # 默认行为指示
     if not soul.core_principles and not soul.execution_rules:
-        parts.append("你是 DevTeam AI 开发团队的一员。\n")
-        parts.append("保持简洁，直接解决问题。\n")
-    
+        parts.append(registry.render("shared.soul.fallback", {}))
+
     return "\n".join(parts)

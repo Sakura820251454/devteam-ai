@@ -43,6 +43,11 @@ npm run docs:build
 - `frontend/vite.config.ts` — port, API proxy
 - `backend/agents/*/soul.md` — agent personas
 
+## Prompt management
+
+All LLM prompts live in `backend/app/prompts/registry.yaml` as the single source of truth — never write f-string prompts in code.
+Use `registry.render(id, vars)` instead. After changing prompts, run `python scripts/prompt_doc_gen.py` to update docs.
+
 ## Documentation maintenance
 
 Use `documentation-and-adrs` skill. Before writing docs, search existing ones to avoid conflicts.

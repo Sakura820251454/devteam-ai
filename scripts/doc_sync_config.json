@@ -2,6 +2,16 @@
   "_comment": "代码文件与文档的映射配置 - 修改代码后自动关联对应文档",
 
   "mappings": {
+    "backend/app/prompts/registry.yaml": {
+      "docs": ["docs/04-modules/backend/prompt-registry.md"],
+      "description": "Prompt Registry 注册表",
+      "check_patterns": ["prompts:", "template:", "description:"]
+    },
+    "backend/app/services/shared/prompt_registry.py": {
+      "docs": ["docs/04-modules/backend/prompt-registry.md"],
+      "description": "Prompt Registry 服务",
+      "check_patterns": ["class PromptRegistry", "def render", "def load"]
+    },
     "backend/app/services/agent/": {
       "docs": ["docs/04-modules/backend/agent-service.md"],
       "description": "Agent 服务",

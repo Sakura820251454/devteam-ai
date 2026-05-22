@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
 
 from app.services.execution.task_persistence_service import task_persistence_service
+from app.services.shared.prompt_registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -54,12 +55,11 @@ class CheckpointManager:
         step_name = checkpoint.get("step_name", "")
         step_index = checkpoint.get("step_index", 0)
 
-        resume_prompt = (
-            f"你正在从检查点恢复执行。之前已完成了 {step_index + 1} 个步骤。\n\n"
-            f"最后完成的步骤: {step_name}\n\n"
-            f"已完成的工作内容:\n{partial}\n\n"
-            f"请从下一步继续执行，不要重复已完成的工作。"
-        )
+        resume_prompt = registry.render("execution.checkpoint.resume_context", {
+            "step_index": step_index + 1,
+            "step_name": step_name,
+            "partial": partial,
+        })
 
         return resume_prompt, messages
 

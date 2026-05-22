@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from pydantic import BaseModel, Field
 
 from app.core.llm import Message as LLMMessage
+from app.services.shared.prompt_registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +213,7 @@ class DiscussionOrchestrator:
         from app.services.llm.llm_service import llm_service
 
         traits = agent_trait_service.get_trait(agent_id)
-        system_prompt = agent.get("system_prompt", "你是一个开发团队成员。")
+        system_prompt = agent.get("system_prompt") or registry.render("collaboration.discussion.agent_speak_fallback_system", {})
 
         user_prompt = self._build_agent_speak_prompt(
             agent=agent,
@@ -269,27 +270,19 @@ class DiscussionOrchestrator:
         ) if context else "（无额外上下文）"
 
         is_final = current_round == max_rounds
+        final_instruction = "- **这是最后一轮，请明确表述你的最终立场或建议**" if is_final else ""
 
-        return f"""## 讨论主题
-{topic}
-
-## 项目上下文
-{context_text}
-
-## 你的角色
-- 名称: {agent_name}
-- 角色: {role_label}
-- 特质: {trait_summary}
-
-## 讨论历史
-{history_text}
-
-## 你的发言 (第 {current_round}/{max_rounds} 轮)
-请基于你的专业视角参与讨论。
-- 针对前面发言者的观点给出你的看法（赞同/补充/质疑）
-- 从你的角色和特质出发提供专业意见
-- 简洁直接，3-5句话即可
-{"- **这是最后一轮，请明确表述你的最终立场或建议**" if is_final else ""}"""
+        return registry.render("collaboration.discussion.agent_speak", {
+            "topic": topic,
+            "context_text": context_text,
+            "agent_name": agent_name,
+            "role_label": role_label,
+            "trait_summary": trait_summary,
+            "history_text": history_text,
+            "current_round": current_round,
+            "max_rounds": max_rounds,
+            "final_instruction": final_instruction,
+        })
 
     async def _check_consensus(
         self,
@@ -325,17 +318,14 @@ class DiscussionOrchestrator:
                     messages=[
                         LLMMessage(
                             role="system",
-                            content="你是一位会议记录员。分析以下讨论是否达成共识。只输出 JSON。",
+                            content=registry.render("collaboration.discussion.consensus_check_system", {}),
                         ),
                         LLMMessage(
                             role="user",
-                            content=f"""主题: {topic}
-
-各成员观点:
-{positions_text}
-
-请判断是否达成共识，按 JSON 格式输出:
-{{"consensus": true/false, "conclusion": "共识内容或分歧描述"}}""",
+                            content=registry.render("collaboration.discussion.consensus_check", {
+                                "topic": topic,
+                                "positions_text": positions_text,
+                            }),
                         ),
                     ],
                     track_cost=False,
@@ -373,11 +363,15 @@ class DiscussionOrchestrator:
                     messages=[
                         LLMMessage(
                             role="system",
-                            content="你是一位会议记录员。请用 3-5 句话总结以下讨论的要点和结论。",
+                            content=registry.render("collaboration.discussion.summarize_system", {}),
                         ),
                         LLMMessage(
                             role="user",
-                            content=f"主题: {topic}\n\n讨论记录:\n{history}\n\n请总结要点和{'最终结论' if concluded else '可选方向'}。",
+                            content=registry.render("collaboration.discussion.summarize", {
+                                "topic": topic,
+                                "history": history,
+                                "conclusion_type": "最终结论" if concluded else "可选方向",
+                            }),
                         ),
                     ],
                     track_cost=False,
@@ -470,22 +464,16 @@ class DiscussionOrchestrator:
                     messages=[
                         LLMMessage(
                             role="system",
-                            content="你是一位项目管理专家。请根据候选人的发言选出最佳 coordinator。只输出 JSON。",
+                            content=registry.render("collaboration.discussion.election_system", {}),
                         ),
                         LLMMessage(
                             role="user",
-                            content=f"""项目: {project_context.get('name', '未命名')}
-描述: {project_context.get('description', '无')}
-
-候选人:
-{agents_text}
-
-选举讨论记录:
-{speakers_text}
-
-请评估每位候选人在讨论中展现的领导力、项目管理能力和技术理解，
-选出一位最适合的 coordinator。按 JSON 格式输出:
-{{"elected_agent_id": "具体的agent_id", "reason": "选择理由"}}""",
+                            content=registry.render("collaboration.discussion.election", {
+                                "project_name": project_context.get("name", "未命名"),
+                                "project_description": project_context.get("description", "无"),
+                                "agents_text": agents_text,
+                                "speakers_text": speakers_text,
+                            }),
                         ),
                     ],
                     track_cost=False,

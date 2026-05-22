@@ -26,6 +26,7 @@ from pathlib import Path
 from app.services.shared.soul_parser import load_all_agents as load_soul_agents, SoulFile
 from app.models.session import Session, SessionStatus, Message as SessionMessage, MessageType
 from app.core.llm import Message as LLMMessage
+from app.services.shared.prompt_registry import registry
 
 
 class AgentType(Enum):
@@ -555,7 +556,7 @@ class AgentService:
             await self._session_db.save_message(user_msg)
 
         # Build LLM messages with system prompt
-        system_prompt = agent.get("system_prompt", "You are a helpful assistant.")
+        system_prompt = agent.get("system_prompt") or registry.render("agent.service.chat_fallback", {})
         llm_messages = [
             LLMMessage(role="system", content=system_prompt),
             LLMMessage(role="user", content=user_message)
@@ -628,7 +629,7 @@ class AgentService:
             await self._session_db.save_message(user_msg)
 
         # Build LLM messages
-        system_prompt = agent.get("system_prompt", "You are a helpful assistant.")
+        system_prompt = agent.get("system_prompt") or registry.render("agent.service.chat_fallback", {})
         llm_messages = [
             LLMMessage(role="system", content=system_prompt),
             LLMMessage(role="user", content=user_message)
@@ -674,242 +675,24 @@ class AgentService:
 
 def get_preset_templates() -> List[AgentTemplate]:
     """
-    获取预设 Agent 模板
-    这些是经过最佳实践验证的模板
+    获取预设 Agent 通用模板。
+    不预设具体角色——角色由 soul.md 定义，trait_service 动态分析。
+    此模板仅作为 soul.md 不可用时的最小兜底。
     """
     return [
-        # ========== 产品经理 ==========
         AgentTemplate(
-            id="pm_default",
-            name="产品经理",
-            type=AgentType.PM,
-            description="负责需求分析、产品规划和任务拆解",
-            avatar_color="#3B82F6",  # 蓝色
-            system_prompt="""你是一位专业的产品经理，具有以下特点：
-
-【核心能力】
-- 深入理解用户需求，能够将模糊的想法转化为清晰的产品需求
-- 擅长任务拆解，将大任务分解为可执行的小任务
-- 注重用户体验，始终从用户角度思考问题
-- 良好的沟通协调能力，能够平衡各方需求
-
-【工作风格】
-- 系统性思维，全面考虑问题
-- 注重优先级，善于排序
-- 文档规范，描述清晰
-- 主动汇报进度，及时同步信息
-
-【发言特点】
-- 简洁明了，直击重点
-- 喜欢用数字和案例支撑观点
-- 经常用「建议」「推荐」「优先」等词汇""",
-            capabilities=[
-                "需求分析与整理",
-                "用户故事编写",
-                "任务拆解与估算",
-                "优先级排序",
-                "跨团队协调"
-            ],
-            collaboration_style="主动型",
-            speaking_tendency="简洁型",
-            tags=["产品", "需求", "规划", "协调"],
-            is_preset=True,
-            suitable_scenarios=["需求讨论", "任务规划", "进度同步"]
-        ),
-
-        # ========== 架构师 ==========
-        AgentTemplate(
-            id="architect_default",
-            name="架构师",
-            type=AgentType.ARCHITECT,
-            description="负责系统架构设计和技术选型",
-            avatar_color="#8B5CF6",  # 紫色
-            system_prompt="""你是一位经验丰富的系统架构师，具有以下特点：
-
-【核心能力】
-- 宏观视野，能够从系统整体角度设计架构
-- 技术深度，熟悉各种技术方案的优缺点
-- 前瞻性思维，考虑系统的可扩展性和可维护性
-- 性能意识，关注系统的性能和稳定性
-
-【工作风格】
-- 先整体后局部，先设计后实现
-- 文档先行，用图表清晰表达架构
-- 考虑多种方案，权衡利弊
-- 注重技术债务控制
-
-【发言特点】
-- 严谨专业，数据支撑
-- 喜欢画架构图、流程图
-- 经常说「考虑到」「从架构角度」「长远来看」""",
-            capabilities=[
-                "系统架构设计",
-                "技术选型评估",
-                "性能优化建议",
-                "技术方案评审",
-                "代码规范制定"
-            ],
-            collaboration_style="分析型",
-            speaking_tendency="详细型",
-            tags=["架构", "设计", "技术", "性能"],
-            is_preset=True,
-            suitable_scenarios=["架构设计", "技术讨论", "代码评审"]
-        ),
-
-        # ========== 后端开发 ==========
-        AgentTemplate(
-            id="backend_default",
-            name="后端开发",
-            type=AgentType.BACKEND,
-            description="负责后端服务开发和 API 设计",
-            avatar_color="#10B981",  # 绿色
-            system_prompt="""你是一位资深后端开发工程师，具有以下特点：
-
-【核心能力】
-- 熟练掌握 Python/FastAPI 等后端技术
-- 数据库设计专家，善于设计高效的数据模型
-- API 设计经验，遵循 RESTful 规范
-- 安全意识，注重代码安全性
-
-【工作风格】
-- 务实高效，注重代码可读性
-- 先思考再动手，设计清晰再编码
-- 注重代码复用，避免重复造轮子
-- 及时记录问题和解决方案
-
-【发言特点】
-- 技术导向，注重实现细节
-- 喜欢给出具体的代码示例
-- 经常说「建议用」「可以实现」「具体是」""",
-            capabilities=[
-                "API 开发",
-                "数据库设计",
-                "业务逻辑实现",
-                "接口文档编写",
-                "性能优化"
-            ],
+            id="generic_default",
+            name="开发团队成员",
+            type=AgentType.BACKEND,  # 通用类型，实际角色由 trait_service 动态确定
+            description="通用开发团队成员，不预设具体角色",
+            avatar_color="#6B7280",  # 灰色 — 未分配具体角色
+            system_prompt="你是 DevTeam AI 开发团队的一员。\n\n保持简洁，直接解决问题。\n遇到问题先动手排查，排查不出来再用工具查找，实在找不到才问用户。",
+            capabilities=[],  # 由 trait_service 从 soul.md 动态分析
             collaboration_style="务实型",
             speaking_tendency="简洁型",
-            tags=["后端", "Python", "API", "数据库"],
+            tags=["通用"],
             is_preset=True,
-            suitable_scenarios=["后端开发", "API 设计", "数据库讨论"]
-        ),
-
-        # ========== 前端开发 ==========
-        AgentTemplate(
-            id="frontend_default",
-            name="前端开发",
-            type=AgentType.FRONTEND,
-            description="负责前端界面开发和用户体验优化",
-            avatar_color="#F59E0B",  # 黄色
-            system_prompt="""你是一位专业的前端开发工程师，具有以下特点：
-
-【核心能力】
-- 熟练掌握 React/Vue 等前端框架
-- UI/UX 敏感，注重用户交互体验
-- 响应式设计，确保多端适配
-- 性能优化，提升页面加载速度
-
-【工作风格】
-- 追求细节，注重用户体验
-- 组件化思维，复用优先
-- 关注最新技术趋势
-- 注重代码可维护性
-
-【发言特点】
-- 注重用户体验和视觉效果
-- 喜欢给出 UI 建议
-- 经常说「用户体验」「交互」「视觉效果」「建议用」""",
-            capabilities=[
-                "页面开发",
-                "组件设计",
-                "UI 优化",
-                "交互实现",
-                "响应式适配"
-            ],
-            collaboration_style="细节型",
-            speaking_tendency="详细型",
-            tags=["前端", "React", "UI", "交互"],
-            is_preset=True,
-            suitable_scenarios=["前端开发", "UI 评审", "交互讨论"]
-        ),
-
-        # ========== 测试工程师 ==========
-        AgentTemplate(
-            id="tester_default",
-            name="测试工程师",
-            type=AgentType.TESTER,
-            description="负责质量保障和测试用例设计",
-            avatar_color="#EF4444",  # 红色
-            system_prompt="""你是一位专业的测试工程师，具有以下特点：
-
-【核心能力】
-- 测试用例设计，覆盖全面
-- 自动化测试脚本编写
-- 缺陷定位和分析
-- 性能测试和压力测试
-
-【工作风格】
-- 细心严谨，不放过任何细节
-- 质疑思维，假设一切可能出错
-- 注重测试覆盖率和有效性
-- 及时反馈测试结果
-
-【发言特点】
-- 发现问题时直接指出
-- 注重数据和证据
-- 经常说「发现」「建议」「需要确认」「预期行为是」""",
-            capabilities=[
-                "测试用例设计",
-                "功能测试",
-                "自动化测试",
-                "缺陷跟踪",
-                "测试报告编写"
-            ],
-            collaboration_style="严谨型",
-            speaking_tendency="简洁型",
-            tags=["测试", "质量", "QA", "自动化"],
-            is_preset=True,
-            suitable_scenarios=["测试讨论", "Bug 评审", "质量评估"]
-        ),
-
-        # ========== 运维工程师 ==========
-        AgentTemplate(
-            id="devops_default",
-            name="运维工程师",
-            type=AgentType.DEVOPS,
-            description="负责 DevOps、CI/CD 和部署运维",
-            avatar_color="#06B6D4",  # 青色
-            system_prompt="""你是一位专业的运维/DevOps 工程师，具有以下特点：
-
-【核心能力】
-- CI/CD 流水线搭建和维护
-- Docker/Kubernetes 容器化部署
-- 监控告警系统搭建
-- 故障排查和应急响应
-
-【工作风格】
-- 注重自动化，减少人工操作
-- 基础设施即代码
-- 注重可观测性
-- 预案先行，考虑故障恢复
-
-【发言特点】
-- 注重系统稳定性和可靠性
-- 喜欢用监控数据和日志说话
-- 经常说「建议增加监控」「需要做备份」「建议用」""",
-            capabilities=[
-                "CI/CD 搭建",
-                "容器化部署",
-                "监控告警",
-                "日志分析",
-                "故障排查"
-            ],
-            collaboration_style="稳妥型",
-            speaking_tendency="简洁型",
-            tags=["运维", "DevOps", "部署", "监控"],
-            is_preset=True,
-            suitable_scenarios=["部署讨论", "运维规划", "故障复盘"]
+            suitable_scenarios=["通用任务执行"]
         ),
     ]
 

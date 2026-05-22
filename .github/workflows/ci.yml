@@ -40,6 +40,26 @@ jobs:
       run: |
         pytest tests/ -v
 
+    - name: Validate prompt registry
+      run: |
+        python -c "
+        import sys; sys.path.insert(0, '.')
+        from app.services.shared.prompt_registry import registry
+        registry.load()
+        errors = registry.validate()
+        if errors:
+            print('Registry validation failed:')
+            for e in errors:
+                print(f'  - {e}')
+            sys.exit(1)
+        print(f'Registry OK: {len(registry.list_entries())} prompts')
+        "
+
+    - name: Check prompt doc sync
+      run: |
+        pip install pyyaml
+        python ../scripts/prompt_doc_gen.py --check
+
     - name: Check doc sync
       run: |
         python ../scripts/doc_sync.py --check

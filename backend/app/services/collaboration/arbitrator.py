@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 
 from app.core.llm import Message as LLMMessage
 from app.services.collaboration.message_bus import message_bus, Message, MessageType
+from app.services.shared.prompt_registry import registry
 
 
 class ArbitrationStatus(str, Enum):
@@ -232,23 +233,16 @@ class ConflictArbitrator:
             f"Agent {aid}: {v.value}" for aid, v in issue.votes.items()
         ])
 
-        prompt = f"""你是一位首席架构师，需要对以下技术争议做出最终裁决：
-
-议题: {issue.title}
-描述: {issue.description}
-
-各方观点:
-{proposals_text}
-
-投票情况:
-{votes_text}
-
-请分析各方观点的优劣，给出最终裁决并说明理由。
-裁决应该具体明确，不能被解读为模棱两可。"""
+        prompt = registry.render("collaboration.arbitrator.meta_resolve", {
+            "issue_title": issue.title,
+            "issue_description": issue.description,
+            "proposals_text": proposals_text,
+            "votes_text": votes_text,
+        })
 
         try:
             messages = [
-                LLMMessage(role="system", content="你是一位公正的架构师裁决者，擅长分析技术争议并做出明确裁决。"),
+                LLMMessage(role="system", content=registry.render("collaboration.arbitrator.meta_resolve_system", {})),
                 LLMMessage(role="user", content=prompt)
             ]
             response = await llm_service.chat(messages, track_cost=False)

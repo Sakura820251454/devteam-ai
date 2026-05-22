@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 
+from app.services.shared.prompt_registry import registry
+
 
 @dataclass
 class StageDefinition:
@@ -344,48 +346,17 @@ async def suggest_stage_adjustments(
         for s in template.stages
     ]
 
-    prompt = f"""你是一个项目规划专家。请分析以下项目需求，判断当前选择的 Pipeline 阶段模板是否合适，并提出调整建议。
-
-## 项目信息
-- 项目名称: {project_name}
-- 项目描述: {project_description}
-- 当前模板: {template.name}（{template.description}）
-
-## 当前阶段
-{json.dumps(current_stages, ensure_ascii=False, indent=2)}
-
-## 分析要求
-1. 根据项目描述的复杂度和特点，判断当前阶段是否足够、是否有多余
-2. 如果阶段不足，建议新增哪些阶段
-3. 如果有多余阶段，建议移除哪些
-4. 阶段顺序是否需要调整
-5. 产出物是否和项目匹配
-
-## 输出格式
-严格按以下 JSON 格式输出（不要输出其他内容）:
-{{
-  "analysis": "简短的分析说明（1-2句话）",
-  "recommended_strategy": "sequential|hierarchical|discussion|pipeline",
-  "changes": {{
-    "add": [{{"label": "阶段名", "description": "做什么", "expected_artifact": "产出物.md", "position": 0}}],
-    "remove": ["stage_key_to_remove"],
-    "reorder": [{{"key": "stage_key", "new_position": 0}}],
-    "rename": [{{"key": "old_key", "new_label": "新阶段名"}}]
-  }},
-  "final_stages": [
-    {{"key": "stage_key", "label": "阶段名", "description": "做什么", "expected_artifact": "产出物.md", "parallel_group": null}}
-  ]
-}}
-
-注意:
-- 如果当前阶段完全合适，changes 各字段为空数组，final_stages 与当前一致
-- final_stages 应包含调整后的完整阶段列表（按正确顺序）
-- 阶段数量不宜过多（建议 3-8 个）
-- parallel_group 用于标记可并行执行的阶段组（字符串），无并行的设为 null"""
+    prompt = registry.render("collaboration.pipeline_templates.adjustment", {
+        "project_name": project_name,
+        "project_description": project_description,
+        "template_name": template.name,
+        "template_description": template.description,
+        "current_stages": json.dumps(current_stages, ensure_ascii=False, indent=2),
+    })
 
     try:
         llm_messages = [
-            LLMMessage(role="system", content="你是一个项目规划专家。只输出 JSON，不要输出其他内容。"),
+            LLMMessage(role="system", content=registry.render("collaboration.pipeline_templates.adjustment_system", {})),
             LLMMessage(role="user", content=prompt),
         ]
         response = await llm_service.chat(llm_messages, track_cost=True, task_id="pipeline_adjustment")

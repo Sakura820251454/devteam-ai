@@ -14,6 +14,7 @@ from app.services.collaboration.speaking_controller import speaking_controller, 
 from app.services.agent.agent_executor import agent_executor, ExecutionStatus
 from app.core.llm import Message as LLMMessage
 from app.services.llm.llm_service import llm_service
+from app.services.shared.prompt_registry import registry
 from app.models.agent_context import AgentContextFactory
 from app.services.security.guard import security_guard, OperationType
 from app.services.security.audit import audit_logger, AuditAction
@@ -320,7 +321,7 @@ class PipelineOrchestrator:
         try:
             response = await llm_service.chat(
                 messages=[
-                    LLMMessage(role="system", content="你是一位资深产品经理，擅长深入分析需求，发现潜在问题和改进机会。"),
+                    LLMMessage(role="system", content=registry.render("collaboration.pipeline.requirement_analysis_system", {})),
                     LLMMessage(role="user", content=analysis_prompt),
                 ],
                 track_cost=True,
@@ -344,25 +345,16 @@ class PipelineOrchestrator:
                 messages=[
                     LLMMessage(
                         role="system",
-                        content="你是一位资深产品经理。请将以下多 Agent 讨论合并为一份完整的需求分析报告。保留所有有价值的分歧和不同视角。",
+                        content=registry.render("collaboration.pipeline.merge_analysis_system", {}),
                     ),
                     LLMMessage(
                         role="user",
-                        content=f"""项目: {project.name}
-描述: {project.description}
-需求: {project.requirements}
-
-多 Agent 讨论记录:
-{transcript_text}
-
-请合并为一份结构化的需求分析报告，包含:
-1. 需求完整性分析
-2. 技术可行性分析
-3. 潜在风险
-4. 改进建议
-5. 优先级建议
-
-保留各 Agent 的独特视角和有价值的分歧点。""",
+                        content=registry.render("collaboration.pipeline.merge_analysis", {
+                            "project_name": project.name,
+                            "project_description": project.description,
+                            "requirements": project.requirements,
+                            "transcript_text": transcript_text,
+                        }),
                     ),
                 ],
                 track_cost=True,
@@ -374,20 +366,11 @@ class PipelineOrchestrator:
             return f"# 需求分析（多 Agent 讨论记录）\n\n{transcript_text}"
 
     def _build_requirement_analysis_prompt(self, project) -> str:
-        return f"""请分析以下项目需求:
-
-项目名称: {project.name}
-项目描述: {project.description}
-需求内容: {project.requirements}
-
-请从以下角度进行分析:
-1. 需求完整性 - 是否清晰、无歧义
-2. 技术可行性 - 技术上是否可行
-3. 潜在风险 - 可能遇到的问题
-4. 改进建议 - 更好的实现方式
-5. 优先级建议 - 哪些是核心功能、哪些是辅助功能
-
-请给出详细分析报告。"""
+        return registry.render("collaboration.pipeline.requirement_analysis", {
+            "project_name": project.name,
+            "project_description": project.description,
+            "requirements": project.requirements,
+        })
 
     async def _stage_task_breakdown(self, pipeline: Pipeline, project) -> None:
         pipeline.current_stage = PipelineStage.TASK_BREAKDOWN
@@ -408,31 +391,7 @@ class PipelineOrchestrator:
             await message_bus.broadcast(msg)
             
             llm_messages = [
-                LLMMessage(role="system", content="""你是一位经验丰富的项目经理，擅长将复杂需求拆解为可执行的具体任务。
-每个任务应该:
-- 清晰明确、可独立完成
-- 有明确的验收标准
-- 合理的工作量估计
-- 明确的依赖关系
-
-请按以下JSON格式输出任务列表:
-{
-  "tasks": [
-    {
-      "title": "任务标题",
-      "description": "任务详细描述",
-      "assigned_role": "后端开发/前端开发/架构师/测试",
-      "priority": "high/medium/low",
-      "phase": "design/development/testing",
-      "dependencies": ["前置任务标题"],
-      "acceptance_criteria": ["验收标准1", "验收标准2"],
-      "required_skills": ["需要的技能1", "需要的技能2"]
-    }
-  ],
-  "summary": "整体拆解说明"
-}
-
-required_skills 字段说明：列出执行此任务所需的具体技能，如"数据库设计"、"API开发"、"前端组件开发"、"测试用例设计"、"CI/CD配置"、"架构评审"、"性能优化"等。这会用于后续匹配最合适的Agent来执行。"""),
+                LLMMessage(role="system", content=registry.render("collaboration.pipeline.task_breakdown_system", {})),
                 LLMMessage(role="user", content=breakdown_prompt)
             ]
             
@@ -524,18 +483,12 @@ required_skills 字段说明：列出执行此任务所需的具体技能，如"
             for agent_id in pipeline.agents if agent_service.get_agent(agent_id)
         ]) if pipeline.agents else "可用Agent信息未配置"
         
-        return f"""基于以下项目需求，请拆解具体任务:
-
-项目名称: {project.name}
-需求内容: {project.requirements}
-
-前期分析结果:
-{previous_analysis}
-
-可用团队成员:
-{agent_info}
-
-请拆解出具体可执行的任务列表。"""
+        return registry.render("collaboration.pipeline.task_breakdown", {
+            "project_name": project.name,
+            "requirements": project.requirements,
+            "previous_analysis": previous_analysis,
+            "agent_info": agent_info,
+        })
 
     def _parse_task_breakdown(self, breakdown_text: str) -> List[Dict[str, Any]]:
         import json
@@ -1142,7 +1095,7 @@ required_skills 字段说明：列出执行此任务所需的具体技能，如"
         review_prompt = self._build_review_prompt(completed_tasks)
         response = await llm_service.chat(
             messages=[
-                LLMMessage(role="system", content="你是一位资深技术专家，擅长代码审查和质量把控。"),
+                LLMMessage(role="system", content=registry.render("collaboration.pipeline.review_system", {})),
                 LLMMessage(role="user", content=review_prompt),
             ],
             track_cost=True,
@@ -1170,21 +1123,14 @@ required_skills 字段说明：列出执行此任务所需的具体技能，如"
             messages=[
                 LLMMessage(
                     role="system",
-                    content="你是一位资深技术专家。请将以下多 Agent 审查讨论合并为一份代码审查报告。",
+                    content=registry.render("collaboration.pipeline.merge_review_system", {}),
                 ),
                 LLMMessage(
                     role="user",
-                    content=f"""已完成任务:
-{tasks_text}
-
-审查讨论记录:
-{transcript_text}
-
-请合并为一份结构化审查报告，包含:
-1. 完成度评估
-2. 代码质量
-3. 安全性
-4. 改进建议""",
+                    content=registry.render("collaboration.pipeline.merge_review", {
+                        "tasks_text": tasks_text,
+                        "transcript_text": transcript_text,
+                    }),
                 ),
             ],
             track_cost=True,
@@ -1201,17 +1147,9 @@ required_skills 字段说明：列出执行此任务所需的具体技能，如"
             for task in completed_tasks
         ])
         
-        return f"""请审核以下已完成的任务:
-
-{tasks_summary}
-
-请从以下角度进行审核:
-1. 完成度 - 是否满足所有需求
-2. 代码质量 - 是否有明显问题
-3. 潜在风险 - 是否存在安全隐患
-4. 改进建议 - 如何进一步优化
-
-请给出审核报告和改进建议。"""
+        return registry.render("collaboration.pipeline.review", {
+            "tasks_summary": tasks_summary,
+        })
 
     async def pause_pipeline(self, pipeline_id: str) -> bool:
         async with self._lock:

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 
 from app.core.llm import Message as LLMMessage
+from app.services.shared.prompt_registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -52,36 +53,12 @@ class StrategyRecommender:
 
         agents_text = "\n".join(agent_rows) if agent_rows else "（无 agent 信息）"
 
-        prompt = f"""你是一个项目管理专家。请根据以下信息，推荐最适合的团队协作策略。
-
-## 项目信息
-- 名称: {project_name}
-- 描述: {project_description}
-- 需求: {requirements or project_description}
-
-## 可用团队成员
-{agents_text}
-
-## 可选策略
-1. **sequential** (顺序执行): 适合 1-2 人的简单任务，按阶段顺序执行，一人负责一个阶段
-2. **hierarchical** (层级委派): 适合 3+ 人的复杂项目，协调者拆解委派给工人执行，最后汇总
-3. **discussion** (圆桌讨论): 适合需要多视角碰撞的决策场景，Agent 集体讨论达成共识
-
-## 分析要求
-- 考虑团队规模和角色覆盖
-- 考虑项目复杂度和任务类型
-- 考虑是否需要多视角（如技术选型、架构设计）
-
-## 输出格式 (JSON)
-{{
-  "recommended_strategy": "sequential|hierarchical|discussion",
-  "confidence": 0.85,
-  "reasoning": "详细分析说明",
-  "suggested_coordinator": "agent_id 或 null (仅 hierarchical 需要)",
-  "alternative_strategies": [
-    {{"strategy": "sequential", "reason": "如果X的话也可以考虑..."}}
-  ]
-}}"""
+        prompt = registry.render("collaboration.strategy_recommender.recommend", {
+            "project_name": project_name,
+            "project_description": project_description,
+            "requirements": requirements or project_description,
+            "agents_text": agents_text,
+        })
 
         try:
             from app.services.llm.llm_service import llm_service
@@ -91,7 +68,7 @@ class StrategyRecommender:
                     messages=[
                         LLMMessage(
                             role="system",
-                            content="你是一位项目管理专家。只输出 JSON。",
+                            content=registry.render("collaboration.strategy_recommender.system", {}),
                         ),
                         LLMMessage(role="user", content=prompt),
                     ],

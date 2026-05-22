@@ -3,6 +3,8 @@ from typing import Optional, List, Dict, Any
 from enum import Enum
 from datetime import datetime
 
+from app.services.shared.prompt_registry import registry
+
 
 class LLMProviderType(str, Enum):
     OPENAI = "openai"
@@ -80,24 +82,34 @@ class Agent(BaseModel):
     
     def build_system_prompt(self) -> str:
         prompt_parts = [
-            f"你是一个名为{self.config.name}的{self.config.role}，职称是{self.config.title}。",
-            f"性格特点：{self.config.personality_type.value}，沟通风格：{self.config.communication_style.value}。",
+            registry.render("agent.model.intro", {
+                "name": self.config.name,
+                "role": self.config.role,
+                "title": self.config.title,
+                "personality": self.config.personality_type.value,
+                "style": self.config.communication_style.value,
+            }),
         ]
-        
+
         if self.config.backstory:
-            prompt_parts.append(f"背景：{self.config.backstory}")
-        
+            prompt_parts.append(registry.render("agent.model.backstory", {
+                "backstory": self.config.backstory,
+            }))
+
         if self.config.skills:
             skills_text = "、".join([f"{skill}({level.value})" for skill, level in self.config.skills.items()])
-            prompt_parts.append(f"专业技能：{skills_text}")
-        
+            prompt_parts.append(registry.render("agent.model.skills", {
+                "skills_text": skills_text,
+            }))
+
         if self.config.knowledge_areas:
             areas_text = "、".join(self.config.knowledge_areas)
-            prompt_parts.append(f"知识领域：{areas_text}")
-        
-        prompt_parts.append("你是开发团队的一员，与其他Agent协作完成开发任务。")
-        prompt_parts.append("请保持你的性格特点和专业角色，用你的沟通风格进行交流。")
-        
+            prompt_parts.append(registry.render("agent.model.knowledge", {
+                "areas_text": areas_text,
+            }))
+
+        prompt_parts.append(registry.render("agent.model.footer", {}))
+
         return "\n".join(prompt_parts)
 
 

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from app.core.llm import Message as LLMMessage
+from app.services.shared.prompt_registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -78,25 +79,11 @@ class AgentTraitService:
         principles = "\n".join(f"- {p}" for p in soul_data.get("core_principles", []))
         rules = "\n".join(f"- {r}" for r in soul_data.get("execution_rules", []))
 
-        prompt = f"""你是一位人力资源分析专家。请根据以下 Agent 的灵魂定义，提取结构化的能力特征。
-
-Agent 名称: {agent.get('name', agent_id)}
-
-## 核心原则 (Core Principles)
-{principles or '无'}
-
-## 执行规则 (Execution Rules)
-{rules or '无'}
-
-请严格按以下 JSON 格式输出（不要输出其他内容）:
-{{
-  "role_label": "该Agent最适合的中文角色标签（如：架构师/后端开发/前端开发/测试工程师/运维工程师/产品经理）",
-  "skills": ["具体技能1", "具体技能2", "具体技能3"],
-  "strength_areas": ["擅长领域1", "擅长领域2"],
-  "collaboration_style": "分析型/务实型/主动型/严谨型",
-  "communication_style": "简洁型/详细型",
-  "summary": "一句话总结该Agent的特点和最擅长的任务类型"
-}}"""
+        prompt = registry.render("agent.trait.generate", {
+            "agent_name": agent.get("name", agent_id),
+            "principles": principles or "无",
+            "rules": rules or "无",
+        })
 
         try:
             from app.services.llm.llm_service import llm_service
@@ -104,7 +91,7 @@ Agent 名称: {agent.get('name', agent_id)}
             response = await asyncio.wait_for(
                 llm_service.chat(
                     messages=[
-                        LLMMessage(role="system", content="你是一位人力资源分析专家。只输出 JSON。"),
+                        LLMMessage(role="system", content=registry.render("agent.trait.generate_system", {})),
                         LLMMessage(role="user", content=prompt),
                     ],
                     track_cost=False,

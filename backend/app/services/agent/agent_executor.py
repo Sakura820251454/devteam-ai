@@ -18,6 +18,7 @@ from app.services.llm.llm_service import llm_service
 from app.services.execution.task_persistence_service import task_persistence_service
 from app.services.execution.checkpoint_manager import checkpoint_manager
 from app.services.project.workspace_manager import workspace_manager
+from app.services.shared.prompt_registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -311,25 +312,14 @@ class AgentExecutor:
         }
 
     async def _plan_task_steps(self, task: Task, agent: Dict[str, Any]) -> List[Dict[str, Any]]:
-        planning_prompt = f"""请将以下任务分解为 3-8 个具体的执行步骤。每个步骤应独立可执行、有明确的产出。
-
-任务标题: {task.title}
-任务描述: {task.description}
-
-请严格按以下 JSON 格式输出（不要输出其他内容）:
-{{
-  "steps": [
-    {{
-      "name": "步骤名称",
-      "description": "此步骤要做什么",
-      "expected_output": "此步骤的预期产出"
-    }}
-  ]
-}}"""
+        planning_prompt = registry.render("agent.executor.plan_steps", {
+            "task_title": task.title,
+            "task_description": task.description,
+        })
 
         try:
             llm_messages = [
-                LLMMessage(role="system", content="你是一个任务规划专家。请将复杂任务拆解为具体执行步骤。只输出 JSON。"),
+                LLMMessage(role="system", content=registry.render("agent.executor.plan_steps_system", {})),
                 LLMMessage(role="user", content=planning_prompt)
             ]
             response = await llm_service.chat(llm_messages, track_cost=True, task_id=task.id, timeout=30.0)
@@ -370,26 +360,27 @@ class AgentExecutor:
         step_name = step.get("name", f"步骤 {step_idx + 1}")
         step_desc = step.get("description", "")
         expected = step.get("expected_output", "")
-
-        prompt = f"""执行以下任务的第 {step_idx + 1}/{total_steps} 步:
-
-任务: {task.title}
-步骤: {step_name}
-步骤说明: {step_desc}
-预期产出: {expected}
-"""
+        step_index = step_idx + 1
 
         if accumulated_output:
-            prompt += f"""
-前序步骤已完成的工作:
-{accumulated_output}
-
-请基于以上已完成的工作，继续执行当前步骤。不要重复已完成的内容。
-"""
+            return registry.render("agent.executor.step_prompt.continue", {
+                "task_title": task.title,
+                "step_index": step_index,
+                "total_steps": total_steps,
+                "step_name": step_name,
+                "step_description": step_desc,
+                "expected_output": expected,
+                "accumulated_output": accumulated_output,
+            })
         else:
-            prompt += "\n这是第一个步骤，请从头开始执行。\n"
-
-        return prompt
+            return registry.render("agent.executor.step_prompt.first", {
+                "task_title": task.title,
+                "step_index": step_index,
+                "total_steps": total_steps,
+                "step_name": step_name,
+                "step_description": step_desc,
+                "expected_output": expected,
+            })
 
     async def _save_checkpoint(
         self,
@@ -424,7 +415,7 @@ class AgentExecutor:
         cancellation_token: asyncio.Event
     ) -> Dict[str, Any]:
         execution_prompt = self._build_task_execution_prompt(task, agent)
-        system_prompt = agent.get("system_prompt", "你是一个专业的开发团队成员，擅长完成各种开发任务。")
+        system_prompt = agent.get("system_prompt") or registry.render("agent.executor.fallback_system", {})
 
         llm_messages = [
             LLMMessage(role="system", content=system_prompt),
@@ -454,26 +445,12 @@ class AgentExecutor:
         }
 
     def _build_task_execution_prompt(self, task: Task, agent: Dict[str, Any]) -> str:
-        return f"""请执行以下任务:
-
-任务标题: {task.title}
-任务描述: {task.description}
-
-任务标签: {', '.join(task.tags) if task.tags else '无'}
-
-请根据任务描述和你的角色，完成任务并给出详细的执行结果。
-
-如果需要编写代码，请提供完整的代码实现。
-如果需要设计架构，请提供详细的架构说明。
-如果需要分析问题，请提供深入的分析报告。
-
-请确保：
-1. 严格按照任务描述执行
-2. 提供具体的实现方案
-3. 说明关键的设计决策
-4. 给出可能的改进建议
-
-执行完成后，请总结任务完成情况。"""
+        task_tags = ", ".join(task.tags) if task.tags else "无"
+        return registry.render("agent.executor.task_execution", {
+            "task_title": task.title,
+            "task_description": task.description,
+            "task_tags": task_tags,
+        })
 
     def _summarize_task_result(self, task_title: str, result: str) -> str:
         if len(result) > 500:
