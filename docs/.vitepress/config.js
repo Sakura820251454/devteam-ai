@@ -58,7 +58,8 @@ export default defineConfig({
             { text: '团队协作', link: '/02-design/collaboration' },
             { text: '任务看板', link: '/02-design/task-board' },
             { text: '干预系统', link: '/02-design/intervention' },
-            { text: '自我学习', link: '/02-design/self-learning' }
+            { text: '自我学习', link: '/02-design/self-learning' },
+            { text: 'Prompt 架构', link: '/02-design/prompt-architecture' }
           ]
         },
         {

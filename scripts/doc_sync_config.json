@@ -8,7 +8,7 @@
       "check_patterns": ["prompts:", "template:", "description:"]
     },
     "backend/app/services/shared/prompt_registry.py": {
-      "docs": ["docs/04-modules/backend/prompt-registry.md"],
+      "docs": ["docs/04-modules/backend/prompt-registry.md", "docs/02-design/prompt-architecture.md"],
       "description": "Prompt Registry 服务",
       "check_patterns": ["class PromptRegistry", "def render", "def load"]
     },

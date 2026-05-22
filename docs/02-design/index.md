@@ -27,6 +27,7 @@
 | [任务看板](./task-board.md) | 任务看板设计 |
 | [干预系统](./intervention.md) | 人类干预机制 |
 | [自我学习](./self-learning.md) | 知识沉淀与进化 |
+| [Prompt 架构](./prompt-architecture.md) | Prompt Registry 统一管理设计 |
 
 ## 技术调研
 
