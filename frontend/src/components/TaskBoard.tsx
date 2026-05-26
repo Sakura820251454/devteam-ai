@@ -1,38 +1,186 @@
-import { useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useStore } from '../lib/store'
 import type { Task } from '../lib/store'
+import { updateTask as apiUpdateTask, changeTaskStatus, assignTaskAgents } from '../lib/api'
 
 const PRIORITY_COLORS: Record<string, string> = { low: 'bg-surface-400', medium: 'bg-accent-cyan', high: 'bg-accent-orange', urgent: 'bg-accent-red' }
 const PRIORITY_LABELS: Record<string, string> = { low: '低', medium: '中', high: '高', urgent: '紧急' }
+const PRIORITY_ORDER = ['low', 'medium', 'high', 'urgent']
 
-const STATUS_LABELS: Record<string, string> = { backlog: '待办', todo: '计划中', in_progress: '进行中', review: '审核中', done: '已完成' }
+const RISK_LABELS: Record<string, string> = { low: '低风险', medium: '中风险', high: '高风险', critical: '严重' }
+const RISK_COLORS: Record<string, string> = { low: 'text-accent-green', medium: 'text-accent-cyan', high: 'text-accent-orange', critical: 'text-accent-red' }
+
+const STATUS_LABELS: Record<string, string> = { backlog: '待办', todo: '计划中', in_progress: '进行中', blocked: '阻塞', review: '审核中', done: '已完成', paused: '暂停', cancelled: '已取消' }
+const STATUS_ORDER = ['backlog', 'todo', 'in_progress', 'blocked', 'review', 'done', 'paused', 'cancelled']
 const STATUS_STYLES: Record<string, string> = {
   backlog: 'bg-surface-600 text-surface-300',
   todo: 'bg-accent-cyan/20 text-accent-cyan',
   in_progress: 'bg-accent-orange/20 text-accent-orange',
+  blocked: 'bg-accent-red/20 text-accent-red',
   review: 'bg-accent-purple/20 text-accent-purple',
   done: 'bg-accent-green/20 text-accent-green',
+  paused: 'bg-surface-600/50 text-surface-400',
+  cancelled: 'bg-surface-700/50 text-surface-500 line-through',
 }
 
 function TaskCard({ task }: { task: Task }) {
   const pid = useStore((s) => s.activeProjectId) ?? ''
   const agents = useStore((s) => s.agentsByProject[pid] ?? [])
+  const updateTask = useStore((s) => s.updateTask)
+  const addLog = useStore((s) => s.addLog)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [editMode, setEditMode] = useState<'priority' | 'status' | 'agents' | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false)
+        setEditMode(null)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [menuOpen])
+
   const priorityColor = PRIORITY_COLORS[task.priority] || 'bg-surface-400'
   const priorityHex = { low: '#8b949e', medium: '#58a6ff', high: '#d29922', urgent: '#f85149' }[task.priority] || '#8b949e'
 
+  const handleAction = (action: 'priority' | 'status' | 'agents') => {
+    setEditMode(action)
+    // Don't close menu; user picks from inline options
+  }
+
+  const applyPriority = (pri: string) => {
+    const now = new Date().toISOString()
+    updateTask(pid, task.id, { priority: pri as Task['priority'], updatedAt: now })
+    addLog(pid, { level: 'info', source: 'human', message: `任务「${task.title}」优先级 → ${PRIORITY_LABELS[pri]}` })
+    apiUpdateTask(task.id, { priority: pri }).catch(() => {})
+    setEditMode(null)
+    setMenuOpen(false)
+  }
+
+  const applyStatus = (st: string) => {
+    const now = new Date().toISOString()
+    const newHistory = [
+      ...(task.statusHistory || []),
+      { from: task.status, to: st, timestamp: now, by: 'human' },
+    ]
+    updateTask(pid, task.id, { status: st, statusHistory: newHistory, updatedAt: now })
+    addLog(pid, { level: 'info', source: 'human', message: `任务「${task.title}」状态 → ${STATUS_LABELS[st]}` })
+    changeTaskStatus(task.id, st).catch(() => {})
+    setEditMode(null)
+    setMenuOpen(false)
+  }
+
+  const toggleAgent = (agentId: string) => {
+    const now = new Date().toISOString()
+    const current = task.assignedAgents
+    const next = current.includes(agentId)
+      ? current.filter((a) => a !== agentId)
+      : [...current, agentId]
+    if (next.length === 0) return
+    updateTask(pid, task.id, { assignedAgents: next, updatedAt: now })
+    assignTaskAgents(task.id, next).catch(() => {})
+    const agent = agents.find((a) => a.id === agentId)
+    const verb = current.includes(agentId) ? '移除' : '添加'
+    addLog(pid, { level: 'info', source: 'human', message: `任务「${task.title}」负责人${verb}: ${agent?.name || agentId}` })
+  }
+
   return (
     <div
-      className="bg-background-card rounded-lg overflow-hidden transition-all hover:ring-1 hover:ring-white/10"
+      className="bg-background-card rounded-lg overflow-hidden transition-all hover:ring-1 hover:ring-white/10 relative group"
       style={{ borderLeft: `3px solid ${priorityHex}` }}
     >
-      {/* 标题 + 状态 */}
+      {/* 标题 + 状态 + 操作按钮 */}
       <div className="px-3.5 pt-3 pb-2">
         <div className="flex items-start justify-between gap-2">
           <span className="text-sm font-medium text-surface-100 leading-snug">{task.title}</span>
-          <span className={`text-xs px-1.5 py-0.5 rounded shrink-0 font-medium ${STATUS_STYLES[task.status] || STATUS_STYLES.backlog}`}>
-            {STATUS_LABELS[task.status] || task.status}
-          </span>
+          <div className="flex items-center gap-1 shrink-0">
+            <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${STATUS_STYLES[task.status] || STATUS_STYLES.backlog}`}>
+              {STATUS_LABELS[task.status] || task.status}
+            </span>
+            <div ref={menuRef} className="relative">
+              <button
+                onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); setEditMode(null) }}
+                className="w-5 h-5 rounded flex items-center justify-center text-surface-500 hover:text-surface-200 hover:bg-white/5 opacity-0 group-hover:opacity-100 transition-all text-xs"
+                title="任务操作"
+              >
+                ⋮
+              </button>
+              {menuOpen && (
+                <div className="absolute right-0 top-6 w-36 bg-background-panel border border-white/10 rounded-lg shadow-panel z-30 py-1 text-xs">
+                  <button onClick={() => handleAction('status')} className="w-full text-left px-3 py-1.5 hover:bg-white/5 text-surface-200 flex items-center gap-2">
+                    <span className="text-accent-cyan">↻</span> 改状态
+                  </button>
+                  <button onClick={() => handleAction('priority')} className="w-full text-left px-3 py-1.5 hover:bg-white/5 text-surface-200 flex items-center gap-2">
+                    <span className="text-accent-orange">⚡</span> 改优先级
+                  </button>
+                  <button onClick={() => handleAction('agents')} className="w-full text-left px-3 py-1.5 hover:bg-white/5 text-surface-200 flex items-center gap-2">
+                    <span className="text-accent-purple">👥</span> 换负责人
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
+
+        {/* Inline editors */}
+        {editMode === 'priority' && (
+          <div className="mt-2 flex gap-1">
+            {PRIORITY_ORDER.map((p) => (
+              <button
+                key={p}
+                onClick={() => applyPriority(p)}
+                className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                  task.priority === p
+                    ? 'border-accent-cyan text-accent-cyan bg-accent-cyan/10'
+                    : 'border-white/10 text-surface-400 hover:text-surface-200 hover:border-white/20'
+                }`}
+              >
+                {PRIORITY_LABELS[p]}
+              </button>
+            ))}
+          </div>
+        )}
+        {editMode === 'status' && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {STATUS_ORDER.map((s) => (
+              <button
+                key={s}
+                onClick={() => applyStatus(s)}
+                className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                  task.status === s
+                    ? 'border-accent-cyan text-accent-cyan bg-accent-cyan/10'
+                    : 'border-white/10 text-surface-400 hover:text-surface-200 hover:border-white/20'
+                }`}
+              >
+                {STATUS_LABELS[s]}
+              </button>
+            ))}
+          </div>
+        )}
+        {editMode === 'agents' && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {agents.map((a) => {
+              const active = task.assignedAgents.includes(a.id)
+              return (
+                <button
+                  key={a.id}
+                  onClick={() => toggleAgent(a.id)}
+                  className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                    active
+                      ? 'border-accent-green text-accent-green bg-accent-green/10'
+                      : 'border-white/10 text-surface-400 hover:text-surface-200 hover:border-white/20'
+                  }`}
+                >
+                  {active ? '✓ ' : ''}{a.name}
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       {/* 元信息行 */}
@@ -110,64 +258,25 @@ export default function TaskBoard({ projectId, selectedStage }: Props) {
   const tasks = useStore((s) => s.tasksByProject[pid] ?? [])
   const tasksLoading = useStore((s) => s.tasksLoadingByProject[pid] ?? false)
   const pipeline = useStore((s) => s.pipelines[pid] ?? null)
-  const setTasks = useStore((s) => s.setTasks)
   const setTasksLoading = useStore((s) => s.setTasksLoading)
   const addLog = useStore((s) => s.addLog)
+  const updateTask = useStore((s) => s.updateTask)
   const stage = pipeline?.stages.find((s) => s.key === selectedStage)
 
   useEffect(() => {
     if (!selectedStage) return
 
-    // 如果已有真实任务则不覆盖（来自后端 polling 或 simulation）
     const currentTasks = useStore.getState().tasksByProject[pid] ?? []
     if (currentTasks.length > 0) return
 
-    setTasksLoading(pid,true)
+    // Show a brief loading indicator; tasks arrive from simulation (mock mode)
+    // or backend polling (real mode) — the component is purely reactive.
+    setTasksLoading(pid, true)
     addLog(pid, { level: 'info', source: 'taskboard', message: `加载阶段 "${stage?.label || selectedStage}" 的任务...` })
 
     const timer = setTimeout(() => {
-      const mockTasks: Task[] = [
-        {
-          id: 'task-1', title: '数据库表结构设计', description: '', status: 'done', priority: 'high',
-          stage: selectedStage, assignedAgents: ['architect', 'backend'], createdBy: 'architect',
-          statusHistory: [
-            { from: 'backlog', to: 'todo', timestamp: new Date(Date.now() - 3600000).toISOString(), by: 'architect' },
-            { from: 'todo', to: 'in_progress', timestamp: new Date(Date.now() - 2400000).toISOString(), by: 'backend' },
-            { from: 'in_progress', to: 'done', timestamp: new Date(Date.now() - 600000).toISOString(), by: 'backend' },
-          ],
-          tags: ['database', 'schema'], createdAt: new Date(Date.now() - 3600000).toISOString(), updatedAt: new Date(Date.now() - 600000).toISOString(),
-        },
-        {
-          id: 'task-2', title: '实现用户认证 API', description: '', status: 'in_progress', priority: 'high',
-          stage: selectedStage, assignedAgents: ['backend'], createdBy: 'pm',
-          statusHistory: [
-            { from: 'backlog', to: 'todo', timestamp: new Date(Date.now() - 3000000).toISOString(), by: 'pm' },
-            { from: 'todo', to: 'in_progress', timestamp: new Date(Date.now() - 1800000).toISOString(), by: 'backend' },
-          ],
-          tags: ['api', 'auth'], createdAt: new Date(Date.now() - 3600000).toISOString(), updatedAt: new Date(Date.now() - 600000).toISOString(),
-        },
-        {
-          id: 'task-3', title: '编写 API 单元测试', description: '', status: 'todo', priority: 'medium',
-          stage: selectedStage, assignedAgents: ['tester'], createdBy: 'backend',
-          statusHistory: [
-            { from: 'backlog', to: 'todo', timestamp: new Date(Date.now() - 1200000).toISOString(), by: 'backend' },
-          ],
-          tags: ['testing'], createdAt: new Date(Date.now() - 1200000).toISOString(), updatedAt: new Date(Date.now() - 600000).toISOString(),
-        },
-        {
-          id: 'task-4', title: '前端登录页面开发', description: '', status: 'todo', priority: 'medium',
-          stage: selectedStage, assignedAgents: ['frontend'], createdBy: 'pm',
-          statusHistory: [
-            { from: 'backlog', to: 'todo', timestamp: new Date(Date.now() - 900000).toISOString(), by: 'pm' },
-          ],
-          tags: ['frontend', 'ui'], createdAt: new Date(Date.now() - 900000).toISOString(), updatedAt: new Date(Date.now() - 300000).toISOString(),
-        },
-      ]
-
-      setTasks(pid,mockTasks)
-      setTasksLoading(pid,false)
-      addLog(pid, { level: 'success', source: 'taskboard', message: `加载完成: ${mockTasks.length} 个任务` })
-    }, 800)
+      setTasksLoading(pid, false)
+    }, 3000)
 
     return () => clearTimeout(timer)
   }, [selectedStage, pid])
@@ -178,7 +287,12 @@ export default function TaskBoard({ projectId, selectedStage }: Props) {
     return map
   }, [tasks])
 
-  const allStatuses = ['backlog', 'todo', 'in_progress', 'review', 'done']
+  const allStatuses = ['backlog', 'todo', 'in_progress', 'blocked', 'review', 'done', 'paused', 'cancelled']
+
+  // High-risk tasks awaiting human approval
+  const pendingApprovalTasks = useMemo(() => tasks.filter(
+    t => t.status === 'review' && (t.riskLevel === 'high' || t.riskLevel === 'critical')
+  ), [tasks])
 
   if (tasksLoading) {
     return (
@@ -202,10 +316,70 @@ export default function TaskBoard({ projectId, selectedStage }: Props) {
 
   return (
     <div className="p-4">
+      {pendingApprovalTasks.length > 0 && (
+        <div className="mb-4 p-4 bg-accent-orange/10 border border-accent-orange/30 rounded-xl">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-lg">⚠️</span>
+            <span className="text-sm font-medium text-accent-orange">待审批任务</span>
+            <span className="text-xs text-surface-400">
+              ({pendingApprovalTasks.length} 个高风险任务需要人工审批)
+            </span>
+          </div>
+          <div className="space-y-2">
+            {pendingApprovalTasks.map((task) => (
+              <div key={task.id} className="flex items-center justify-between bg-background-card rounded-lg px-4 py-3 border border-white/5">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-surface-100 truncate">{task.title}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${RISK_COLORS[task.riskLevel || ''] || 'text-surface-400'} bg-surface-700/50`}>
+                      {RISK_LABELS[task.riskLevel || ''] || task.riskLevel}
+                    </span>
+                  </div>
+                  <div className="text-xs text-surface-500 mt-0.5 truncate">
+                    {task.description?.slice(0, 80)}{(task.description?.length || 0) > 80 ? '...' : ''}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0 ml-4">
+                  <button
+                    onClick={() => {
+                      const now = new Date().toISOString()
+                      const newHistory = [
+                        ...(task.statusHistory || []),
+                        { from: task.status, to: 'done', timestamp: now, by: 'human' },
+                      ]
+                      updateTask(pid, task.id, { status: 'done', statusHistory: newHistory, updatedAt: now } as any)
+                      addLog(pid, { level: 'info', source: 'human', message: `审批通过: 「${task.title}」` })
+                      changeTaskStatus(task.id, 'done', 'human').catch(() => {})
+                    }}
+                    className="px-3 py-1.5 text-xs rounded-lg bg-accent-green/20 text-accent-green border border-accent-green/30 hover:bg-accent-green/30 transition-colors"
+                  >
+                    通过
+                  </button>
+                  <button
+                    onClick={() => {
+                      const now = new Date().toISOString()
+                      const newHistory = [
+                        ...(task.statusHistory || []),
+                        { from: task.status, to: 'in_progress', timestamp: now, by: 'human' },
+                      ]
+                      updateTask(pid, task.id, { status: 'in_progress', statusHistory: newHistory, updatedAt: now } as any)
+                      addLog(pid, { level: 'warn', source: 'human', message: `审批驳回（需返工）: 「${task.title}」` })
+                      changeTaskStatus(task.id, 'in_progress', 'human').catch(() => {})
+                    }}
+                    className="px-3 py-1.5 text-xs rounded-lg bg-accent-red/20 text-accent-red border border-accent-red/30 hover:bg-accent-red/30 transition-colors"
+                  >
+                    驳回
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="text-xs text-surface-500 mb-2">
         {tasks.length} 个任务 · Agent 自主管理流转
       </div>
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-8 gap-3">
         {allStatuses.map((status) => (
           <div key={status}>
             <div className="flex items-center justify-between mb-2.5">

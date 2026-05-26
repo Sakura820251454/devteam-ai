@@ -34,9 +34,7 @@ export default function Home() {
   const setWorkspacePath = useStore((s) => s.setWorkspacePath)
   const switchProject = useStore((s) => s.switchProject)
   const fetchLlmMode = useStore((s) => s.fetchLlmMode)
-  const strategyRecommendation = useStore((s) => s.strategyRecommendation)
-  const fetchStrategyRecommendation = useStore((s) => s.fetchStrategyRecommendation)
-  const setStrategyRecommendation = useStore((s) => s.setStrategyRecommendation)
+  const fetchTeamSuggestion = useStore((s) => s.fetchTeamSuggestion)
 
   const [activeTab, setActiveTab] = useState<SideTab>('agents')
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -48,11 +46,6 @@ export default function Home() {
   }>({ name: '', description: '', template: null })
   const [showSettings, setShowSettings] = useState(false)
   const [showOpenDialog, setShowOpenDialog] = useState(false)
-  const [showStrategyConfirm, setShowStrategyConfirm] = useState(false)
-  const [pendingStrategyConfig, setPendingStrategyConfig] = useState<{
-    agents: Agent[]
-    teamConfig: { strategy: string; coordinatorId?: string }
-  } | null>(null)
   const stopSimRefs = useRef<Record<string, () => void>>({})
 
   // Detect backend LLM mode on mount
@@ -118,42 +111,8 @@ export default function Home() {
       llm_config: a.llm_config,
     }))
 
-    if (teamConfig.strategy === 'auto') {
-      // 自动策略 — 先获取 LLM 推荐，弹确认框
-      setPendingStrategyConfig({ agents, teamConfig })
-      setShowStrategyConfirm(true)
-      const agentIds = agents.map((a) => a.id)
-      fetchStrategyRecommendation(
-        pendingProject.name,
-        pendingProject.description,
-        agentIds,
-      )
-      return
-    }
-
     setShowAgentConfig(false)
     proceedWithConfig(agents, teamConfig)
-  }
-
-  const handleStrategyConfirmed = (overrideStrategy?: string) => {
-    if (!pendingStrategyConfig) return
-
-    const finalConfig = { ...pendingStrategyConfig.teamConfig }
-    if (overrideStrategy) {
-      finalConfig.strategy = overrideStrategy
-    } else if (strategyRecommendation) {
-      finalConfig.strategy = strategyRecommendation.recommended_strategy
-      if (strategyRecommendation.suggested_coordinator && !finalConfig.coordinatorId) {
-        finalConfig.coordinatorId = strategyRecommendation.suggested_coordinator
-      }
-    }
-
-    setShowStrategyConfirm(false)
-    setPendingStrategyConfig(null)
-    setShowAgentConfig(false)
-    setStrategyRecommendation(null)
-
-    proceedWithConfig(pendingStrategyConfig.agents, finalConfig)
   }
 
   const handleOpenExample = () => {
@@ -177,8 +136,8 @@ export default function Home() {
     }, 0)
   }
 
-  const handleOpenExisting = (workspace: WorkspaceInfo) => {
-    // Check if already loaded
+  const handleOpenExisting = async (workspace: WorkspaceInfo) => {
+    // Check if already loaded in this session
     const existingProject = useStore.getState().projects.find(p => p.id === workspace.id)
     if (existingProject) {
       switchProject(workspace.id)
@@ -190,30 +149,66 @@ export default function Home() {
     restoreProjectFromWorkspace(workspace)
     setShowOpenDialog(false)
 
-    // Start simulation if project is not completed (only in mock mode)
-    if (workspace.status !== 'completed') {
-      setTimeout(() => {
-        const state = useStore.getState()
-        const pid = state.activeProjectId
-        if (pid) {
-          if (state.llmMode === 'real') {
-            const agentIds = (state.agentsByProject[pid] || []).map((a) => a.id)
-            const tc = state.teamConfigs[pid] || undefined
-            state.startRealPipeline(pid, workspace.name, workspace.description, agentIds, tc)
-          } else {
-            stopSimRefs.current[pid]?.()
-            stopSimRefs.current[pid] = startSimulation(pid, workspace.name, workspace.description)
+    // For completed/failed projects, just show the archived state — no need to resume
+    if (workspace.status === 'completed' || workspace.status === 'failed') return
+
+    const state = useStore.getState()
+    const pid = workspace.id
+
+    if (state.llmMode === 'real') {
+      // Find the existing pipeline
+      try {
+        const { getActivePipeline } = await import('../lib/api')
+        const activePipeline = await getActivePipeline(pid)
+        if (activePipeline?.id) {
+          const pipelineId = activePipeline.id as string
+          // 对于 paused 状态（用户主动关闭保存的），不自动恢复，等待用户手动操作
+          if (activePipeline.status === 'paused') {
+            state.setPipeline(pid, {
+              ...(state.pipelines[pid] || {}),
+              id: pipelineId,
+              status: 'paused',
+              current_stage: activePipeline.current_stage as string,
+              progress: activePipeline.progress as number,
+            } as any)
+          } else if (activePipeline.status === 'running') {
+            state.startPolling(pid, pipelineId)
           }
         }
-      }, 0)
+      } catch (err) {
+        console.warn('恢复流水线轮询失败:', err)
+      }
+    } else {
+      // Mock mode: restart simulation
+      stopSimRefs.current[pid]?.()
+      stopSimRefs.current[pid] = startSimulation(pid, workspace.name, workspace.description)
     }
   }
 
-  const handleResetProject = () => {
-    if (activeProjectId) {
-      stopSimRefs.current[activeProjectId]?.()
-      delete stopSimRefs.current[activeProjectId]
+  const handleResetProject = async () => {
+    if (!activeProjectId) {
+      resetProject()
+      return
     }
+
+    // 停止模拟（如果存在）
+    stopSimRefs.current[activeProjectId]?.()
+    delete stopSimRefs.current[activeProjectId]
+
+    // 真实模式：通知后端关闭流水线（保存状态 + 停止执行）
+    const state = useStore.getState()
+    if (state.llmMode === 'real') {
+      const pipeline = state.pipelines[activeProjectId]
+      if (pipeline?.id && (pipeline.status === 'running' || pipeline.status === 'paused')) {
+        try {
+          const { closePipeline } = await import('../lib/api')
+          await closePipeline(pipeline.id)
+        } catch (err) {
+          console.warn('关闭后端流水线失败:', err)
+        }
+      }
+    }
+
     resetProject()
   }
 
@@ -380,96 +375,14 @@ export default function Home() {
         onSubmit={handleCreateProject}
       />
 
-      {/* Agent Config Modal — step 2 after project creation */}
+      {/* Agent Config Modal — Step 2+3+4: AI team suggestion + user confirmation */}
       <AgentConfigModal
         isOpen={showAgentConfig}
         onClose={() => setShowAgentConfig(false)}
         onAgentsConfigured={handleAgentsConfigured}
+        projectDescription={pendingProject.description}
+        fetchTeamSuggestion={fetchTeamSuggestion}
       />
-
-      {/* Strategy Confirmation Dialog — shown when auto strategy selected */}
-      {showStrategyConfirm && strategyRecommendation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-fade-in">
-          <div className="bg-background-panel border border-white/10 rounded-xl p-6 w-full max-w-lg shadow-2xl">
-            <h2 className="text-lg font-semibold text-white mb-2">AI 策略推荐</h2>
-            <p className="text-sm text-surface-400 mb-4">
-              LLM 根据项目需求和你选择的 {pendingStrategyConfig?.agents.length || 0} 位团队成员，
-              推荐了以下协作策略：
-            </p>
-
-            {/* Recommendation Card */}
-            <div className="bg-background-input rounded-lg p-4 mb-3 border border-accent-cyan/20">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-accent-cyan font-medium text-sm">
-                  {strategyRecommendation.recommended_strategy === 'sequential' ? '📋 顺序执行' :
-                   strategyRecommendation.recommended_strategy === 'hierarchical' ? '🏗️ 层级委派' :
-                   strategyRecommendation.recommended_strategy === 'discussion' ? '💬 圆桌讨论' : '—'}
-                </span>
-                <span className="text-xs text-surface-500">
-                  置信度: {Math.round(strategyRecommendation.confidence * 100)}%
-                </span>
-              </div>
-              <div className="w-full bg-surface-600 rounded-full h-1.5 mb-2">
-                <div
-                  className="h-full bg-accent-cyan rounded-full transition-all"
-                  style={{ width: `${strategyRecommendation.confidence * 100}%` }}
-                />
-              </div>
-              <p className="text-xs text-surface-300 leading-relaxed">
-                {strategyRecommendation.reasoning}
-              </p>
-              {strategyRecommendation.suggested_coordinator && (
-                <p className="text-xs text-accent-orange mt-2">
-                  建议协调者: {strategyRecommendation.suggested_coordinator}
-                </p>
-              )}
-            </div>
-
-            {/* Alternatives */}
-            {strategyRecommendation.alternative_strategies.length > 0 && (
-              <div className="mb-4">
-                <p className="text-xs text-surface-500 mb-2">其他可选策略</p>
-                {strategyRecommendation.alternative_strategies.map((alt, i) => (
-                  <button
-                    key={i}
-                    onClick={() => {
-                      handleStrategyConfirmed(alt.strategy)
-                    }}
-                    className="block w-full text-left text-xs text-surface-300 hover:bg-white/5 rounded px-3 py-1.5 mb-1 transition-colors"
-                  >
-                    <span className="text-surface-400">
-                      {alt.strategy === 'sequential' ? '📋 顺序执行' :
-                       alt.strategy === 'hierarchical' ? '🏗️ 层级委派' :
-                       alt.strategy === 'discussion' ? '💬 圆桌讨论' : alt.strategy}
-                    </span>
-                    {' — '}{alt.reason}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Action buttons */}
-            <div className="flex gap-3">
-              <button
-                onClick={() => handleStrategyConfirmed()}
-                className="flex-1 px-4 py-2 bg-accent-cyan text-black font-medium rounded-lg hover:bg-accent-cyan/80 transition-colors text-sm"
-              >
-                确认使用推荐策略
-              </button>
-              <button
-                onClick={() => {
-                  setShowStrategyConfirm(false)
-                  setPendingStrategyConfig(null)
-                  setStrategyRecommendation(null)
-                }}
-                className="px-4 py-2 text-surface-400 hover:text-white transition-colors text-sm"
-              >
-                返回修改
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Open Project Dialog */}
       <OpenProjectDialog

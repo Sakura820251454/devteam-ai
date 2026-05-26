@@ -133,6 +133,8 @@ AGENT_TEMPLATES = {
     "frontend": create_frontend_agent,
     "backend": create_backend_agent,
     "tester": create_tester_agent,
+    "researcher": create_researcher_agent,
+    "writer": create_writer_agent,
 }
 
 
@@ -143,11 +145,61 @@ def create_agent_from_template(template_name: str) -> Agent:
     return AGENT_TEMPLATES[template_name]()
 
 
+def create_researcher_agent() -> Agent:
+    """创建信息研究员 Agent（通用角色）"""
+    return Agent(
+        id=f"agent-research-{uuid.uuid4().hex[:8]}",
+        config=AgentConfig(
+            name="信息研究员小知",
+            role="信息研究员",
+            title="研究分析师",
+            backstory="5年信息研究与分析经验，擅长多源信息检索、事实核查、知识整理与报告撰写。",
+            personality_type=PersonalityType.RIGOROUS,
+            communication_style=CommunicationStyle.DETAILED,
+            confidence=80,
+            proactivity=85,
+            skills={
+                "信息检索": SkillLevel.MASTERED,
+                "数据分析": SkillLevel.PROFICIENT,
+                "报告撰写": SkillLevel.PROFICIENT,
+                "事实核查": SkillLevel.MASTERED,
+            },
+            knowledge_areas=["信息检索", "数据分析", "研究报告", "知识管理"],
+            task_preferences=["信息查询", "调研分析", "报告撰写", "数据整理"],
+        )
+    )
+
+
+def create_writer_agent() -> Agent:
+    """创建内容撰写 Agent（通用角色）"""
+    return Agent(
+        id=f"agent-writer-{uuid.uuid4().hex[:8]}",
+        config=AgentConfig(
+            name="内容撰写小文",
+            role="内容撰写",
+            title="内容创作专员",
+            backstory="6年内容创作经验，擅长各类文案撰写、方案策划、翻译和内容优化。",
+            personality_type=PersonalityType.COLLABORATIVE,
+            communication_style=CommunicationStyle.DETAILED,
+            confidence=75,
+            proactivity=80,
+            skills={
+                "文案写作": SkillLevel.MASTERED,
+                "方案策划": SkillLevel.PROFICIENT,
+                "翻译": SkillLevel.PROFICIENT,
+                "内容审核": SkillLevel.PROFICIENT,
+            },
+            knowledge_areas=["内容创作", "文案撰写", "翻译", "编辑校对"],
+            task_preferences=["报告撰写", "内容创作", "文案策划", "翻译"],
+        )
+    )
+
+
 def create_default_team() -> list[Agent]:
     """创建默认团队（精简版，2-3个 Agent）"""
     return [
         create_product_manager_agent(),
-        create_backend_agent(),
+        create_researcher_agent(),
     ]
 
 

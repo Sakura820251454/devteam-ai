@@ -152,6 +152,33 @@ async def apply_pipeline_adjustment(request: ApplyAdjustmentRequest):
     return {"stages": stages}
 
 
+class UpdateStagesRequest(BaseModel):
+    stages: list[dict]
+    project_id: Optional[str] = None
+
+
+@router.put("/{pipeline_id}/stages")
+async def update_pipeline_stages(pipeline_id: str, request: UpdateStagesRequest):
+    """Persist adjusted pipeline stages to DB and workspace."""
+    from app.services.project.workspace_manager import workspace_manager
+
+    project_id = await pipeline_orchestrator.update_pipeline_stages(
+        pipeline_id, request.stages
+    )
+
+    effective_project_id = project_id or request.project_id
+    if effective_project_id:
+        try:
+            workspace_manager.update_stages(effective_project_id, request.stages)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to update workspace stages: {str(e)}",
+            )
+
+    return {"status": "ok", "stages": request.stages}
+
+
 # ========== /{pipeline_id} routes (MUST be after all static routes) ==========
 
 @router.get("/{pipeline_id}")
@@ -194,6 +221,24 @@ async def stop_pipeline(pipeline_id: str):
     return {"status": "stopped", "pipeline_id": pipeline_id}
 
 
+@router.post("/{pipeline_id}/close")
+async def close_pipeline(pipeline_id: str):
+    """关闭流水线：取消执行、保存状态为 PAUSED，用户可在之后恢复。"""
+    success = await pipeline_orchestrator.close_pipeline(pipeline_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to close pipeline")
+    return {"status": "closed", "pipeline_id": pipeline_id}
+
+
+@router.post("/{pipeline_id}/resume-from-close")
+async def resume_from_close(pipeline_id: str):
+    """从关闭状态恢复流水线执行。"""
+    success = await pipeline_orchestrator.resume_from_close(pipeline_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to resume pipeline from closed state")
+    return {"status": "resumed", "pipeline_id": pipeline_id}
+
+
 @router.post("/{pipeline_id}/intervene")
 async def intervene(pipeline_id: str, request: InterveneRequest):
     await pipeline_orchestrator.intervene(
@@ -220,7 +265,15 @@ async def get_pipeline_status(pipeline_id: str):
     if not pipeline:
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
-    running_tasks = agent_executor.get_running_tasks()
+    try:
+        running_tasks = agent_executor.get_running_tasks()
+    except Exception:
+        running_tasks = []
+
+    try:
+        is_paused = agent_executor.is_project_paused(pipeline.get("project_id", ""))
+    except Exception:
+        is_paused = False
 
     return {
         "pipeline_id": pipeline_id,
@@ -228,5 +281,5 @@ async def get_pipeline_status(pipeline_id: str):
         "current_stage": pipeline.get("current_stage"),
         "progress": pipeline.get("progress"),
         "running_tasks": running_tasks,
-        "is_paused": agent_executor.is_project_paused(pipeline.get("project_id", ""))
+        "is_paused": is_paused,
     }

@@ -603,6 +603,16 @@ export async function stopPipeline(pipelineId: string): Promise<void> {
   if (!response.ok) throw new Error('停止流水线失败')
 }
 
+export async function closePipeline(pipelineId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/pipelines/${pipelineId}/close`, { method: 'POST' })
+  if (!response.ok) throw new Error('关闭流水线失败')
+}
+
+export async function resumeFromClose(pipelineId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/pipelines/${pipelineId}/resume-from-close`, { method: 'POST' })
+  if (!response.ok) throw new Error('恢复流水线失败')
+}
+
 export async function createPipeline(projectId: string, name: string, agentIds: string[], teamConfig?: { strategy: string; coordinatorId?: string }): Promise<{ id: string; project_id: string; name: string; status: string }> {
   const response = await fetch(`${API_BASE}/pipelines/`, {
     method: 'POST',
@@ -617,6 +627,13 @@ export async function startPipeline(pipelineId: string): Promise<{ status: strin
   const response = await fetch(`${API_BASE}/pipelines/${pipelineId}/start`, { method: 'POST' })
   if (!response.ok) throw new Error('启动流水线失败')
   return response.json()
+}
+
+export async function getActivePipeline(projectId: string): Promise<Record<string, unknown> | null> {
+  const response = await fetch(`${API_BASE}/pipelines/active?project_id=${encodeURIComponent(projectId)}`)
+  if (!response.ok) throw new Error('获取活跃流水线失败')
+  const data = await response.json()
+  return data.pipeline || null
 }
 
 export async function getPipeline(pipelineId: string): Promise<Record<string, unknown>> {
@@ -638,6 +655,67 @@ export async function listTasks(projectId?: string, status?: string): Promise<Ar
   const qs = params.toString()
   const response = await fetch(`${API_BASE}/tasks/${qs ? '?' + qs : ''}`)
   if (!response.ok) throw new Error('获取任务列表失败')
+  return response.json()
+}
+
+// ========== Task Analysis API (Step 2) ==========
+
+export interface TaskAnalysis {
+  domain: string
+  task_type: string
+  sub_types: string[]
+  complexity: string
+  breakdown: string[]
+  key_challenge: string
+  analysis_summary: string
+}
+
+export async function analyzeTask(taskDescription: string): Promise<TaskAnalysis> {
+  const response = await fetch(`${API_BASE}/task-analysis/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_description: taskDescription }),
+  })
+  if (!response.ok) throw new Error('任务分析失败')
+  return response.json()
+}
+
+// ========== Team Suggestion API (Step 3) ==========
+
+export interface SuggestedRole {
+  role_name: string
+  responsibilities: string
+  required_capabilities: string[]
+  suggested_soul: string
+  matching_reason: string
+  priority: string
+}
+
+export interface StrategySuggestion {
+  recommended: string
+  reasoning: string
+  alternatives: Array<{ strategy: string; reason: string }>
+}
+
+export interface TeamSuggestion {
+  team_name: string
+  roles: SuggestedRole[]
+  strategy: StrategySuggestion
+  overall_rationale: string
+}
+
+export interface TeamSuggestionResponse {
+  analysis: TaskAnalysis
+  suggestion: TeamSuggestion
+}
+
+export async function suggestTeam(taskDescription: string): Promise<TeamSuggestionResponse> {
+  const response = await fetch(`${API_BASE}/team-suggestion/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_description: taskDescription }),
+  })
+  if (!response.ok) throw new Error('团队建议失败')
   return response.json()
 }
 
@@ -719,6 +797,20 @@ export async function applyPipelineAdjustment(
     body: JSON.stringify({ template_id: templateId, adjustments }),
   })
   if (!response.ok) throw new Error('应用调整失败')
+  return response.json()
+}
+
+export async function updatePipelineStages(
+  pipelineId: string,
+  stages: StageAdjustment[],
+  projectId?: string,
+): Promise<{ status: string; stages: StageAdjustment[] }> {
+  const response = await fetch(`${API_BASE}/pipelines/${pipelineId}/stages`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stages, project_id: projectId || undefined }),
+  })
+  if (!response.ok) throw new Error('保存流水线阶段失败')
   return response.json()
 }
 
@@ -864,5 +956,138 @@ export async function getProjectAgents(projectId: string): Promise<Array<Record<
 export async function getAgentProject(agentId: string): Promise<{ agent_id: string; project_id: string | null; status: string }> {
   const response = await fetch(`${API_BASE}/agents/${agentId}/project`)
   if (!response.ok) throw new Error('获取 Agent 项目失败')
+  return response.json()
+}
+
+// ========== Task Mutation API ==========
+
+export async function updateTask(
+  taskId: string,
+  updates: { title?: string; description?: string; priority?: string; tags?: string[] },
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/tasks/${taskId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  })
+  if (!response.ok) console.warn(`更新任务失败: ${response.statusText}`)
+}
+
+export async function changeTaskStatus(
+  taskId: string,
+  status: string,
+  changedBy: string = 'human',
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/tasks/${taskId}/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status, changed_by: changedBy }),
+  })
+  if (!response.ok) console.warn(`变更任务状态失败: ${response.statusText}`)
+}
+
+export async function assignTaskAgents(
+  taskId: string,
+  agentIds: string[],
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/tasks/${taskId}/assign`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent_ids: agentIds }),
+  })
+  if (!response.ok) console.warn(`分配任务失败: ${response.statusText}`)
+}
+
+// ========== Skills API (Phase 4 学习系统) ==========
+
+export interface SkillInfo {
+  id: string
+  name: string
+  category: string
+  success_rate: number
+  usage_count: number
+  trigger_keywords: string[]
+  description: string
+}
+
+export interface AgentLearningStats {
+  total_trajectories: number
+  successful_trajectories: number
+  success_rate: number
+  total_skills: number
+  skills_by_category: Record<string, { count: number; avg_confidence: number }>
+}
+
+export async function getAgentSkills(agentId: string): Promise<SkillInfo[]> {
+  const response = await fetch(`${API_BASE}/skills/agent/${agentId}/stats`)
+  if (!response.ok) throw new Error('获取技能统计失败')
+  return response.json()
+}
+
+export async function recommendSkills(
+  taskDescription: string,
+  agentId?: string,
+): Promise<Array<{ skill: SkillInfo; score: number; reason: string }>> {
+  const response = await fetch(`${API_BASE}/skills/recommend`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_description: taskDescription, agent_id: agentId || null }),
+  })
+  if (!response.ok) throw new Error('技能推荐失败')
+  return response.json()
+}
+
+// ========== Equipment API (Phase 5 装备系统) ==========
+
+export interface ToolInfo {
+  id: string
+  name: string
+  description: string
+  tool_type: string
+  cost: { cpu: number; memory: number; tokens: number }
+}
+
+export async function listTools(): Promise<ToolInfo[]> {
+  const response = await fetch(`${API_BASE}/equipment/tools`)
+  if (!response.ok) throw new Error('获取工具列表失败')
+  const data = await response.json()
+  return data.tools || data
+}
+
+export async function getAgentEquipment(agentId: string): Promise<ToolInfo[]> {
+  const response = await fetch(`${API_BASE}/equipment/agent/${agentId}/equipment`)
+  if (!response.ok) throw new Error('获取Agent装备失败')
+  const data = await response.json()
+  return data.tools || data
+}
+
+// ========== Agent Template API ==========
+
+export interface AgentTemplate {
+  id: string
+  name: string
+  type: string
+  description: string
+  capabilities: string[]
+  tags: string[]
+}
+
+export async function getAgentTemplates(): Promise<AgentTemplate[]> {
+  const response = await fetch(`${API_BASE}/agents/templates`)
+  if (!response.ok) throw new Error('获取Agent模板失败')
+  const data = await response.json()
+  return data.templates || data
+}
+
+export async function getPipelineTemplates(category?: string): Promise<{
+  templates: Array<{
+    id: string; name: string; description: string; category: string
+    suggested_strategy: string; stages: Array<Record<string, unknown>>
+  }>
+  categories: Array<{ key: string; label: string }>
+}> {
+  const params = category ? `?category=${encodeURIComponent(category)}` : ''
+  const response = await fetch(`${API_BASE}/pipelines/templates${params}`)
+  if (!response.ok) throw new Error('获取Pipeline模板失败')
   return response.json()
 }

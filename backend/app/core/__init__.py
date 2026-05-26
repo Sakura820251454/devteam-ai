@@ -1,9 +1,10 @@
+from typing import Union
 from app.core.config import get_settings, Settings, LLMMode
 from app.core.llm import LLMProvider, Message, LLMResponse
 from app.core.mock_llm import MockLLMProvider
 
 
-async def create_llm_provider() -> LLMProvider | MockLLMProvider:
+async def create_llm_provider() -> Union[LLMProvider, MockLLMProvider]:
     """根据配置创建 LLM Provider"""
     settings = get_settings()
     

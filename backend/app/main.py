@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from app.api import agents_router, chat_router, sessions_router, messages_router, speaking_router, tasks_router, projects_router, pipelines_router, memories_router, skills_router, equipment_router, knowledge_router, llm_router, security_router, arbitration_router, workspaces_router, settings_router, execution_router
+from app.api import agents_router, chat_router, sessions_router, messages_router, speaking_router, tasks_router, projects_router, pipelines_router, memories_router, skills_router, equipment_router, knowledge_router, llm_router, security_router, arbitration_router, workspaces_router, settings_router, execution_router, task_analysis_router, team_suggestion_router
 from app.core import get_settings
 from app.database import init_db, async_session_maker
 from app.services.equipment.equipment_init import init_default_tools
@@ -85,6 +85,8 @@ def create_app() -> FastAPI:
     app.include_router(workspaces_router)
     app.include_router(settings_router)
     app.include_router(execution_router)
+    app.include_router(task_analysis_router)
+    app.include_router(team_suggestion_router)
 
     @app.get("/")
     async def root():

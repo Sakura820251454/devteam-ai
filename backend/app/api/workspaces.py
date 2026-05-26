@@ -3,8 +3,38 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 
 from app.services.project.workspace_manager import workspace_manager
+from app.services.collaboration.pipeline_orchestrator import pipeline_orchestrator, PipelineStatus
 
 router = APIRouter(prefix="/api/workspaces", tags=["工作区管理"])
+
+
+def _sync_workspace_status(ws: Dict[str, Any]) -> Dict[str, Any]:
+    """用流水线实际状态纠正工作区过时的磁盘状态。"""
+    project_id = ws.get("id", "")
+    # 查找该项目的所有流水线，取最新状态
+    pipelines = pipeline_orchestrator.list_pipelines_by_project(project_id)
+    if not pipelines:
+        # 没有流水线记录 → 如果磁盘说 running，改为 idle
+        if ws.get("status") == "running":
+            ws["status"] = "idle"
+        return ws
+
+    # 用最新流水线状态覆盖
+    latest = pipelines[0]
+    pipeline_status = latest.get("status", "")
+    if pipeline_status == "failed":
+        ws["status"] = "failed"
+    elif pipeline_status == "paused":
+        ws["status"] = "paused"
+    elif pipeline_status == "completed":
+        ws["status"] = "completed"
+    elif pipeline_status == "running":
+        ws["status"] = "running"
+    # idle → 保持原样
+
+    if latest.get("current_stage"):
+        ws["current_stage"] = latest["current_stage"]
+    return ws
 
 
 class CreateWorkspaceRequest(BaseModel):
@@ -50,7 +80,9 @@ def create_workspace(request: CreateWorkspaceRequest):
 
 @router.get("/")
 def list_workspaces():
-    return {"workspaces": workspace_manager.list_workspaces()}
+    workspaces = workspace_manager.list_workspaces()
+    workspaces = [_sync_workspace_status(ws) for ws in workspaces]
+    return {"workspaces": workspaces}
 
 
 @router.get("/{project_id}")
@@ -58,7 +90,7 @@ def get_workspace(project_id: str):
     ws = workspace_manager.get_workspace(project_id)
     if not ws:
         raise HTTPException(status_code=404, detail="Workspace not found")
-    return ws
+    return _sync_workspace_status(ws)
 
 
 @router.post("/{project_id}/artifacts")

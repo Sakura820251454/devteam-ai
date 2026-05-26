@@ -236,7 +236,7 @@ async def clear_cost_records():
 
 @router.get("/costs/realtime", response_model=RealtimeCostSummary)
 async def get_realtime_costs(
-    period: str = Query("daily", description="周期", regex="^(hourly|daily|weekly|monthly)$")
+    period: str = Query("daily", description="周期", pattern="^(hourly|daily|weekly|monthly)$")
 ):
     summary = await cost_tracker.get_realtime_summary(period=period)
     return RealtimeCostSummary(**summary)
@@ -244,7 +244,7 @@ async def get_realtime_costs(
 
 @router.get("/costs/trend", response_model=List[CostTrendItem])
 async def get_cost_trend(
-    period: str = Query("daily", description="周期", regex="^(daily|weekly|monthly)$"),
+    period: str = Query("daily", description="周期", pattern="^(daily|weekly|monthly)$"),
     days: int = Query(30, ge=1, le=365, description="天数")
 ):
     trend = await cost_tracker.get_cost_trend(period=period, days=days)
@@ -253,7 +253,7 @@ async def get_cost_trend(
 
 @router.get("/costs/breakdown", response_model=CostBreakdownResponse)
 async def get_cost_breakdown(
-    group_by: str = Query("model", description="分组方式", regex="^(model|agent|provider|task)$")
+    group_by: str = Query("model", description="分组方式", pattern="^(model|agent|provider|task)$")
 ):
     breakdown = await cost_tracker.get_cost_breakdown(group_by=group_by)
     return CostBreakdownResponse(
@@ -311,7 +311,7 @@ async def get_token_summary(
 
 @router.get("/tokens/history", response_model=List[TokenHistoryItem])
 async def get_token_history(
-    period: str = Query("daily", description="周期", regex="^(hourly|daily|weekly|monthly)$"),
+    period: str = Query("daily", description="周期", pattern="^(hourly|daily|weekly|monthly)$"),
     days: int = Query(30, ge=1, le=365, description="天数"),
     agent_id: Optional[str] = Query(None, description="Agent ID"),
     model: Optional[str] = Query(None, description="模型名称")

@@ -6,10 +6,11 @@ DevTeam-AI is a multi-agent collaborative development platform. FastAPI backend 
 
 ## Development commands
 
-### Backend (Python 3.11+ / FastAPI)
+### Backend (Python 3.12 / FastAPI)
 
 ```bash
-uvicorn app.main:app --reload --port 8000
+# Python 3.12 at: C:\Users\AA\python-sdk\python3.12.9
+C:/Users/AA/python-sdk/python3.12.9/python.exe -m uvicorn app.main:app --reload --port 8000
 pytest tests/ -v              # LLM_MODE=mock required
 ruff check .
 ```
@@ -42,6 +43,10 @@ npm run docs:build
 - `backend/app/core/config.py` — Settings class
 - `frontend/vite.config.ts` — port, API proxy
 - `backend/agents/*/soul.md` — agent personas
+
+## Task persistence rule
+
+When working through a multi-phase plan with TaskCreate tasks, **do not abandon incomplete tasks** after finishing the first few. Before ending a session or reporting "done", always check TaskList and explicitly report which tasks were completed and which remain. If the user interrupts with a new direction mid-plan, note which tasks are paused and will need resumption. This prevents half-finished implementations where earlier phases are done but later phases are forgotten.
 
 ## Prompt management
 

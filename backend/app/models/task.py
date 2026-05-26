@@ -67,9 +67,9 @@ class Task(BaseModel):
             TaskStatus.BACKLOG: [TaskStatus.TODO, TaskStatus.BLOCKED, TaskStatus.CANCELLED],
             TaskStatus.TODO: [TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED, TaskStatus.BACKLOG, TaskStatus.CANCELLED],
             TaskStatus.BLOCKED: [TaskStatus.TODO, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED],
-            TaskStatus.IN_PROGRESS: [TaskStatus.REVIEW, TaskStatus.PAUSED, TaskStatus.BLOCKED, TaskStatus.TODO],
+            TaskStatus.IN_PROGRESS: [TaskStatus.REVIEW, TaskStatus.PAUSED, TaskStatus.BLOCKED, TaskStatus.CANCELLED],
             TaskStatus.REVIEW: [TaskStatus.DONE, TaskStatus.IN_PROGRESS],
-            TaskStatus.PAUSED: [TaskStatus.IN_PROGRESS, TaskStatus.TODO],
+            TaskStatus.PAUSED: [TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED],
             TaskStatus.DONE: [TaskStatus.REVIEW],
             TaskStatus.CANCELLED: [TaskStatus.BACKLOG],
         }

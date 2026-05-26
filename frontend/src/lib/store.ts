@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { createWorkspace, type TaskExecutionStatus, type StuckTaskInfo, type StrategyRecommendation } from './api'
+import { createWorkspace, type TaskExecutionStatus, type StuckTaskInfo } from './api'
 
 export interface LLMConfig {
   provider: string
@@ -45,6 +45,7 @@ export interface Task {
   description: string
   status: string
   priority: string
+  riskLevel?: string
   stage: string
   assignedAgents: string[]
   createdBy: string
@@ -52,6 +53,9 @@ export interface Task {
   tags: string[]
   createdAt: string
   updatedAt: string
+  approvalRequired?: boolean
+  approvedBy?: string | null
+  approvedAt?: string | null
 }
 
 export interface TimelineEvent {
@@ -157,10 +161,12 @@ interface WorkspaceState {
   setPipeline: (projectId: string, pipeline: Pipeline) => void
   updatePipelineStage: (projectId: string, stageKey: string, updates: Partial<PipelineStage>) => void
   setTasks: (projectId: string, tasks: Task[]) => void
+  updateTask: (projectId: string, taskId: string, updates: Partial<Task>) => void
   setTasksLoading: (projectId: string, loading: boolean) => void
   setAgents: (projectId: string, agents: Agent[]) => void
   updateAgentStatus: (projectId: string, agentId: string, status: Agent['status']) => void
   updateAgent: (projectId: string, agentId: string, updates: Partial<Agent>) => void
+  replaceAgent: (projectId: string, oldAgentId: string, newAgent: Agent) => void
   addLog: (projectId: string, log: Omit<LogEntry, 'id' | 'timestamp'>) => void
   addLogs: (projectId: string, logs: Omit<LogEntry, 'id' | 'timestamp'>[]) => void
   clearLogs: (projectId: string) => void
@@ -179,6 +185,7 @@ interface WorkspaceState {
   startProject: (name: string, description: string, customAgents?: Agent[], teamConfig?: { strategy: string; coordinatorId?: string }, template?: { id: string; name: string; stages: Array<{ key: string; label: string; expected_artifact: string; parallel_group: string | null }> } | null) => void
   restoreProjectFromWorkspace: (workspace: import('./api').WorkspaceInfo) => void
   resetProject: () => void
+  resumeProject: (projectId: string, pipelineId: string) => Promise<void>
   teamConfigs: Record<string, { strategy: string; coordinatorId?: string } | null>
 
   // Real backend integration
@@ -186,10 +193,8 @@ interface WorkspaceState {
   startPolling: (projectId: string, pipelineId: string) => void
   stopPolling: (projectId: string) => void
 
-  // Strategy recommendation
-  strategyRecommendation: StrategyRecommendation | null
-  setStrategyRecommendation: (rec: StrategyRecommendation | null) => void
-  fetchStrategyRecommendation: (projectName: string, projectDescription: string, agentIds: string[]) => Promise<void>
+  // Team suggestion (Step 2+3 flow)
+  fetchTeamSuggestion: (taskDescription: string) => Promise<import('./api').TeamSuggestionResponse | null>
 }
 
 // Per-project counters for ID generation
@@ -237,8 +242,18 @@ export const useStore = create<WorkspaceState>((set) => ({
   terminalExpanded: false,
   terminalFullscreen: false,
 
-  strategyRecommendation: null,
-  setStrategyRecommendation: (rec) => set({ strategyRecommendation: rec }),
+  strategyRecommendation: null as any, // kept for backward compat, use teamSuggestion instead
+
+  // Team suggestion (async, not stored in state — components manage it locally)
+  fetchTeamSuggestion: async (taskDescription) => {
+    try {
+      const { suggestTeam } = await import('./api')
+      return await suggestTeam(taskDescription)
+    } catch (err) {
+      console.warn('团队建议失败:', err)
+      return null
+    }
+  },
 
   setSidePanelOpen: (open) => set({ sidePanelOpen: open }),
   setSidePanelTab: (tab) => set({ sidePanelTab: tab }),
@@ -297,7 +312,24 @@ export const useStore = create<WorkspaceState>((set) => ({
 
   switchProject: (projectId) => set({ activeProjectId: projectId }),
 
-  closeProject: (projectId) =>
+  closeProject: (projectId) => {
+    const state = useStore.getState()
+    // 停止轮询
+    state.stopPolling(projectId)
+
+    // 真实模式：通知后端关闭流水线
+    if (state.llmMode === 'real') {
+      const pipeline = state.pipelines[projectId]
+      if (pipeline?.id && (pipeline.status === 'running' || pipeline.status === 'paused')) {
+        import('./api').then(({ closePipeline }) => {
+          closePipeline(pipeline.id).catch(err =>
+            console.warn('关闭流水线失败:', err)
+          )
+        })
+      }
+    }
+
+    // 清除客户端状态
     set((state) => {
       const newProjects = state.projects.filter((p) => p.id !== projectId)
       const newActiveId = state.activeProjectId === projectId
@@ -339,7 +371,8 @@ export const useStore = create<WorkspaceState>((set) => ({
         stuckPollingByProject: newStuckPolling,
         teamConfigs: newTeamConfigs,
       }
-    }),
+    })
+  },
 
   updateProjectProgress: (projectId, progress) =>
     set((state) => ({
@@ -378,6 +411,19 @@ export const useStore = create<WorkspaceState>((set) => ({
       ),
     })),
 
+  updateTask: (projectId, taskId, updates) =>
+    set((state) => {
+      const tasks = state.tasksByProject[projectId] || []
+      return {
+        tasksByProject: {
+          ...state.tasksByProject,
+          [projectId]: tasks.map((t) =>
+            t.id === taskId ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t,
+          ),
+        },
+      }
+    }),
+
   setTasksLoading: (projectId, loading) =>
     set((state) => ({
       tasksLoadingByProject: { ...state.tasksLoadingByProject, [projectId]: loading },
@@ -410,6 +456,18 @@ export const useStore = create<WorkspaceState>((set) => ({
           ...state.agentsByProject,
           [projectId]: agents.map((a) => (a.id === agentId ? { ...a, ...updates } : a)),
         },
+      }
+    }),
+
+  replaceAgent: (projectId, oldAgentId, newAgent) =>
+    set((state) => {
+      const agents = state.agentsByProject[projectId] || []
+      const idx = agents.findIndex((a) => a.id === oldAgentId)
+      if (idx === -1) return state
+      const updated = [...agents]
+      updated[idx] = { ...newAgent, status: 'idle' as const }
+      return {
+        agentsByProject: { ...state.agentsByProject, [projectId]: updated },
       }
     }),
 
@@ -842,25 +900,7 @@ export const useStore = create<WorkspaceState>((set) => ({
     useStore.getState().startPolling(realProjectId, realPipelineId)
   },
 
-  fetchStrategyRecommendation: async (projectName, projectDescription, agentIds) => {
-    try {
-      const { recommendStrategy } = await import('./api')
-      const rec = await recommendStrategy(projectName, projectDescription, agentIds, projectDescription)
-      set({ strategyRecommendation: rec })
-    } catch (err) {
-      console.warn('策略推荐失败:', err)
-      // 默认回退到 sequential
-      set({
-        strategyRecommendation: {
-          recommended_strategy: 'sequential',
-          confidence: 0,
-          reasoning: '推荐服务不可用，默认使用顺序执行策略',
-          suggested_coordinator: null,
-          alternative_strategies: [],
-        },
-      })
-    }
-  },
+  // Deprecated: strategy recommendation is now part of team suggestion (Step 3)
 
   startPolling: (projectId, pipelineId) => {
     // Clear any existing poll for this project
@@ -969,13 +1009,22 @@ export const useStore = create<WorkspaceState>((set) => ({
               description: t.description || '',
               status: t.status || 'backlog',
               priority: t.priority || 'medium',
-              stage: t.phase || 'development',
+              riskLevel: t.risk_level || 'low',
+              stage: t.phase || 'execution',
               assignedAgents: Array.isArray(t.assigned_agents) ? t.assigned_agents : [],
               createdBy: t.created_by || 'system',
               tags: Array.isArray(t.tags) ? t.tags : [],
-              statusHistory: [],
+              statusHistory: Array.isArray(t.history) ? t.history.map((h: any) => ({
+                from: h.from || '',
+                to: h.to || '',
+                timestamp: h.timestamp || h.changed_at || '',
+                by: h.by || h.changed_by || 'system',
+              })) : [],
               createdAt: t.created_at || new Date().toISOString(),
               updatedAt: t.updated_at || new Date().toISOString(),
+              approvalRequired: t.approval_required || false,
+              approvedBy: t.approved_by || null,
+              approvedAt: t.approved_at || null,
             }))
             // Always update tasks to reflect status changes
             const currentTasks = useStore.getState().tasksByProject[projectId] || []
@@ -992,6 +1041,46 @@ export const useStore = create<WorkspaceState>((set) => ({
           }
         } catch {
           // Task fetch can fail silently
+        }
+
+        // Derive agent statuses from task assignments
+        try {
+          const currentTasks = useStore.getState().tasksByProject[projectId] || []
+          const currentAgents = useStore.getState().agentsByProject[projectId] || []
+          if (currentTasks.length > 0 && currentAgents.length > 0) {
+            const agentStatuses: Record<string, Agent['status']> = {}
+            for (const agent of currentAgents) {
+              const agentTasks = currentTasks.filter(t => t.assignedAgents.includes(agent.id))
+              if (agentTasks.some(t => t.status === 'in_progress')) {
+                agentStatuses[agent.id] = 'working'
+              } else if (agentTasks.some(t => t.status === 'blocked')) {
+                agentStatuses[agent.id] = 'blocked'
+              } else if (agentTasks.some(t => t.status === 'review')) {
+                agentStatuses[agent.id] = 'thinking'
+              } else if (agentTasks.some(t => t.status === 'todo')) {
+                agentStatuses[agent.id] = 'waiting'
+              } else {
+                agentStatuses[agent.id] = 'idle'
+              }
+            }
+            // Only update if anything changed
+            const changed = Object.entries(agentStatuses).some(
+              ([id, status]) => currentAgents.find(a => a.id === id)?.status !== status
+            )
+            if (changed) {
+              set((s) => ({
+                agentsByProject: {
+                  ...s.agentsByProject,
+                  [projectId]: currentAgents.map(a => ({
+                    ...a,
+                    status: agentStatuses[a.id] || a.status,
+                  })),
+                },
+              }))
+            }
+          }
+        } catch {
+          // Agent status derivation failure is non-critical
         }
 
         // If pipeline completed or failed, stop polling
@@ -1025,8 +1114,20 @@ export const useStore = create<WorkspaceState>((set) => ({
   resetProject: () => {
     const state = useStore.getState()
     if (state.activeProjectId) {
-      state.stopPolling(state.activeProjectId)
       state.closeProject(state.activeProjectId)
+    }
+  },
+
+  resumeProject: async (projectId: string, pipelineId: string) => {
+    const state = useStore.getState()
+    if (state.llmMode === 'real') {
+      try {
+        const { resumeFromClose } = await import('./api')
+        await resumeFromClose(pipelineId)
+        state.startPolling(projectId, pipelineId)
+      } catch (err) {
+        console.error('恢复流水线失败:', err)
+      }
     }
   },
 }))

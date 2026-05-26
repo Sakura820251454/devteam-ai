@@ -412,6 +412,7 @@ class AgentService:
         agent = self._agents.get(agent_id)
         if not agent:
             return False
+        agent_name = agent.get("name", agent_id)
         current = agent.get("assigned_project")
         if current == project_id:
             return True
@@ -424,6 +425,15 @@ class AgentService:
             "released_at": None
         })
         self._project_agents.setdefault(project_id, set()).add(agent_id)
+
+        # 记录分配日志
+        try:
+            from app.services.project.workspace_manager import workspace_manager
+            workspace_manager.add_log(project_id, "info", "agent_service",
+                f"Agent [{agent_name}] 已分配到项目 (角色: {agent.get('type', '未指定')})")
+        except Exception:
+            pass
+
         return True
 
     def release_agent_from_project(self, agent_id: str, project_id: str) -> bool:
@@ -431,6 +441,7 @@ class AgentService:
         agent = self._agents.get(agent_id)
         if not agent or agent.get("assigned_project") != project_id:
             return False
+        agent_name = agent.get("name", agent_id)
         agent["assigned_project"] = None
         # Update history
         for entry in agent.get("project_history", []):
@@ -439,6 +450,15 @@ class AgentService:
         self._project_agents.get(project_id, set()).discard(agent_id)
         if project_id in self._project_agents and not self._project_agents[project_id]:
             del self._project_agents[project_id]
+
+        # 记录释放日志
+        try:
+            from app.services.project.workspace_manager import workspace_manager
+            workspace_manager.add_log(project_id, "info", "agent_service",
+                f"Agent [{agent_name}] 已从项目释放")
+        except Exception:
+            pass
+
         return True
 
     def get_project_agents(self, project_id: str) -> List[Dict]:

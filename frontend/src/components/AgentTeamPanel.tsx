@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useStore } from '../lib/store'
 import type { Agent } from '../lib/store'
 import { startSimulation } from '../lib/simulation'
-import { getAvailableModels, getAvailableProviders } from '../lib/api'
+import { getAvailableModels, getAvailableProviders, assignAgentToProject, releaseAgentFromProject, getAvailableAgents } from '../lib/api'
 import type { LLMModelInfo } from '../lib/api'
 import AgentPoolModal from './AgentPoolModal'
 
@@ -63,6 +63,87 @@ export default function AgentTeamPanel({ projectId }: Props) {
   const [apiAgents, setApiAgents] = useState<Agent[] | null>(null)
   const [agentsLoading, setAgentsLoading] = useState(false)
   const stopSimRef = useRef<(() => void) | null>(null)
+
+  // Agent replacement state
+  const replaceAgent = useStore((s) => s.replaceAgent)
+  const addLog = useStore((s) => s.addLog)
+  const [replaceTarget, setReplaceTarget] = useState<string | null>(null)
+  const [availableReplace, setAvailableReplace] = useState<Agent[]>([])
+  const [replaceLoading, setReplaceLoading] = useState(false)
+  const replaceRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!replaceTarget) return
+    const handler = (e: MouseEvent) => {
+      if (replaceRef.current && !replaceRef.current.contains(e.target as Node)) {
+        setReplaceTarget(null)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [replaceTarget])
+
+  const handleStartReplace = async (agentId: string) => {
+    setReplaceTarget(agentId)
+    setReplaceLoading(true)
+    try {
+      // Fetch available agents from backend (not in any project)
+      const raw = await getAvailableAgents()
+      const mapped: Agent[] = raw.map((a: any) => ({
+        id: a.id,
+        name: a.name || a.id,
+        role: a.role || a.type || '团队成员',
+        status: 'idle' as const,
+        avatarColor: a.avatar_color || '#8b949e',
+        description: a.description || '',
+        llm_config: a.llm_config,
+      }))
+      // Filter out agents already in the project
+      const currentIds = new Set(agents.map(a => a.id))
+      setAvailableReplace(mapped.filter(a => !currentIds.has(a.id)))
+    } catch {
+      // Fallback: use apiAgents if available
+      const currentIds = new Set(agents.map(a => a.id))
+      setAvailableReplace((apiAgents || []).filter(a => !currentIds.has(a.id)))
+    } finally {
+      setReplaceLoading(false)
+    }
+  }
+
+  const handleConfirmReplace = async (newAgent: Agent) => {
+    const oldId = replaceTarget
+    if (!oldId || !pid) return
+    const oldAgent = agents.find(a => a.id === oldId)
+
+    // Release old agent from project (fire-and-forget)
+    releaseAgentFromProject(oldId, pid).catch(() => {})
+
+    // Assign new agent to project (fire-and-forget)
+    assignAgentToProject(newAgent.id, pid).catch(() => {})
+
+    // Update store
+    replaceAgent(pid, oldId, newAgent)
+
+    // Update assigned tasks
+    const tasks = useStore.getState().tasksByProject[pid] || []
+    for (const task of tasks) {
+      if (task.assignedAgents.includes(oldId)) {
+        const next = task.assignedAgents.map(a => a === oldId ? newAgent.id : a)
+        useStore.getState().updateTask(pid, task.id, {
+          assignedAgents: next,
+          updatedAt: new Date().toISOString(),
+        })
+      }
+    }
+
+    addLog(pid, {
+      level: 'info',
+      source: 'human',
+      message: `替换 Agent: ${oldAgent?.name || oldId} → ${newAgent.name}`,
+    })
+
+    setReplaceTarget(null)
+  }
 
   // Fetch real agents from backend when no project is active
   useEffect(() => {
@@ -230,10 +311,45 @@ export default function AgentTeamPanel({ projectId }: Props) {
                   </div>
                 </div>
 
-                <span className="text-surface-600 group-hover:text-accent-cyan text-sm opacity-0 group-hover:opacity-100 transition-all">
-                  &#9993;
+                <span
+                  className="text-surface-600 group-hover:text-accent-cyan text-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                  onClick={(e) => { e.stopPropagation(); handleStartReplace(agent.id) }}
+                  title="替换 Agent"
+                >
+                  &#8646;
                 </span>
               </div>
+
+              {/* Agent replace popover */}
+              {replaceTarget === agent.id && (
+                <div ref={replaceRef} className="mt-2 p-2 bg-gray-800 border border-gray-600 rounded-lg space-y-1.5">
+                  <div className="text-xs text-surface-400">选择替换者：</div>
+                  {replaceLoading ? (
+                    <div className="flex items-center gap-2 py-1 text-xs text-surface-500">
+                      <div className="w-3 h-3 border-2 border-accent-cyan/30 border-t-accent-cyan rounded-full animate-spin" />
+                      加载可用 Agent...
+                    </div>
+                  ) : availableReplace.length === 0 ? (
+                    <div className="text-xs text-surface-500 py-1">暂无可用 Agent</div>
+                  ) : (
+                    availableReplace.slice(0, 8).map((a) => (
+                      <button
+                        key={a.id}
+                        onClick={(e) => { e.stopPropagation(); handleConfirmReplace(a) }}
+                        className="w-full text-left px-2 py-1 rounded hover:bg-white/5 text-xs text-surface-200 flex items-center gap-2 transition-colors"
+                      >
+                        <div
+                          className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold"
+                          style={{ backgroundColor: `${a.avatarColor}30`, color: a.avatarColor }}
+                        >
+                          {a.name.substring(0, 2)}
+                        </div>
+                        <span>{a.name}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
 
               {/* Inline LLM editor popover */}
               {isEditingLlm && (

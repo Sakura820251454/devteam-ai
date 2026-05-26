@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useStore } from '../lib/store'
 import type { PipelineStage, Agent, Pipeline } from '../lib/store'
-import { adjustPipelineTemplate } from '../lib/api'
+import { adjustPipelineTemplate, applyPipelineAdjustment, updatePipelineStages } from '../lib/api'
 import type { AdjustmentSuggestions } from '../lib/api'
 import TaskBoard from './TaskBoard'
 
@@ -207,6 +207,53 @@ export default function PipelineView({ projectId, onCreateProject, onOpenExample
   const [showAdjust, setShowAdjust] = useState(false)
   const [adjustLoading, setAdjustLoading] = useState(false)
   const [adjustResult, setAdjustResult] = useState<AdjustmentSuggestions | null>(null)
+  const [adjustApplied, setAdjustApplied] = useState(false)
+  const [applyLoading, setApplyLoading] = useState(false)
+
+  const setPipeline = useStore((s) => s.setPipeline)
+
+  // Reset adjustment state when switching projects
+  useEffect(() => {
+    setAdjustResult(null)
+    setShowAdjust(false)
+    setAdjustApplied(false)
+  }, [pid])
+
+  const handleApplyAdjustment = async () => {
+    if (!pipeline || !adjustResult?.final_stages?.length) return
+    setApplyLoading(true)
+    try {
+      // Call backend to validate/normalize the stages
+      const result = await applyPipelineAdjustment('custom', adjustResult as unknown as Record<string, unknown>)
+      const newStages: PipelineStage[] = result.stages.map((s, i) => ({
+        key: s.key,
+        label: s.label,
+        status: (i === 0 ? 'active' : 'pending') as PipelineStage['status'],
+        assignedAgents: pipeline.stages[0]?.assignedAgents || agents.map(a => a.id),
+        artifacts: s.expected_artifact ? [s.expected_artifact] : [],
+        startedAt: i === 0 ? new Date().toISOString() : undefined,
+      }))
+      const updatedPipeline: Pipeline = {
+        ...pipeline,
+        currentStage: newStages[0]?.key || pipeline.currentStage,
+        stages: newStages,
+        progress: 0,
+      }
+      setPipeline(pid, updatedPipeline)
+      // Persist adjusted stages to backend (DB + workspace)
+      try {
+        await updatePipelineStages(pipeline.id, result.stages, pid)
+      } catch {
+        addLog(pid, { level: 'warn', source: 'pipeline', message: '后端保存阶段失败，页面刷新后需重新调整' })
+      }
+      addLog(pid, { level: 'success', source: 'pipeline', message: `已应用 AI 建议: Pipeline 阶段调整为 ${newStages.map(s => s.label).join(' → ')}` })
+      setAdjustApplied(true)
+    } catch (err) {
+      addLog(pid, { level: 'error', source: 'pipeline', message: `应用阶段调整失败: ${err instanceof Error ? err.message : '未知错误'}` })
+    } finally {
+      setApplyLoading(false)
+    }
+  }
 
   const handleStageClick = (stageKey: string) => {
     if (selectedStage === stageKey) {
@@ -275,6 +322,24 @@ export default function PipelineView({ projectId, onCreateProject, onOpenExample
             <div className="h-full bg-accent-cyan rounded-full transition-all duration-700" style={{ width: `${Math.round(pipeline.progress * 100)}%` }} />
           </div>
           <span className="text-sm text-surface-500 font-mono">{Math.round(pipeline.progress * 100)}%</span>
+          {pipeline.status === 'paused' && (
+            <button
+              onClick={async () => {
+                const { resumeFromClose } = await import('../lib/api')
+                const { useStore } = await import('../lib/store')
+                const state = useStore.getState()
+                try {
+                  await resumeFromClose(pipeline.id)
+                  state.startPolling(pid, pipeline.id)
+                } catch (err) {
+                  console.error('恢复流水线失败:', err)
+                }
+              }}
+              className="text-xs px-3 py-1.5 bg-accent-green/20 text-accent-green rounded-lg font-medium hover:bg-accent-green/30 transition-colors"
+            >
+              ▶ 恢复执行
+            </button>
+          )}
           {pipeline.currentStage === pipeline.stages[0]?.key && (
             <button
               onClick={async () => {
@@ -348,9 +413,20 @@ export default function PipelineView({ projectId, onCreateProject, onOpenExample
                   ))}
                 </div>
               )}
-              <span className="text-xs text-surface-500">
-                LLM 建议作为参考，可在后续开发中手动调整阶段。此功能将在 Phase 4 完整实现中支持一键应用。
-              </span>
+              {adjustApplied ? (
+                <span className="text-xs text-accent-green">已应用 AI 建议，Pipeline 阶段已更新。</span>
+              ) : (
+                <div className="flex items-center gap-2 mt-1">
+                  <button
+                    onClick={handleApplyAdjustment}
+                    disabled={applyLoading || !adjustResult?.final_stages?.length}
+                    className="text-xs px-2.5 py-1 rounded bg-accent-cyan/20 text-accent-cyan hover:bg-accent-cyan/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {applyLoading ? '应用中...' : '应用建议'}
+                  </button>
+                  <span className="text-xs text-surface-500">点击将 AI 建议的阶段应用到当前 Pipeline</span>
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-sm text-surface-400">LLM 分析失败，请稍后重试</div>

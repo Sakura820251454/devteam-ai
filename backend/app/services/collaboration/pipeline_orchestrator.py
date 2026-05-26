@@ -1,4 +1,5 @@
 import asyncio
+import traceback
 import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Callable, Any
@@ -55,6 +56,7 @@ class Pipeline:
         self.stop_requested: bool = False
         self.team_config: Dict[str, Any] = {}
         self.agent_roles: Dict[str, str] = {}  # agent_id -> inferred role label
+        self.stages: List[Dict[str, Any]] = []
         self._assignment_queue: List[str] = []  # FIFO queue for round-robin assignment
 
     def add_log(self, stage: str, message: str, level: str = "info") -> None:
@@ -94,6 +96,18 @@ class PipelineOrchestrator:
                 self._pipelines[pid] = pipeline
                 if pipeline.status == PipelineStatus.RUNNING:
                     self._active_pipelines[pipeline.project_id] = pid
+
+    async def update_pipeline_stages(
+        self, pipeline_id: str, stages: List[Dict[str, Any]]
+    ) -> Optional[str]:
+        """Update pipeline stages in memory and DB. Returns project_id if found."""
+        pipeline = self._pipelines.get(pipeline_id)
+        if not pipeline:
+            return None
+        pipeline.stages = stages
+        if self._db:
+            await self._db.save(pipeline)
+        return pipeline.project_id
 
     async def create_pipeline(
         self,
@@ -141,11 +155,12 @@ class PipelineOrchestrator:
                 return False
 
             pipeline.status = PipelineStatus.RUNNING
-            pipeline.started_at = datetime.now()
-            pipeline.current_stage = PipelineStage.REQUIREMENT_ANALYSIS
+            pipeline.started_at = pipeline.started_at or datetime.now()
+            pipeline.current_stage = pipeline.current_stage  # keep stage if resuming
             self._active_pipelines[pipeline.project_id] = pipeline_id
 
-            asyncio.create_task(self._run_pipeline(pipeline_id))
+            task = asyncio.create_task(self._run_pipeline(pipeline_id))
+            self._execution_tasks[pipeline_id] = task
             if self._db:
                 await self._db.save(pipeline)
             return True
@@ -160,7 +175,13 @@ class PipelineOrchestrator:
             return
 
         try:
-            pipeline.add_log("init", f"流水线启动，项目: {project.name}")
+            agent_names = []
+            for aid in pipeline.agents:
+                a = agent_service.get_agent(aid)
+                agent_names.append(a.get("name", aid) if a else aid)
+            pipeline.add_log("init",
+                f"流水线启动 — 项目: {project.name}, Agent: {agent_names}, "
+                f"任务数: {len(pipeline.task_ids)}, 阶段: {pipeline.current_stage.value}")
 
             # 确保 workspace 存在
             from app.services.project.workspace_manager import workspace_manager
@@ -176,9 +197,15 @@ class PipelineOrchestrator:
             except Exception as e:
                 pipeline.add_log("init", f"Workspace 创建失败: {e}", "warning")
 
-            await self._stage_requirement_analysis(pipeline)
-            if self._db:
-                await self._db.save(pipeline)
+            # 根据 current_stage 决定从哪个阶段开始（支持从保存状态恢复）
+            if pipeline.current_stage in (PipelineStage.REQUIREMENT_ANALYSIS,):
+                if pipeline.context.get("requirement_analysis"):
+                    pipeline.add_log("requirement_analysis", "使用已保存的需求分析结果，跳过执行")
+                    pipeline.progress = max(pipeline.progress, 0.2)
+                else:
+                    await self._stage_requirement_analysis(pipeline)
+                    if self._db:
+                        await self._db.save(pipeline)
 
             if pipeline.stop_requested:
                 pipeline.status = PipelineStatus.FAILED
@@ -187,9 +214,14 @@ class PipelineOrchestrator:
                     await self._db.save(pipeline)
                 return
 
-            await self._stage_task_breakdown(pipeline, project)
-            if self._db:
-                await self._db.save(pipeline)
+            if pipeline.current_stage in (PipelineStage.REQUIREMENT_ANALYSIS, PipelineStage.TASK_BREAKDOWN):
+                if pipeline.context.get("task_breakdown") and pipeline.task_ids:
+                    pipeline.add_log("task_breakdown", f"使用已保存的任务分解（{len(pipeline.task_ids)} 个任务），跳过执行")
+                    pipeline.progress = max(pipeline.progress, 0.4)
+                else:
+                    await self._stage_task_breakdown(pipeline, project)
+                    if self._db:
+                        await self._db.save(pipeline)
 
             if pipeline.stop_requested:
                 pipeline.status = PipelineStatus.FAILED
@@ -198,34 +230,61 @@ class PipelineOrchestrator:
                     await self._db.save(pipeline)
                 return
 
-            await self._stage_task_execution(pipeline)
-            if self._db:
-                await self._db.save(pipeline)
+            if pipeline.current_stage in (
+                PipelineStage.REQUIREMENT_ANALYSIS, PipelineStage.TASK_BREAKDOWN, PipelineStage.TASK_EXECUTION
+            ):
+                await self._stage_task_execution(pipeline)
+                if self._db:
+                    await self._db.save(pipeline)
 
             if pipeline.stop_requested:
                 pipeline.status = PipelineStatus.FAILED
                 self._cleanup_pipeline_agents(pipeline)
+                if self._db:
+                    await self._db.save(pipeline)
+                return
+
+            if pipeline.paused:
+                pipeline.add_log("task_execution", "流水线已暂停，保存状态", "info")
                 if self._db:
                     await self._db.save(pipeline)
                 return
 
             await self._stage_review(pipeline)
 
-            pipeline.status = PipelineStatus.COMPLETED
-            pipeline.completed_at = datetime.now()
-            pipeline.current_stage = PipelineStage.COMPLETED
+            # _stage_review 可能在无完成任务时设置 FAILED，此时跳过完成标记
+            if pipeline.status != PipelineStatus.FAILED:
+                pipeline.status = PipelineStatus.COMPLETED
+                pipeline.completed_at = datetime.now()
+                pipeline.current_stage = PipelineStage.COMPLETED
 
-            await project_service.update_project(pipeline.project_id, status="completed")
+                await project_service.update_project(pipeline.project_id, status="completed")
             if self._db:
                 await self._db.save(pipeline)
 
+            # Step 10: 触发学习闭环
+            try:
+                await self._trigger_learning_cycle(pipeline)
+            except Exception as e:
+                pipeline.add_log("learning", f"学习闭环执行失败: {e}", "warning")
+
+        except asyncio.CancelledError:
+            pipeline.add_log("control", "流水线任务被取消（用户关闭项目）", "info")
+            if self._db:
+                await self._db.save(pipeline)
+            raise
         except Exception as e:
             pipeline.status = PipelineStatus.FAILED
-            pipeline.add_log("error", f"Pipeline failed: {str(e)}", "error")
+            tb = traceback.format_exc()
+            pipeline.add_log("error", f"流水线异常终止 — {str(e)}\n{tb[-500:]}", "error")
+            if self._db:
+                await self._db.save(pipeline)
             raise
         finally:
-            self._cleanup_pipeline_agents(pipeline)
-            self._active_pipelines.pop(pipeline.project_id, None)
+            if not pipeline.paused:
+                self._cleanup_pipeline_agents(pipeline)
+                self._active_pipelines.pop(pipeline.project_id, None)
+            self._execution_tasks.pop(pipeline_id, None)
 
     def _cleanup_pipeline_agents(self, pipeline: Pipeline) -> None:
         for agent_id in pipeline.agents:
@@ -233,30 +292,23 @@ class PipelineOrchestrator:
 
     async def _stage_requirement_analysis(self, pipeline: Pipeline) -> None:
         pipeline.current_stage = PipelineStage.REQUIREMENT_ANALYSIS
-        pipeline.add_log("requirement_analysis", "启动多 Agent 需求分析...")
+        self._update_stage_status(pipeline, "requirement_analysis", "active")
 
         project = project_service.get_project(pipeline.project_id)
         if not project:
             return
 
-        msg = Message(
-            sender_id="system",
-            sender_name="Pipeline",
-            channel=f"project:{pipeline.project_id}",
-            content=f"🔍 启动多 Agent 需求分析: {project.requirements[:200]}...",
-            message_type=MessageType.SYSTEM
-        )
-        await message_bus.broadcast(msg)
-
-        speaking_controller.set_mode(pipeline.id, SpeakingMode.PRIORITY_BASED)
-        speaking_controller.set_token_budget(pipeline.id, 100000)
-
         # 选择参与分析的 agent（PM + 架构师优先）
         participants = self._select_stage_participants(pipeline, ["PM", "架构师"])
+        participant_names = [pipeline.agent_roles.get(aid, aid) for aid in participants]
+
+        pipeline.add_log("requirement_analysis",
+            f"需求分析启动 — 参与者({len(participants)}): {participant_names}, "
+            f"需求: {project.requirements[:150]}...")
 
         if len(participants) < 2:
-            # 不足 2 人 → 回退单 LLM
-            pipeline.add_log("requirement_analysis", "参与讨论的 Agent 不足，回退到单 LLM 分析")
+            pipeline.add_log("requirement_analysis",
+                f"参与者不足(仅{len(participants)}人，需>=2)，回退到单 LLM 分析", "warning")
             return await self._single_llm_requirement_analysis(pipeline, project)
 
         try:
@@ -307,10 +359,13 @@ class PipelineOrchestrator:
             await message_bus.broadcast(msg)
 
             pipeline.add_log("requirement_analysis",
-                f"多 Agent 分析完成: {len(result.transcript)} 条发言, 报告 {len(final_analysis)} 字符")
+                f"需求分析完成 — 讨论{len(result.transcript)}条发言, "
+                f"共识: {result.consensus_reached}, 报告{len(final_analysis)}字符")
 
         except Exception as e:
-            pipeline.add_log("requirement_analysis", f"Agent 讨论失败: {e}，回退到单 LLM", "warning")
+            tb = traceback.format_exc()
+            pipeline.add_log("requirement_analysis",
+                f"Agent 讨论异常: {e}，回退到单 LLM\n{tb[-300:]}", "warning")
             await self._single_llm_requirement_analysis(pipeline, project)
 
         pipeline.progress = 0.2
@@ -374,12 +429,14 @@ class PipelineOrchestrator:
 
     async def _stage_task_breakdown(self, pipeline: Pipeline, project) -> None:
         pipeline.current_stage = PipelineStage.TASK_BREAKDOWN
-        pipeline.add_log("task_breakdown", "启动 LLM 任务拆解...")
 
         previous_analysis = pipeline.context.get("requirement_analysis", "")
+        prev_len = len(previous_analysis)
+        pipeline.add_log("task_breakdown",
+            f"任务拆解启动 — 需求分析长度: {prev_len}字符, Agent: {len(pipeline.agents)}个")
 
         breakdown_prompt = self._build_task_breakdown_prompt(project, previous_analysis, pipeline)
-        
+
         try:
             msg = Message(
                 sender_id="system",
@@ -412,7 +469,7 @@ class PipelineOrchestrator:
                     description=task_data["description"],
                     priority=Priority(task_data.get("priority", "medium")),
                     created_by="pipeline",
-                    tags=[task_data.get("assigned_role", ""), task_data.get("phase", "development")]
+                    tags=[task_data.get("assigned_role", ""), task_data.get("phase", "execution")]
                 )
                 # 将 required_skills 存入 task.metadata 供后续 trait 匹配
                 if required_skills:
@@ -469,10 +526,54 @@ class PipelineOrchestrator:
                 )
                 await message_bus.broadcast(msg)
             
-            pipeline.add_log("task_breakdown", f"任务拆解完成: 创建了 {len(tasks)} 个任务")
-            
+            # 汇总任务信息用于日志
+            priority_counts = {}
+            for t in tasks:
+                p = t.get('priority', 'medium')
+                priority_counts[p] = priority_counts.get(p, 0) + 1
+            dep_count = sum(1 for t in tasks if t.get('dependencies'))
+
+            pipeline.add_log("task_breakdown",
+                f"任务拆解完成 — 共{len(tasks)}个任务 "
+                f"(优先级分布: {priority_counts}, 含依赖: {dep_count}个)")
+
+            # 逐任务日志
+            for i, task in enumerate(tasks, 1):
+                pipeline.add_log("task_breakdown",
+                    f"  [{i}/{len(tasks)}] [{task.get('priority', 'medium').upper()}] {task['title']} "
+                    f"— 角色: {task.get('assigned_role', '未指定')}, "
+                    f"依赖: {task.get('dependencies', [])}",
+                    "debug")
+
+            # 从任务阶段构建 pipeline.stages (BUG #4 fix)
+            if not pipeline.stages:
+                phase_labels = {
+                    "analysis": "需求分析", "execution": "任务执行",
+                    "review": "审查", "testing": "测试", "delivery": "交付",
+                }
+                seen_keys = set()
+                stages = [
+                    {"key": "requirement_analysis", "label": "需求分析", "status": "completed"},
+                    {"key": "task_breakdown", "label": "任务拆解", "status": "active"},
+                ]
+                for t in tasks:
+                    phase = t.get("phase", "")
+                    if phase and phase not in seen_keys:
+                        seen_keys.add(phase)
+                        stages.append({
+                            "key": phase,
+                            "label": phase_labels.get(phase, phase),
+                            "status": "pending",
+                        })
+                stages.append({"key": "review", "label": "审查", "status": "pending"})
+                pipeline.stages = stages
+                pipeline.add_log("task_breakdown",
+                    f"Pipeline 阶段已构建: {[s['label'] for s in stages]}", "debug")
+
         except Exception as e:
-            pipeline.add_log("task_breakdown", f"任务拆解失败: {str(e)}", "error")
+            tb = traceback.format_exc()
+            pipeline.add_log("task_breakdown",
+                f"任务拆解失败: {str(e)}\n{tb[-400:]}", "error")
             pipeline.context["task_breakdown"] = f"Error: {str(e)}"
 
         pipeline.progress = 0.4
@@ -521,7 +622,7 @@ class PipelineOrchestrator:
                 "description": description,
                 "assigned_role": self._infer_role(description),
                 "priority": "medium",
-                "phase": "development",
+                "phase": "execution",
                 "dependencies": [],
                 "acceptance_criteria": []
             }
@@ -537,39 +638,34 @@ class PipelineOrchestrator:
 
     def _infer_role(self, description: str) -> str:
         desc_lower = description.lower()
-        if any(keyword in desc_lower for keyword in ["前端", "界面", "UI", "frontend", "react", "vue"]):
+        if any(keyword in desc_lower for keyword in ["调研", "研究", "分析", "research", "报告", "调查"]):
+            return "调研分析"
+        elif any(keyword in desc_lower for keyword in ["数据", "统计", "可视化", "data", "图表"]):
+            return "数据分析"
+        elif any(keyword in desc_lower for keyword in ["文案", "写作", "撰写", "文档", "内容", "翻译"]):
+            return "内容撰写"
+        elif any(keyword in desc_lower for keyword in ["查询", "检索", "搜索", "查找", "信息", "资料"]):
+            return "信息检索"
+        elif any(keyword in desc_lower for keyword in ["设计", "方案", "规划", "架构", "architecture"]):
+            return "方案设计"
+        elif any(keyword in desc_lower for keyword in ["前端", "界面", "UI", "frontend", "react", "vue"]):
             return "前端开发"
         elif any(keyword in desc_lower for keyword in ["后端", "API", "数据库", "backend", "server"]):
             return "后端开发"
-        elif any(keyword in desc_lower for keyword in ["架构", "架构师", "architecture"]):
-            return "架构师"
-        elif any(keyword in desc_lower for keyword in ["测试", "测试", "test", "QA"]):
-            return "测试工程师"
-        return "后端开发"
+        elif any(keyword in desc_lower for keyword in ["测试", "test", "QA", "质量", "验证"]):
+            return "质量审核"
+        return "通用执行"
 
     async def _stage_task_execution(self, pipeline: Pipeline) -> None:
         """DAG 并行执行阶段 — 拓扑排序 + 依赖阻塞 + 安全守卫"""
         pipeline.current_stage = PipelineStage.TASK_EXECUTION
-        pipeline.add_log("task_execution", "启动 DAG 任务执行...")
+
+        # 更新 pipeline stages 状态 (BUG #4 fix)
+        self._update_stage_status(pipeline, "task_breakdown", "completed")
+        self._update_stage_status(pipeline, "task_execution", "active")
 
         # 层级策略下确保有 coordinator
         await self._ensure_coordinator(pipeline)
-
-        msg = Message(
-            sender_id="system",
-            sender_name="Pipeline",
-            channel=f"project:{pipeline.project_id}",
-            content="🚀 开始 DAG 并行执行任务...",
-            message_type=MessageType.SYSTEM
-        )
-        await message_bus.broadcast(msg)
-
-        # 审计日志
-        audit_logger.log(
-            action=AuditAction.TASK_EXECUTED,
-            actor="pipeline",
-            detail=f"Pipeline {pipeline.id} 开始执行 {len(pipeline.task_ids)} 个任务",
-        )
 
         # 构建 DAG: task_id → Task 对象
         all_tasks: Dict[str, Any] = {}
@@ -581,16 +677,39 @@ class PipelineOrchestrator:
         # 拓扑排序获取执行层级
         execution_levels = self._topological_sort(all_tasks)
 
+        # 恢复时：预填充已完成/失败的任务
         completed_tasks: set = set()
         failed_tasks: set = set()
+        pre_completed = 0
+        pre_failed = 0
+        for task_id, task in all_tasks.items():
+            status = getattr(task, 'status', None)
+            if status in (TaskStatus.DONE, TaskStatus.REVIEW):
+                completed_tasks.add(task_id)
+                pre_completed += 1
+            elif status == TaskStatus.CANCELLED:
+                failed_tasks.add(task_id)
+                pre_failed += 1
+
+        pipeline.add_log("task_execution",
+            f"DAG 任务执行启动 — 总任务: {len(pipeline.task_ids)}, "
+            f"DAG层级: {len(execution_levels)}, "
+            f"已恢复完成: {pre_completed}, 已恢复失败: {pre_failed}, "
+            f"待执行: {len(pipeline.task_ids) - pre_completed - pre_failed}")
 
         for level_idx, level in enumerate(execution_levels):
             if pipeline.paused or pipeline.stop_requested or security_guard.is_emergency:
                 pipeline.add_log("task_execution", "执行已暂停/停止/紧急中断", "warning")
                 break
 
+            level_tasks_info = []
+            for tid in level:
+                t = all_tasks.get(tid)
+                title = getattr(t, 'title', tid) if t else tid
+                status = getattr(t, 'status', '?') if t else '?'
+                level_tasks_info.append(f"{title[:30]}({status.value if hasattr(status, 'value') else status})")
             pipeline.add_log("task_execution",
-                f"Level {level_idx + 1}/{len(execution_levels)}: {len(level)} tasks in parallel")
+                f"DAG Level {level_idx + 1}/{len(execution_levels)}: {len(level)}个任务 — {level_tasks_info}")
 
             # 并行执行当前层级的所有任务
             tasks_coroutines = []
@@ -616,24 +735,25 @@ class PipelineOrchestrator:
                     else:
                         failed_tasks.add(task_id)
 
-            # 更新进度
+            # 更新进度（只统计真正完成的任务，取消/失败不计入进度）
             total_tasks = len(pipeline.task_ids)
-            done = len(completed_tasks) + len(failed_tasks)
+            done = len(completed_tasks)
+            failed = len(failed_tasks)
             pipeline.progress = 0.4 + (0.4 * done / total_tasks) if total_tasks > 0 else 0.8
+            pipeline.add_log("task_execution",
+                f"进度: {pipeline.progress:.0%} — 完成:{done} 失败/取消:{failed} 剩余:{total_tasks - done - failed}",
+                "debug")
 
         # 汇总
-        msg = Message(
-            sender_id="system",
-            sender_name="Pipeline",
-            channel=f"project:{pipeline.project_id}",
-            content=f"✅ DAG 执行完成: {len(completed_tasks)} 成功, {len(failed_tasks)} 失败",
-            message_type=MessageType.SYSTEM
-        )
-        await message_bus.broadcast(msg)
+        total = len(pipeline.task_ids)
+        done_count = len(completed_tasks)
+        failed_count = len(failed_tasks)
+        remaining = total - done_count - failed_count
+        pipeline.add_log("task_execution",
+            f"DAG执行结束 — 总计:{total} 完成:{done_count} 失败/取消:{failed_count} "
+            f"未执行:{remaining}, 进度→0.8")
 
         pipeline.progress = 0.8
-        pipeline.add_log("task_execution",
-            f"DAG execution completed: {len(completed_tasks)}/{len(pipeline.task_ids)} success")
 
     def _topological_sort(self, tasks: Dict[str, Any]) -> List[List[str]]:
         """
@@ -696,13 +816,19 @@ class PipelineOrchestrator:
         # 检查依赖是否满足
         deps = getattr(task, 'dependencies', []) or []
         for dep_id in deps:
+            dep_task = all_tasks.get(dep_id)
+            dep_title = getattr(dep_task, 'title', dep_id) if dep_task else dep_id
             if dep_id in failed_tasks:
+                pipeline.add_log("task_execution",
+                    f"任务「{task.title}」依赖「{dep_title}」已失败 → 取消", "warning")
                 await task_board.change_status(task_id, TaskStatus.CANCELLED, "pipeline")
-                await task_board.add_comment(task_id, f"取消: 依赖任务 {dep_id} 失败", "pipeline")
+                await task_board.add_comment(task_id, f"取消: 依赖任务 {dep_title} 失败", "pipeline")
                 return False
             if dep_id not in completed_tasks:
+                pipeline.add_log("task_execution",
+                    f"任务「{task.title}」依赖「{dep_title}」未完成 → 阻塞", "debug")
                 await task_board.change_status(task_id, TaskStatus.BLOCKED, "pipeline")
-                await task_board.add_comment(task_id, f"阻塞: 等待依赖任务 {dep_id}", "pipeline")
+                await task_board.add_comment(task_id, f"阻塞: 等待依赖任务 {dep_title}", "pipeline")
                 return False
 
         # 安全守卫检查
@@ -715,6 +841,8 @@ class PipelineOrchestrator:
         # 高风险/严重操作需要审批
         task_approval = getattr(task, 'approval_required', False)
         if risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL) and not task_approval:
+            pipeline.add_log("task_execution",
+                f"任务「{task.title}」风险级别 {risk_level.value} → 需人工审批，阻塞", "warning")
             msg = Message(
                 sender_id="security_guard",
                 sender_name="SecurityGuard",
@@ -748,8 +876,24 @@ class PipelineOrchestrator:
         # 分配 Agent
         agent_id = await self._assign_task_to_agent(task, pipeline)
         if not agent_id:
+            pipeline.add_log("task_execution",
+                f"任务「{task.title}」无法分配Agent — 无可用Agent", "error")
             await task_board.add_comment(task_id, "无可用Agent", "pipeline")
             return False
+
+        # 持久化 assigned_agents (BUG #3 fix)
+        await task_board.assign_agents(task_id, [agent_id])
+
+        agent_info = agent_service.get_agent(agent_id)
+        agent_name = agent_info.get("name", agent_id) if agent_info else agent_id
+        pipeline.add_log("task_execution",
+            f"任务「{task.title}」→ Agent [{agent_name}] 开始执行 (风险: {risk_level.value})")
+
+        # 构建上游依赖任务清单，注入任务描述（BUG #2 fix: pull 模型）
+        original_description = task.description or ""
+        upstream_manifest = self._build_upstream_manifest(task, all_tasks, pipeline.project_id)
+        if upstream_manifest:
+            task.description = f"{original_description}\n\n{upstream_manifest}"
 
         # 通知
         msg = Message(
@@ -764,6 +908,8 @@ class PipelineOrchestrator:
         # 执行
         try:
             result = await agent_executor.execute_task_with_agent(task_id, agent_id)
+            # 恢复原始描述
+            task.description = original_description
             success = result.get("success", False)
 
             # 记录断路器数据
@@ -787,17 +933,22 @@ class PipelineOrchestrator:
 
             if success:
                 await task_board.change_status(task_id, TaskStatus.REVIEW, agent_id)
-                pipeline.add_log("task_execution", f"任务「{task.title}」由 {agent_id} 完成")
-            else:
-                await task_board.change_status(task_id, TaskStatus.TODO, agent_id)
-                await task_board.add_comment(task_id,
-                    f"执行失败: {result.get('error', 'Unknown')}", "pipeline")
                 pipeline.add_log("task_execution",
-                    f"Task {task.title} failed: {result.get('error', '')}", "error")
+                    f"✓ 任务「{task.title}」完成 → REVIEW (Agent: {agent_name})")
+            else:
+                err_msg = result.get('error', 'Unknown')
+                await task_board.change_status(task_id, TaskStatus.CANCELLED, agent_id)
+                await task_board.add_comment(task_id,
+                    f"执行失败: {err_msg}", "pipeline")
+                pipeline.add_log("task_execution",
+                    f"✗ 任务「{task.title}」失败 → CANCELLED (Agent: {agent_name}, 原因: {err_msg[:200]})", "error")
 
             return success
 
         except Exception as e:
+            # 恢复原始描述
+            task.description = original_description
+
             # 断路器记录
             await security_guard.record_operation_result(
                 agent_id=agent_id,
@@ -805,7 +956,9 @@ class PipelineOrchestrator:
                 success=False
             )
 
-            pipeline.add_log("task_execution", f"任务 {task_id} 执行异常: {str(e)}", "error")
+            tb = traceback.format_exc()
+            pipeline.add_log("task_execution",
+                f"✗ 任务「{task.title}」执行异常 → {str(e)}\n{tb[-300:]}", "error")
             await task_board.add_comment(task_id, f"执行异常: {str(e)}", "pipeline")
 
             audit_logger.log(
@@ -819,9 +972,40 @@ class PipelineOrchestrator:
 
             return False
 
+    def _build_upstream_manifest(
+        self, task, all_tasks: Dict[str, Any], project_id: str
+    ) -> str:
+        """构建上游依赖任务产出物清单（pull 模型）。
+        告知下游 agent 哪些前置任务已完成、产出物在哪，agent 用 list_files/read_file 按需拉取。
+        """
+        deps = getattr(task, 'dependencies', []) or []
+        if not deps:
+            return ""
+
+        items = []
+        for dep_id in deps:
+            dep_task = all_tasks.get(dep_id)
+            if not dep_task:
+                continue
+            dep_title = getattr(dep_task, 'title', dep_id)
+            dep_phase = getattr(dep_task, 'phase', '')
+            dep_desc = getattr(dep_task, 'description', '') or ''
+            # 只取前 100 字符作为摘要
+            dep_summary = dep_desc[:100] + "..." if len(dep_desc) > 100 else dep_desc
+            items.append(f"- **{dep_title}** (阶段: {dep_phase or '无'})\n  摘要: {dep_summary}")
+
+        if not items:
+            return ""
+
+        return registry.render("agent.executor.upstream_manifest", {
+            "upstream_items": "\n\n".join(items),
+        })
+
     async def _assign_task_to_agent(self, task, pipeline: Pipeline) -> Optional[str]:
         """策略感知的 Agent 分配。核心流程：trait 匹配优先 → 队列兜底。"""
         if not pipeline.agents:
+            pipeline.add_log("task_execution",
+                f"分配失败: 任务「{task.title}」— pipeline 无 Agent", "warning")
             return None
         if len(pipeline.agents) == 1:
             return pipeline.agents[0]
@@ -838,21 +1022,35 @@ class PipelineOrchestrator:
                     required_skills, pipeline.agents
                 )
                 if matches and matches[0][1] > 0:
+                    top3 = [(aid, f"{s:.2f}") for aid, s in matches[:3]]
                     pipeline.add_log("task_execution",
-                        f"Trait-matched task '{task.title}' to {matches[0][0]} (score={matches[0][1]:.2f})")
+                        f"Trait匹配: 「{task.title}」技能={required_skills} → "
+                        f"最佳={matches[0][0]}({matches[0][1]:.2f}), 候选: {top3}")
                     return matches[0][0]
-            except Exception:
-                pass  # trait 匹配失败 → 走队列兜底
+            except Exception as e:
+                pipeline.add_log("task_execution",
+                    f"Trait匹配失败: {e}，回退到策略分配", "warning")
 
         # 策略感知分配
+        selected: Optional[str] = None
         if strategy == "sequential":
-            return self._assign_sequential(task_tags, pipeline)
+            selected = self._assign_sequential(task_tags, pipeline)
         elif strategy == "hierarchical":
-            return await self._assign_hierarchical(task_tags, pipeline)
+            selected = await self._assign_hierarchical(task_tags, pipeline)
         elif strategy == "discussion":
-            return self._assign_discussion(task_tags, pipeline)
+            selected = self._assign_discussion(task_tags, pipeline)
         else:  # "auto"
-            return self._assign_best_match(task_tags, pipeline)
+            selected = self._assign_best_match(task_tags, pipeline)
+
+        if selected:
+            agent_info = agent_service.get_agent(selected)
+            agent_name = agent_info.get("name", selected) if agent_info else selected
+            pipeline.add_log("task_execution",
+                f"分配决策: 「{task.title}」→ [{agent_name}] (策略: {strategy}, "
+                f"角色: {pipeline.agent_roles.get(selected, '未指定')})",
+                "debug")
+
+        return selected
 
     def _assign_queue(self, pipeline: Pipeline) -> str:
         """FIFO 轮询队列 — 默认兜底策略。队首出列，推到队尾。"""
@@ -988,6 +1186,14 @@ class PipelineOrchestrator:
 
         return result
 
+    @staticmethod
+    def _update_stage_status(pipeline, stage_key: str, status: str) -> None:
+        """更新 pipeline.stages 中指定阶段的状态 (BUG #4 fix)。"""
+        for stage in (pipeline.stages or []):
+            if stage.get("key") == stage_key:
+                stage["status"] = status
+                return
+
     def _select_stage_participants(
         self,
         pipeline: Pipeline,
@@ -998,30 +1204,52 @@ class PipelineOrchestrator:
 
     async def _stage_review(self, pipeline: Pipeline) -> None:
         pipeline.current_stage = PipelineStage.REVIEW
-        pipeline.add_log("review", "启动审查阶段...")
+
+        # 更新 pipeline stages 状态 (BUG #4 fix)
+        self._update_stage_status(pipeline, "task_execution", "completed")
+        self._update_stage_status(pipeline, "review", "active")
+
+        review_tasks = task_board.get_tasks_by_status(TaskStatus.REVIEW, project_id=pipeline.project_id)
+        done_tasks = task_board.get_tasks_by_status(TaskStatus.DONE, project_id=pipeline.project_id)
+        cancelled_tasks = task_board.get_tasks_by_status(TaskStatus.CANCELLED, project_id=pipeline.project_id)
+
+        pipeline.add_log("review",
+            f"审查阶段启动 — 待审核: {len(review_tasks)}, "
+            f"已完成: {len(done_tasks)}, 已取消: {len(cancelled_tasks)}, "
+            f"总任务: {len(pipeline.task_ids)}")
 
         msg = Message(
             sender_id="system",
             sender_name="Pipeline",
             channel=f"project:{pipeline.project_id}",
-            content="🔍 开始审核阶段...",
+            content=f"🔍 开始审核阶段... (待审核: {len(review_tasks)}, 已取消: {len(cancelled_tasks)})",
             message_type=MessageType.SYSTEM
         )
         await message_bus.broadcast(msg)
 
-        completed_tasks = task_board.get_tasks_by_status(TaskStatus.REVIEW, project_id=pipeline.project_id)
-
-        if not completed_tasks:
-            pipeline.add_log("review", "无任务需要审查", "warning")
-            msg = Message(
-                sender_id="system",
-                sender_name="Pipeline",
-                channel=f"project:{pipeline.project_id}",
-                content="🎉 项目完成！所有阶段都已完成。",
-                message_type=MessageType.SYSTEM
-            )
-            await message_bus.broadcast(msg)
-            pipeline.progress = 1.0
+        if not review_tasks:
+            if done_tasks:
+                # 有已完成的任务（跳过审核直接完成），项目正常结束
+                pipeline.add_log("review", f"无待审核任务，{len(done_tasks)} 个任务已完成", "info")
+                pipeline.progress = 1.0
+            elif not pipeline.task_ids:
+                # 无任务创建（空项目），正常结束
+                pipeline.add_log("review", "无任务，项目完成", "info")
+                pipeline.progress = 1.0
+            else:
+                # 有任务但全部取消/失败/未执行 — 项目失败
+                cancelled = task_board.get_tasks_by_status(TaskStatus.CANCELLED, project_id=pipeline.project_id)
+                pipeline.add_log("review",
+                    f"无已完成任务（{len(cancelled)} 个已取消），项目标记为失败", "error")
+                msg = Message(
+                    sender_id="system",
+                    sender_name="Pipeline",
+                    channel=f"project:{pipeline.project_id}",
+                    content=f"⚠️ 项目失败：所有 {len(pipeline.task_ids)} 个任务均未完成",
+                    message_type=MessageType.SYSTEM
+                )
+                await message_bus.broadcast(msg)
+                pipeline.status = PipelineStatus.FAILED
             return
 
         # 选择参与者（测试 + 架构师优先，确保多视角审查）
@@ -1029,10 +1257,10 @@ class PipelineOrchestrator:
 
         if len(participants) < 2:
             # 单人审查 — 直接用 LLM
-            review_result = await self._single_llm_review(pipeline, completed_tasks)
+            review_result = await self._single_llm_review(pipeline, review_tasks)
         else:
             # 多 Agent 审查讨论
-            tasks_summary = self._build_tasks_summary_for_discussion(completed_tasks)
+            tasks_summary = self._build_tasks_summary_for_discussion(review_tasks)
             try:
                 result = await self._run_agent_discussion(
                     pipeline=pipeline,
@@ -1045,7 +1273,7 @@ class PipelineOrchestrator:
                     agent_ids=participants,
                     max_rounds=2,
                 )
-                review_result = await self._merge_discussion_into_review(result, completed_tasks)
+                review_result = await self._merge_discussion_into_review(result, review_tasks)
                 pipeline.context["review_discussion"] = {
                     "transcript": [m.model_dump(mode='json') for m in result.transcript],
                     "consensus": result.consensus_reached,
@@ -1053,7 +1281,7 @@ class PipelineOrchestrator:
                 }
             except Exception as e:
                 pipeline.add_log("review", f"Agent 讨论失败: {e}，回退到单 LLM", "warning")
-                review_result = await self._single_llm_review(pipeline, completed_tasks)
+                review_result = await self._single_llm_review(pipeline, review_tasks)
 
         pipeline.context["review"] = review_result
 
@@ -1076,16 +1304,45 @@ class PipelineOrchestrator:
         )
         await message_bus.broadcast(msg)
 
-        pipeline.add_log("review", f"审查完成: {len(participants)} 位 Agent 参与")
+        # 基于风险等级自动审批任务
+        auto_approved = 0
+        pending_approval = 0
+        for task in review_tasks:
+            risk = getattr(task, 'risk_level', None)
+            risk_str = str(risk) if risk else "low"
+            task_id_val = getattr(task, 'id', str(task))
+            if risk_str in ("low", "medium"):
+                await task_board.change_status(task_id_val, TaskStatus.DONE, "system")
+                auto_approved += 1
+            elif risk_str == "high":
+                # 高风险任务保持 REVIEW，等待人工审批
+                pending_approval += 1
+            else:
+                # 无风险等级或 CRITICAL — 保守起见保持 REVIEW
+                pending_approval += 1
 
-        msg = Message(
-            sender_id="system",
-            sender_name="Pipeline",
-            channel=f"project:{pipeline.project_id}",
-            content="🎉 项目完成！所有阶段都已完成。",
-            message_type=MessageType.SYSTEM
-        )
-        await message_bus.broadcast(msg)
+        pipeline.add_log("review",
+            f"审查完成: {len(participants)} 位 Agent 参与, "
+            f"自动通过: {auto_approved}, 待人工审批: {pending_approval}")
+
+        if pending_approval > 0:
+            msg = Message(
+                sender_id="system",
+                sender_name="Pipeline",
+                channel=f"project:{pipeline.project_id}",
+                content=f"⏳ {pending_approval} 个高风险任务需要人工审批。其他阶段已完成。",
+                message_type=MessageType.SYSTEM
+            )
+            await message_bus.broadcast(msg)
+        else:
+            msg = Message(
+                sender_id="system",
+                sender_name="Pipeline",
+                channel=f"project:{pipeline.project_id}",
+                content="🎉 项目完成！所有阶段都已完成。",
+                message_type=MessageType.SYSTEM
+            )
+            await message_bus.broadcast(msg)
 
         pipeline.progress = 1.0
         pipeline.add_log("review", "审查阶段结束")
@@ -1146,10 +1403,147 @@ class PipelineOrchestrator:
             f"- {task.title}: {task.description[:200]}"
             for task in completed_tasks
         ])
-        
+
         return registry.render("collaboration.pipeline.review", {
             "tasks_summary": tasks_summary,
         })
+
+    async def _trigger_learning_cycle(self, pipeline: Pipeline) -> None:
+        """Step 10: 从 pipeline 执行中提取经验，写入技能库和 growth.json"""
+        from app.services.agent.agent_service import agent_service
+
+        try:
+            from app.services.learning.intelligent_learning import get_learning_service
+            learning = await get_learning_service()
+        except Exception:
+            pipeline.add_log("learning", "学习服务不可用，跳过", "info")
+            return
+
+        for agent_id in pipeline.agents:
+            agent = agent_service.get_agent(agent_id)
+            if not agent:
+                continue
+
+            decisions = self._extract_decisions_for_agent(pipeline, agent_id)
+            if not decisions:
+                continue
+
+            project = project_service.get_project(pipeline.project_id)
+            try:
+                skill = await learning.learn_from_task(
+                    agent_id=agent_id,
+                    task_description=project.name if project else pipeline.name,
+                    decisions=decisions,
+                    outcomes={
+                        "project_id": pipeline.project_id,
+                        "status": pipeline.status.value,
+                        "tasks_completed": len(pipeline.task_ids),
+                    },
+                    success="success",
+                )
+                if skill:
+                    pipeline.add_log("learning", f"Agent {agent_id} 习得技能: {skill.name}")
+
+                    # Update growth.json
+                    try:
+                        self._update_growth_file(agent, skill, pipeline)
+                    except Exception as e:
+                        pipeline.add_log("learning", f"growth.json 更新失败: {e}", "warning")
+            except Exception as e:
+                pipeline.add_log("learning", f"Agent {agent_id} 学习失败: {e}", "warning")
+
+    def _extract_decisions_for_agent(self, pipeline: Pipeline, agent_id: str) -> list:
+        """从 pipeline 日志中提取某 agent 的决策记录"""
+        decisions = []
+        for entry in pipeline.logs:
+            if hasattr(entry, 'agent_id') and entry.agent_id == agent_id:
+                decisions.append({
+                    "step": len(decisions) + 1,
+                    "action": getattr(entry, 'message', '')[:200],
+                    "reasoning": "",
+                })
+        if not decisions:
+            # 兜底：用 pipeline 阶段日志
+            for i, entry in enumerate(pipeline.logs[-10:]):
+                decisions.append({
+                    "step": i + 1,
+                    "action": getattr(entry, 'message', str(entry))[:200],
+                    "reasoning": "",
+                })
+        return decisions
+
+    def _update_growth_file(self, agent: dict, skill, pipeline: Pipeline) -> None:
+        """更新 agent 的 growth.json 文件"""
+        from pathlib import Path
+
+        soul_data = agent.get("soul_data", {})
+        soul_name = soul_data.get("name", agent.get("name", ""))
+        if not soul_name:
+            return
+
+        growth_path = Path(f"agents/agent_{soul_name}/growth.json")
+        growth_path.parent.mkdir(parents=True, exist_ok=True)
+
+        import json
+        growth = {}
+        if growth_path.exists():
+            try:
+                with open(growth_path, "r", encoding="utf-8") as f:
+                    growth = json.load(f)
+            except Exception:
+                growth = {}
+
+        if not growth:
+            growth = {
+                "soul_name": soul_name,
+                "version": 1,
+                "updated_at": "",
+                "stats": {"total_projects": 0, "successful_projects": 0, "success_rate": 0.0, "total_tasks": 0, "skills_count": 0},
+                "skills": [],
+                "recent_trajectories": [],
+            }
+
+        # Update skills
+        skills = growth.get("skills", [])
+        skill_entry = {
+            "id": getattr(skill, 'id', ''),
+            "name": getattr(skill, 'name', ''),
+            "category": getattr(skill, 'category', ''),
+            "success_rate": getattr(skill, 'success_rate', 0.0),
+            "usage_count": getattr(skill, 'usage_count', 1),
+            "trigger_keywords": getattr(skill, 'trigger_keywords', []),
+            "description": getattr(skill, 'description', ''),
+        }
+        if not any(s.get("id") == skill_entry["id"] for s in skills):
+            skills.append(skill_entry)
+        growth["skills"] = skills
+
+        # Add trajectory
+        project = project_service.get_project(pipeline.project_id)
+        trajectory = {
+            "project": project.name if project else pipeline.name,
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "success": True,
+        }
+        trajectories = growth.get("recent_trajectories", [])
+        trajectories.insert(0, trajectory)
+        growth["recent_trajectories"] = trajectories[:10]
+
+        # Update stats
+        total_projects = len(trajectories)
+        successful = sum(1 for t in trajectories if t.get("success"))
+        growth["stats"] = {
+            "total_projects": total_projects,
+            "successful_projects": successful,
+            "success_rate": round(successful / total_projects, 2) if total_projects else 0.0,
+            "total_tasks": sum(s.get("usage_count", 0) for s in growth.get("skills", [])),
+            "skills_count": len(growth.get("skills", [])),
+        }
+        growth["updated_at"] = datetime.now().isoformat()
+        growth["version"] = growth.get("version", 1) + 0.1
+
+        with open(growth_path, "w", encoding="utf-8") as f:
+            json.dump(growth, f, ensure_ascii=False, indent=2, default=str)
 
     async def pause_pipeline(self, pipeline_id: str) -> bool:
         async with self._lock:
@@ -1162,7 +1556,9 @@ class PipelineOrchestrator:
             await agent_executor.pause_project(pipeline.project_id)
             speaking_controller.set_mode(pipeline_id, SpeakingMode.FREE_STYLE)
 
-            pipeline.add_log("control", "流水线已暂停（人工干预）")
+            pipeline.add_log("control",
+                f"流水线已暂停 — 阶段: {pipeline.current_stage.value}, "
+                f"进度: {pipeline.progress:.0%}, 任务: {len(pipeline.task_ids)}个")
             if self._db:
                 await self._db.save(pipeline)
             return True
@@ -1178,7 +1574,9 @@ class PipelineOrchestrator:
             await agent_executor.resume_project(pipeline.project_id)
             speaking_controller.set_mode(pipeline_id, SpeakingMode.PRIORITY_BASED)
 
-            pipeline.add_log("control", "流水线已恢复")
+            pipeline.add_log("control",
+                f"流水线已恢复 — 从阶段: {pipeline.current_stage.value} 继续, "
+                f"进度: {pipeline.progress:.0%}")
             if self._db:
                 await self._db.save(pipeline)
             return True
@@ -1189,14 +1587,109 @@ class PipelineOrchestrator:
             if not pipeline:
                 return False
 
+            task_count = len(pipeline.task_ids)
+            progress = pipeline.progress
             pipeline.stop_requested = True
             pipeline.status = PipelineStatus.FAILED
             self._cleanup_pipeline_agents(pipeline)
             self._active_pipelines.pop(pipeline.project_id, None)
 
-            pipeline.add_log("control", "流水线已停止（人工干预）")
+            # 取消 _run_pipeline asyncio 任务
+            task = self._execution_tasks.pop(pipeline_id, None)
+            if task and not task.done():
+                task.cancel()
+
+            pipeline.add_log("control",
+                f"流水线已停止 — 阶段: {pipeline.current_stage.value}, "
+                f"进度曾为: {progress:.0%}, 任务: {task_count}个")
             if self._db:
                 await self._db.save(pipeline)
+            return True
+
+    async def close_pipeline(self, pipeline_id: str) -> bool:
+        """关闭流水线：取消执行、保存状态为 PAUSED（可恢复），释放 agent。"""
+        async with self._lock:
+            pipeline = self._pipelines.get(pipeline_id)
+            if not pipeline:
+                return False
+
+            # 1. 通过 agent_executor 暂停所有运行中的任务
+            try:
+                await agent_executor.pause_project(pipeline.project_id)
+            except Exception as e:
+                pipeline.add_log("control", f"暂停任务执行失败: {e}", "warning")
+
+            # 2. 取消 _run_pipeline asyncio 任务
+            task = self._execution_tasks.pop(pipeline_id, None)
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+            # 3. 保存完整状态
+            pipeline.stop_requested = False
+            pipeline.paused = True
+            pipeline.status = PipelineStatus.PAUSED
+            self._active_pipelines.pop(pipeline.project_id, None)
+
+            # 4. 释放 agent
+            self._cleanup_pipeline_agents(pipeline)
+
+            pipeline.add_log("control",
+                f"流水线已关闭保存 — 阶段: {pipeline.current_stage.value}, "
+                f"进度: {pipeline.progress:.0%}, 任务: {len(pipeline.task_ids)}个, 可恢复")
+
+            # 5. 同步更新 workspace project.json
+            try:
+                from app.services.project.workspace_manager import workspace_manager
+                workspace_manager.update_status(pipeline.project_id, "paused")
+            except Exception:
+                pass
+
+            if self._db:
+                await self._db.save(pipeline)
+            return True
+
+    async def resume_from_close(self, pipeline_id: str) -> bool:
+        """从关闭状态恢复流水线：重新指派 agent，启动新的 _run_pipeline 任务。"""
+        async with self._lock:
+            pipeline = self._pipelines.get(pipeline_id)
+            if not pipeline or pipeline.status != PipelineStatus.PAUSED:
+                return False
+
+            # 1. 重新指派 agent
+            for agent_id in pipeline.agents:
+                agent = agent_service.get_agent(agent_id)
+                if agent:
+                    current_project = agent_service.get_agent_project(agent_id)
+                    if current_project and current_project != pipeline.project_id:
+                        pipeline.add_log("control", f"Agent {agent_id} 已在项目 {current_project} 中，跳过指派", "warning")
+                        continue
+                    agent_service.assign_agent_to_project(agent_id, pipeline.project_id)
+
+            # 2. 重置标志
+            pipeline.stop_requested = False
+            pipeline.paused = False
+            pipeline.status = PipelineStatus.RUNNING
+            self._active_pipelines[pipeline.project_id] = pipeline_id
+
+            pipeline.add_log("control", "流水线已从保存状态恢复")
+
+            # 3. 同步更新 workspace project.json
+            try:
+                from app.services.project.workspace_manager import workspace_manager
+                workspace_manager.update_status(pipeline.project_id, "running")
+            except Exception:
+                pass
+
+            if self._db:
+                await self._db.save(pipeline)
+
+            # 4. 启动新的 _run_pipeline（上下文注入跳过已完成阶段）
+            task = asyncio.create_task(self._run_pipeline(pipeline_id))
+            self._execution_tasks[pipeline_id] = task
             return True
 
     async def intervene(
@@ -1249,7 +1742,11 @@ class PipelineOrchestrator:
             "started_at": pipeline.started_at.isoformat() if pipeline.started_at else None,
             "completed_at": pipeline.completed_at.isoformat() if pipeline.completed_at else None,
             "logs": pipeline.logs[-50:],
-            "context": pipeline.context
+            "context": pipeline.context,
+            "team_config": getattr(pipeline, 'team_config', {}),
+            "agent_roles": getattr(pipeline, 'agent_roles', {}),
+            "stages": getattr(pipeline, 'stages', []),
+            "can_resume": pipeline.status == PipelineStatus.PAUSED,
         }
 
     def list_pipelines(self) -> List[Dict[str, Any]]:

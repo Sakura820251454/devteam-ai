@@ -297,7 +297,7 @@ def get_all_templates() -> List[PipelineTemplate]:
             id="custom",
             name="自定义",
             description="LLM 根据需求描述动态生成阶段和产出物",
-            category="development",
+            category="general",
             suggested_strategy="auto",
             stages=[],  # 由 LLM 在需求分析阶段生成
         ),

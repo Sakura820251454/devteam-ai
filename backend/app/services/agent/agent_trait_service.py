@@ -95,9 +95,9 @@ class AgentTraitService:
                         LLMMessage(role="user", content=prompt),
                     ],
                     track_cost=False,
-                    timeout=20.0,
+                    timeout=45.0,
                 ),
-                timeout=30.0,
+                timeout=55.0,
             )
 
             data = self._parse_trait_json(response.content)
@@ -139,6 +139,53 @@ class AgentTraitService:
             communication_style="简洁型",
             summary=f"{agent.get('name', agent_id) if agent else agent_id}: {role_label}",
         )
+
+    async def build_soul_pool_text(self) -> str:
+        """构建可用于团队建议 prompt 的人格库文本。
+
+        优先使用已缓存的特质，未缓存则用 fallback 并触发后台预热，
+        避免串行 LLM 调用阻塞团队建议 API 响应。
+        """
+        from app.services.agent.agent_service import agent_service
+
+        soul_agents = agent_service.get_soul_based_agents()
+        if not soul_agents:
+            return "（暂无可用人格库）"
+
+        uncached_ids = [
+            agent.get("id", "")
+            for agent in soul_agents
+            if agent.get("id", "") and not self.has_traits(agent.get("id", ""))
+        ]
+        if uncached_ids:
+            asyncio.create_task(self._background_warmup(uncached_ids))
+
+        rows = []
+        for agent in soul_agents:
+            aid = agent.get("id", "")
+            name = agent.get("name", aid)
+            traits = self.get_trait(aid) or self._fallback_traits(aid)
+
+            principles = agent.get("soul_data", {}).get("core_principles", []) if agent.get("soul_data") else []
+
+            rows.append(
+                f"## {name}\n"
+                f"- 协作风格: {traits.collaboration_style}\n"
+                f"- 沟通风格: {traits.communication_style}\n"
+                f"- 核心原则: {'; '.join(principles[:3]) if principles else '未定义'}\n"
+                f"- 擅长领域: {', '.join(traits.strength_areas[:3]) if traits.strength_areas else '通用'}\n"
+                f"- 能力摘要: {traits.summary}"
+            )
+
+        return "\n\n".join(rows) if rows else "（暂无可用人格库）"
+
+    async def _background_warmup(self, agent_ids: List[str]):
+        """后台预热特质缓存，不阻塞主流程。"""
+        try:
+            await self.ensure_traits_batch(agent_ids)
+            logger.info(f"Background trait warmup completed for {len(agent_ids)} agents")
+        except Exception as e:
+            logger.warning(f"Background trait warmup failed: {e}")
 
     async def match_task_to_agent(
         self,

@@ -158,6 +158,16 @@ class TaskBoard:
             f"Status changed from {old_status.value} to {new_status.value}",
             changed_by
         )
+
+        # 记录状态流转到 project.log
+        try:
+            from app.services.project.workspace_manager import workspace_manager
+            if pid:
+                workspace_manager.add_log(pid, "info", "task_board",
+                    f"任务「{task.title}」状态: {old_status.value} → {new_status.value} (by {changed_by})")
+        except Exception:
+            pass
+
         self._notify_handlers(task_id, "status_changed", task)
         if self._db:
             await self._db.save(task)

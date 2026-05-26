@@ -158,6 +158,10 @@ class ProjectService:
                 pipeline_id = pipeline_orchestrator._active_pipelines[pid]
                 await pipeline_orchestrator.stop_pipeline(pipeline_id)
 
+        # 从数据库删除流水线记录
+        from app.services.persistence.pipeline_persistence import pipeline_persistence
+        await pipeline_persistence.delete_by_project(project_id)
+
         # 释放 Agent
         agent_service.release_project_agents(project_id)
 

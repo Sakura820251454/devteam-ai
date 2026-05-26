@@ -180,6 +180,24 @@ class WorkspaceManager:
 
         return True
 
+    def update_stages(self, project_id: str, stages: List[Dict[str, Any]]) -> bool:
+        """Update stages in project.json. Returns True on success."""
+        ws_dir = self._workspace_dir(project_id)
+        project_file = ws_dir / "project.json"
+        if not project_file.exists():
+            return False
+
+        with open(project_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        data["stages"] = stages
+        data["updated_at"] = datetime.now().isoformat()
+
+        with open(project_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        return True
+
     def delete_workspace(self, project_id: str) -> bool:
         import shutil
         ws_dir = self._workspace_dir(project_id)

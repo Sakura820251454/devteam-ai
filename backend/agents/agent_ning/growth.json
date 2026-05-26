@@ -1,0 +1,131 @@
+{
+  "soul_name": "ning",
+  "version": 1.7000000000000006,
+  "updated_at": "2026-05-26T11:13:23.226542",
+  "stats": {
+    "total_projects": 7,
+    "successful_projects": 7,
+    "success_rate": 1.0,
+    "total_tasks": 0,
+    "skills_count": 7
+  },
+  "skills": [
+    {
+      "id": "skill_1779672411.706035",
+      "name": "✅ 调查最近的山西长治煤矿瓦斯爆炸的最新进展",
+      "category": "general",
+      "success_rate": 1.0,
+      "usage_count": 0,
+      "trigger_keywords": [
+        "任务"
+      ],
+      "description": "任务: 调查最近的山西长治煤矿瓦斯爆炸的最新进展\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: 823b3a0e-ddd1-4d77-95b2-a566122ac13b\n  - status: completed\n  - tasks_completed: 6"
+    },
+    {
+      "id": "skill_1779680712.321399",
+      "name": "✅ 调查最近的山西长治煤矿瓦斯爆炸的最新进展",
+      "category": "general",
+      "success_rate": 1.0,
+      "usage_count": 0,
+      "trigger_keywords": [
+        "任务"
+      ],
+      "description": "任务: 调查最近的山西长治煤矿瓦斯爆炸的最新进展\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: a3c6a92b-906e-40e0-b25d-2ee6b59f67a0\n  - status: completed\n  - tasks_completed: 9"
+    },
+    {
+      "id": "skill_1779681205.57888",
+      "name": "✅ 调查最近的山西长治煤矿瓦斯爆炸的最新进展",
+      "category": "general",
+      "success_rate": 1.0,
+      "usage_count": 0,
+      "trigger_keywords": [
+        "任务"
+      ],
+      "description": "任务: 调查最近的山西长治煤矿瓦斯爆炸的最新进展\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: 9233aa9b-9815-4153-84b1-8cf8202c77f8\n  - status: completed\n  - tasks_completed: 9"
+    },
+    {
+      "id": "skill_1779695027.584469",
+      "name": "✅ 调研长治煤矿爆炸最新进展",
+      "category": "general",
+      "success_rate": 1.0,
+      "usage_count": 0,
+      "trigger_keywords": [
+        "任务"
+      ],
+      "description": "任务: 调研长治煤矿爆炸最新进展\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: 8d477084-dfaf-4ae6-9ef9-6091af8042a6\n  - status: completed\n  - tasks_completed: 9"
+    },
+    {
+      "id": "skill_1779697461.474952",
+      "name": "✅ 调查最近的山西长治煤矿瓦斯爆炸的最新进展",
+      "category": "general",
+      "success_rate": 1.0,
+      "usage_count": 0,
+      "trigger_keywords": [
+        "任务"
+      ],
+      "description": "任务: 调查最近的山西长治煤矿瓦斯爆炸的最新进展\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: 33dd99d4-92ae-4e44-a4e1-f50da1467eb0\n  - status: completed\n  - tasks_completed: 9"
+    },
+    {
+      "id": "skill_1779706978.454216",
+      "name": "✅ 简单查询长治煤矿爆炸事件最新进展",
+      "category": "general",
+      "success_rate": 1.0,
+      "usage_count": 0,
+      "trigger_keywords": [
+        "任务",
+        "bug"
+      ],
+      "description": "任务: 简单查询长治煤矿爆炸事件最新进展\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: 1073d6c8-218e-413f-b678-1be43276a618\n  - status: completed\n  - tasks_completed: 8"
+    },
+    {
+      "id": "skill_1779765203.224949",
+      "name": "✅ 测试查询项目",
+      "category": "testing",
+      "success_rate": 1.0,
+      "usage_count": 0,
+      "trigger_keywords": [
+        "测试",
+        "任务",
+        "bug"
+      ],
+      "description": "任务: 测试查询项目\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: eb4b3c7b-3698-4849-8c4e-e2d5031ad5b7\n  - status: completed\n  - tasks_completed: 8"
+    }
+  ],
+  "recent_trajectories": [
+    {
+      "project": "测试查询项目",
+      "date": "2026-05-26",
+      "success": true
+    },
+    {
+      "project": "简单查询长治煤矿爆炸事件最新进展",
+      "date": "2026-05-25",
+      "success": true
+    },
+    {
+      "project": "调查最近的山西长治煤矿瓦斯爆炸的最新进展",
+      "date": "2026-05-25",
+      "success": true
+    },
+    {
+      "project": "调研长治煤矿爆炸最新进展",
+      "date": "2026-05-25",
+      "success": true
+    },
+    {
+      "project": "调查最近的山西长治煤矿瓦斯爆炸的最新进展",
+      "date": "2026-05-25",
+      "success": true
+    },
+    {
+      "project": "调查最近的山西长治煤矿瓦斯爆炸的最新进展",
+      "date": "2026-05-25",
+      "success": true
+    },
+    {
+      "project": "调查最近的山西长治煤矿瓦斯爆炸的最新进展",
+      "date": "2026-05-25",
+      "success": true
+    }
+  ]
+}

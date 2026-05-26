@@ -46,6 +46,7 @@ export default defineConfig({
         {
           text: '核心概念',
           items: [
+            { text: '任务执行流程', link: '/02-design/execution-flow' },
             { text: 'Agent 模型', link: '/02-design/agent-model' },
             { text: '记忆系统', link: '/02-design/memory-system' },
             { text: '任务模型', link: '/02-design/task-model' },
@@ -66,6 +67,7 @@ export default defineConfig({
           text: '调研与规格',
           items: [
             { text: '记忆系统调研', link: '/02-design/memory-system-research' },
+            { text: 'Reasonix 调研', link: '/02-design/reasonix-research' },
             { text: '设计规格书', link: '/02-design/design-spec' }
           ]
         },

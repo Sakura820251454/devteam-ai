@@ -36,3 +36,9 @@ async def init_db():
     from app.models.core_db import ProjectModel, TaskModel, PipelineModel, SessionModel, MessageModel  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Migration: add stages column to existing databases
+        try:
+            from sqlalchemy import text
+            await conn.execute(text("ALTER TABLE pipelines ADD COLUMN stages JSON DEFAULT '[]'"))
+        except Exception:
+            pass

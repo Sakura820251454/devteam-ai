@@ -45,10 +45,11 @@ class StrategyRecommender:
             agent = agent_service.get_agent(aid)
             traits = agent_trait_service.get_trait(aid)
             if agent:
-                role = traits.role_label if traits else agent.get("type", "未知")
+                name = agent.get('name', aid)
                 summary = traits.summary if traits else agent.get("description", "")
+                skills_text = f"能力：{', '.join(traits.skills)}" if traits and traits.skills else ""
                 agent_rows.append(
-                    f"- {aid}: {agent.get('name', aid)} ({role}) — {summary}"
+                    f"- {aid}: {name} — {summary}。{skills_text}"
                 )
 
         agents_text = "\n".join(agent_rows) if agent_rows else "（无 agent 信息）"

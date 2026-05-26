@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getAvailableModels, getAvailableProviders } from '../lib/api'
-import type { LLMModelInfo } from '../lib/api'
+import type { LLMModelInfo, TaskAnalysis, TeamSuggestion, SuggestedRole, TeamSuggestionResponse } from '../lib/api'
 import { useStore } from '../lib/store'
 
 interface SoulAgent {
@@ -26,6 +26,8 @@ interface AgentConfigModalProps {
   isOpen: boolean
   onClose: () => void
   onAgentsConfigured: (agents: SoulAgent[], options: TeamConfig) => void
+  projectDescription?: string
+  fetchTeamSuggestion?: (taskDescription: string) => Promise<TeamSuggestionResponse | null>
 }
 
 interface TeamConfig {
@@ -110,7 +112,7 @@ const MOCK_SOUL_AGENTS: SoulAgent[] = [
 ]
 
 
-export default function AgentConfigModal({ isOpen, onClose, onAgentsConfigured }: AgentConfigModalProps) {
+export default function AgentConfigModal({ isOpen, onClose, onAgentsConfigured, projectDescription, fetchTeamSuggestion }: AgentConfigModalProps) {
   const { globalLlmConfig } = useStore()
   const [agents, setAgents] = useState<SoulAgent[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -119,6 +121,13 @@ export default function AgentConfigModal({ isOpen, onClose, onAgentsConfigured }
   })
   const [loading, setLoading] = useState(false)
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null)
+
+  // AI team suggestion state
+  const [taskAnalysis, setTaskAnalysis] = useState<TaskAnalysis | null>(null)
+  const [teamSuggestion, setTeamSuggestion] = useState<TeamSuggestion | null>(null)
+  const [suggestionLoading, setSuggestionLoading] = useState(false)
+  const [showAiSuggestion, setShowAiSuggestion] = useState(true)
+  const [editableRoles, setEditableRoles] = useState<SuggestedRole[]>([])
 
   // LLM config per agent
   const [agentLlmConfigs, setAgentLlmConfigs] = useState<Record<string, { provider: string; model: string; temperature: number; max_tokens?: number }>>({})
@@ -133,10 +142,39 @@ export default function AgentConfigModal({ isOpen, onClose, onAgentsConfigured }
       setExpandedAgent(null)
       setAgentLlmConfigs({})
       setExpandedLlmAgent(null)
+      setTaskAnalysis(null)
+      setTeamSuggestion(null)
+      setSuggestionLoading(false)
+      setShowAiSuggestion(true)
+      setEditableRoles([])
       fetchAgents()
       loadLLMData()
+      // Fetch AI team suggestion if project description available
+      if (projectDescription && fetchTeamSuggestion) {
+        fetchAiTeamSuggestion()
+      }
     }
   }, [isOpen])
+
+  const fetchAiTeamSuggestion = async () => {
+    if (!projectDescription || !fetchTeamSuggestion) return
+    setSuggestionLoading(true)
+    try {
+      const result = await fetchTeamSuggestion(projectDescription)
+      if (result) {
+        setTaskAnalysis(result.analysis)
+        setTeamSuggestion(result.suggestion)
+        setEditableRoles(result.suggestion?.roles || [])
+        if (result.suggestion?.strategy?.recommended) {
+          setTeamConfig({ strategy: result.suggestion.strategy.recommended as TeamConfig['strategy'] })
+        }
+      }
+    } catch {
+      // Silently fall back to manual mode
+    } finally {
+      setSuggestionLoading(false)
+    }
+  }
 
   const fetchAgents = async () => {
     setLoading(true)
@@ -208,6 +246,83 @@ export default function AgentConfigModal({ isOpen, onClose, onAgentsConfigured }
 
   const getAgentById = (id: string) => agents.find(a => a.id === id)
 
+  const handleApplyAiSuggestion = () => {
+    if (!teamSuggestion?.roles) return
+
+    // Match each suggested role to a soul agent
+    const matchedAgents: SoulAgent[] = []
+    const usedAgentIds = new Set<string>()
+
+    for (const role of teamSuggestion.roles) {
+      let bestMatch: SoulAgent | undefined
+
+      // 1) Exact soul name match (highest confidence)
+      if (role.suggested_soul) {
+        bestMatch = agents.find(
+          (a) => a.soul_data?.name?.toLowerCase() === role.suggested_soul!.toLowerCase() && !usedAgentIds.has(a.id)
+        )
+      }
+
+      // 2) Fallback: match by capability keywords
+      if (!bestMatch) {
+        const keywords = role.responsibilities?.toLowerCase() || ''
+        bestMatch = agents.find((a) => {
+          if (usedAgentIds.has(a.id)) return false
+          const desc = (a.description || '').toLowerCase()
+          return (a.capabilities || []).some(
+            (c) => keywords.includes(c.toLowerCase()) || desc.includes(keywords.slice(0, 10))
+          )
+        })
+      }
+
+      // 3) Last resort: pick first unused idle agent
+      if (!bestMatch) {
+        bestMatch = agents.find((a) => a.status === 'idle' && !usedAgentIds.has(a.id))
+      }
+
+      if (bestMatch) {
+        usedAgentIds.add(bestMatch.id)
+        matchedAgents.push(bestMatch)
+      }
+    }
+
+    if (matchedAgents.length === 0) return
+
+    // Mark matched agents as selected
+    setSelectedIds(new Set(matchedAgents.map((a) => a.id)))
+
+    // Apply strategy from AI suggestion
+    if (teamSuggestion.strategy?.recommended) {
+      const strat = teamSuggestion.strategy.recommended
+      if (strat === 'sequential' || strat === 'hierarchical' || strat === 'discussion') {
+        const config: TeamConfig = { strategy: strat }
+        // For hierarchical, auto-pick coordinator from matched agents
+        if (strat === 'hierarchical' && matchedAgents.length > 1) {
+          config.coordinatorId = matchedAgents[0].id
+        }
+        setTeamConfig(config)
+      }
+    }
+
+    // Auto-confirm and close
+    const config: TeamConfig = teamSuggestion.strategy?.recommended &&
+      ['sequential', 'hierarchical', 'discussion'].includes(teamSuggestion.strategy.recommended)
+      ? { strategy: teamSuggestion.strategy.recommended as TeamConfig['strategy'] }
+      : { strategy: 'auto' }
+
+    if (config.strategy === 'hierarchical' && matchedAgents.length > 1) {
+      config.coordinatorId = matchedAgents[0].id
+    }
+
+    const finalAgents = matchedAgents.map((a) => ({
+      ...a,
+      llm_config: agentLlmConfigs[a.id] || undefined,
+    }))
+
+    onAgentsConfigured(finalAgents, config)
+    onClose()
+  }
+
   const handleConfirm = () => {
     const selectedAgents = agents
       .filter(a => selectedIds.has(a.id))
@@ -239,7 +354,7 @@ export default function AgentConfigModal({ isOpen, onClose, onAgentsConfigured }
           <div>
             <h2 className="text-xl font-bold text-white">配置 Agent 团队</h2>
             <p className="text-sm text-gray-400 mt-1">
-              从 soul.md 定义的 Agent 池中选择团队成员
+              {teamSuggestion ? 'AI 已分析任务并推荐团队配置，你可以直接确认或调整' : '从 soul.md 定义的 Agent 池中选择团队成员'}
               <span className="ml-2 text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded">
                 soul-based
               </span>
@@ -250,13 +365,114 @@ export default function AgentConfigModal({ isOpen, onClose, onAgentsConfigured }
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* Agent selection */}
+          {/* AI Team Suggestion — Step 2+3 */}
+          {suggestionLoading && (
+            <div className="bg-gray-900 rounded-lg p-6 text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent-cyan mx-auto mb-3"></div>
+              <p className="text-sm text-gray-400">AI 正在分析任务并推荐团队配置...</p>
+            </div>
+          )}
+
+          {!suggestionLoading && taskAnalysis && teamSuggestion && showAiSuggestion && (
+            <section className="bg-gray-900/50 rounded-lg border border-accent-cyan/20 p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-accent-cyan flex items-center gap-2">
+                  🤖 AI 推荐团队
+                </h3>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleApplyAiSuggestion}
+                    className="px-3 py-1.5 bg-accent-cyan text-black text-xs font-semibold rounded hover:bg-accent-cyan/80 transition-colors"
+                  >
+                    采用此推荐
+                  </button>
+                  <button
+                    onClick={() => setShowAiSuggestion(false)}
+                    className="text-xs text-gray-500 hover:text-gray-300"
+                  >
+                    切换到手动选择 →
+                  </button>
+                </div>
+              </div>
+
+              {/* Task Analysis Summary */}
+              <div className="flex gap-2 flex-wrap">
+                <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded">{taskAnalysis.domain}</span>
+                <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded">{taskAnalysis.task_type}</span>
+                <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded">复杂度: {taskAnalysis.complexity}</span>
+                {taskAnalysis.breakdown.map((d, i) => (
+                  <span key={i} className="text-xs bg-cyan-500/10 text-cyan-400 px-2 py-0.5 rounded">{d}</span>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500">{taskAnalysis.analysis_summary}</p>
+
+              {/* Suggested Roles */}
+              <div>
+                <h4 className="text-xs font-medium text-gray-400 mb-2">建议角色 ({editableRoles.length})</h4>
+                <div className="space-y-2">
+                  {editableRoles.map((role, i) => (
+                    <div key={i} className="bg-gray-800 rounded-lg p-3 border border-gray-700/50">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-medium text-white">{role.role_name}</span>
+                        <span className={`text-xs px-1.5 py-0.5 rounded ${
+                          role.priority === 'essential' ? 'bg-red-500/20 text-red-400' :
+                          role.priority === 'recommended' ? 'bg-cyan-500/20 text-cyan-400' :
+                          'bg-gray-600 text-gray-400'
+                        }`}>
+                          {role.priority === 'essential' ? '必需' : role.priority === 'recommended' ? '推荐' : '可选'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-400">{role.responsibilities}</p>
+                      {role.suggested_soul && (
+                        <p className="text-xs text-gray-500 mt-1">
+                          匹配人格: <span className="text-purple-400">{role.suggested_soul}</span>
+                          {role.matching_reason && ` — ${role.matching_reason}`}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Strategy Suggestion */}
+              {teamSuggestion.strategy && (
+                <div>
+                  <h4 className="text-xs font-medium text-gray-400 mb-2">建议协作策略</h4>
+                  <div className="bg-gray-800 rounded-lg p-3 border border-gray-700/50">
+                    <span className="text-sm font-medium text-white">
+                      {teamSuggestion.strategy.recommended === 'sequential' ? '📋 顺序执行' :
+                       teamSuggestion.strategy.recommended === 'hierarchical' ? '🏗️ 层级委派' :
+                       teamSuggestion.strategy.recommended === 'discussion' ? '💬 圆桌讨论' : teamSuggestion.strategy.recommended}
+                    </span>
+                    <p className="text-xs text-gray-400 mt-1">{teamSuggestion.strategy.reasoning}</p>
+                  </div>
+                </div>
+              )}
+
+              {teamSuggestion.overall_rationale && (
+                <p className="text-xs text-gray-500 italic">{teamSuggestion.overall_rationale}</p>
+              )}
+            </section>
+          )}
+
+          {/* Manual agent selection — shown when AI suggestion is hidden/unavailable */}
+          {(!showAiSuggestion || !teamSuggestion) && (
           <section>
-            <h3 className="text-sm font-medium text-gray-400 mb-3">
-              选择团队成员
-              {loading && <span className="ml-2 text-xs text-gray-500">加载中...</span>}
-              {!loading && <span className="ml-2 text-xs text-gray-500">({agents.length} 位可用)</span>}
-            </h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium text-gray-400">
+                选择团队成员
+                {loading && <span className="ml-2 text-xs text-gray-500">加载中...</span>}
+                {!loading && <span className="ml-2 text-xs text-gray-500">({agents.length} 位可用)</span>}
+              </h3>
+              {teamSuggestion && (
+                <button
+                  onClick={() => setShowAiSuggestion(true)}
+                  className="text-xs text-accent-cyan hover:text-accent-cyan/80"
+                >
+                  ← 回到AI推荐
+                </button>
+              )}
+            </div>
 
             {loading ? (
               <div className="flex items-center justify-center py-12">
@@ -463,6 +679,7 @@ export default function AgentConfigModal({ isOpen, onClose, onAgentsConfigured }
               </div>
             )}
           </section>
+          )}
 
           {/* Strategy selection */}
           <section>

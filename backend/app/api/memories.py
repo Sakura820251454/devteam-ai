@@ -7,7 +7,7 @@ from app.database import get_db
 from app.services.memory.persistent_memory_manager import PersistentMemoryManager
 from app.models.agent_context import MemoryLevel
 
-router = APIRouter(prefix="/memories", tags=["记忆管理"])
+router = APIRouter(prefix="/api/memories", tags=["记忆管理"])
 
 
 class AddMemoryRequest(BaseModel):

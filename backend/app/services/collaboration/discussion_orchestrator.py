@@ -87,6 +87,16 @@ class DiscussionOrchestrator:
 
         from app.services.agent.agent_service import agent_service
         from app.services.collaboration.message_bus import message_bus, Message, MessageType
+        from app.services.project.workspace_manager import workspace_manager
+
+        # 记录讨论开始
+        agent_names = []
+        for aid in agent_ids:
+            a = agent_service.get_agent(aid)
+            agent_names.append(a.get("name", aid) if a else aid)
+        workspace_manager.add_log(project_id, "info", "discussion",
+            f"讨论开始 [{discussion_id}] — 主题: {topic[:100]}, "
+            f"参与者({len(agent_ids)}): {agent_names}, 最大轮次: {max_rounds}")
 
         channel = f"discussion:{pipeline_id}"
 
@@ -119,6 +129,7 @@ class DiscussionOrchestrator:
                 if not agent:
                     continue
 
+                agent_name = agent.get("name", agent_id)
                 try:
                     response = await self._agent_speak(
                         agent_id=agent_id,
@@ -129,11 +140,18 @@ class DiscussionOrchestrator:
                         current_round=round_num,
                         max_rounds=max_rounds,
                     )
+                    workspace_manager.add_log(project_id, "debug", "discussion",
+                        f"[{discussion_id}] R{round_num}T{turn_num} [{agent_name}]: "
+                        f"{len(response)}字符 — {response[:150]}...")
                 except asyncio.TimeoutError:
-                    response = f"[{agent.get('name', agent_id)} 超时未响应]"
+                    response = f"[{agent_name} 超时未响应]"
+                    workspace_manager.add_log(project_id, "warning", "discussion",
+                        f"[{discussion_id}] R{round_num}T{turn_num} [{agent_name}] 超时")
                 except Exception as e:
                     logger.warning(f"Agent {agent_id} speak failed: {e}")
-                    response = f"[{agent.get('name', agent_id)} 发言时出错]"
+                    response = f"[{agent_name} 发言时出错]"
+                    workspace_manager.add_log(project_id, "error", "discussion",
+                        f"[{discussion_id}] R{round_num}T{turn_num} [{agent_name}] 发言异常: {e}")
 
                 traits = agent_trait_service.get_trait(agent_id)
                 dm = DiscussionMessage(
@@ -167,12 +185,19 @@ class DiscussionOrchestrator:
                     transcript, topic
                 )
                 if consensus:
+                    workspace_manager.add_log(project_id, "info", "discussion",
+                        f"[{discussion_id}] 共识达成于第{round_num}轮")
                     break
 
         # 生成总结
         summary = await self._summarize_discussion(
             transcript, topic, concluded=consensus or (round_num >= max_rounds)
         )
+
+        workspace_manager.add_log(project_id, "info", "discussion",
+            f"讨论结束 [{discussion_id}] — "
+            f"轮次: {round_num}/{max_rounds}, 发言: {len(transcript)}条, "
+            f"共识: {'是' if consensus else '否'}, 总结: {len(summary)}字符")
 
         end_msg = Message(
             sender_id="discussion",

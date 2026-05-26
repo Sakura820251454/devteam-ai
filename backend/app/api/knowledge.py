@@ -21,7 +21,7 @@ from app.services.knowledge.knowledge_evolution import (
     SkillFromKnowledge,
 )
 
-router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
 
 @router.post("/discover")

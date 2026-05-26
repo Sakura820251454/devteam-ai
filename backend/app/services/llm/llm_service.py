@@ -50,7 +50,8 @@ class LLMService:
         track_cost: bool = True,
         task_id: Optional[str] = None,
         timeout: Optional[float] = None,
-        cancellation_token: Optional[asyncio.Event] = None
+        cancellation_token: Optional[asyncio.Event] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> LLMResponse:
         llm_config = agent.config.llm_config if agent else None
 
@@ -80,7 +81,8 @@ class LLMService:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     timeout=timeout,
-                    cancellation_token=cancellation_token
+                    cancellation_token=cancellation_token,
+                    tools=tools,
                 ),
                 timeout=effective_timeout + 10.0
             )

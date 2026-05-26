@@ -25,30 +25,36 @@ interface CreateProjectModalProps {
 
 const EXAMPLE_PROJECTS = [
   {
+    name: '信息查询',
+    desc: '查询某个事件的最新进展，搜索多渠道信息源，汇总关键时间线和各方报道，输出一份信息汇总简报。',
+    templateId: 'knowledge_research',
+  },
+  {
     name: '用户管理系统',
     desc: '构建一个企业级用户管理系统，支持用户注册、登录、角色权限管理、操作审计日志。前端用 React + Tailwind，后端用 FastAPI，数据库用 PostgreSQL。',
     templateId: 'web_application',
   },
   {
-    name: '博客平台',
-    desc: '开发一个支持 Markdown 的技术博客平台，包含文章发布、标签分类、评论系统、RSS 订阅、全文搜索。前后端分离架构。',
-    templateId: 'web_application',
+    name: '技术方案评估',
+    desc: '评估两个技术方案的优劣：方案A基于微服务架构，方案B基于单体+模块化。从性能、维护成本、团队能力等维度对比分析。',
+    templateId: 'tech_evaluation',
   },
   {
-    name: '电商后台',
-    desc: '搭建一个电商管理后台，包含商品管理、订单处理、库存跟踪、数据看板。需要角色权限控制和操作日志。',
-    templateId: 'web_application',
+    name: '项目文档编写',
+    desc: '为开源项目编写完整的 README、API 文档和贡献指南，确保新开发者能在 10 分钟内上手。',
+    templateId: 'doc_improvement',
   },
 ]
 
 const CATEGORY_LABELS: Record<string, string> = {
   simple: '📝 简单任务',
+  general: '🔧 通用任务',
   development: '🏗️ 开发项目',
   design: '🧭 方案设计',
   complex: '🏢 复杂系统',
 }
 
-const CATEGORY_ORDER = ['simple', 'development', 'design', 'complex']
+const CATEGORY_ORDER = ['simple', 'general', 'design', 'development', 'complex']
 
 const STRATEGY_LABELS: Record<string, string> = {
   sequential: '顺序执行',
@@ -65,14 +71,14 @@ const MOCK_TEMPLATES: Template[] = [
   { id: 'web_application', name: 'Web 应用', description: '全栈 Web 应用，前后端分离架构', category: 'development', suggested_strategy: 'pipeline', stages: [{ key: 'requirement', label: '需求分析', description: '分析用户需求', expected_artifact: '需求文档.md', parallel_group: null }, { key: 'design', label: '架构设计', description: '设计系统架构', expected_artifact: '技术方案.md', parallel_group: null }, { key: 'backend', label: '后端开发', description: '实现后端 API', expected_artifact: '后端代码/', parallel_group: 'dev' }, { key: 'frontend', label: '前端开发', description: '实现前端页面', expected_artifact: '前端代码/', parallel_group: 'dev' }, { key: 'integration', label: '集成测试', description: '前后端联调', expected_artifact: '测试报告.md', parallel_group: null }, { key: 'deployment', label: '部署上线', description: '部署到生产环境', expected_artifact: '部署配置/', parallel_group: null }] },
   { id: 'api_service', name: 'API 服务', description: '纯后端 API 服务开发', category: 'development', suggested_strategy: 'pipeline', stages: [{ key: 'requirement', label: '需求分析', description: '分析 API 需求', expected_artifact: '需求文档.md', parallel_group: null }, { key: 'design', label: '接口设计', description: '设计 API 接口和数据结构', expected_artifact: 'API设计.md', parallel_group: null }, { key: 'implement', label: '开发实现', description: '实现 API 逻辑', expected_artifact: '代码/', parallel_group: null }, { key: 'test', label: '测试', description: '接口测试和性能测试', expected_artifact: '测试报告.md', parallel_group: null }, { key: 'deploy', label: '部署', description: '部署 API 服务', expected_artifact: '部署配置/', parallel_group: null }] },
   { id: 'cli_tool', name: 'CLI 工具', description: '命令行工具开发', category: 'development', suggested_strategy: 'pipeline', stages: [{ key: 'requirement', label: '需求分析', description: '分析CLI工具用法', expected_artifact: '需求文档.md', parallel_group: null }, { key: 'develop', label: '核心开发', description: '实现核心功能', expected_artifact: '代码/', parallel_group: null }, { key: 'test', label: '测试', description: '功能测试', expected_artifact: '测试报告.md', parallel_group: null }, { key: 'release', label: '文档+发布', description: '编写README', expected_artifact: 'README.md', parallel_group: null }] },
-  { id: 'custom', name: '自定义', description: 'LLM 根据需求描述动态生成阶段', category: 'development', suggested_strategy: 'auto', stages: [] },
+  { id: 'custom', name: '自定义', description: 'LLM 根据需求描述动态生成阶段和产出物', category: 'general', suggested_strategy: 'auto', stages: [] },
 ]
 
 export default function CreateProjectModal({ isOpen, onClose, onSubmit }: CreateProjectModalProps) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [templates, setTemplates] = useState<Template[]>([])
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('web_application')
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('custom')
   const [showStagePreview, setShowStagePreview] = useState(false)
 
   useEffect(() => {
@@ -130,7 +136,7 @@ export default function CreateProjectModal({ isOpen, onClose, onSubmit }: Create
           <span className="text-xl">🚀</span>
           <div>
             <h3 className="text-sm font-medium text-surface-100">启动新项目</h3>
-            <p className="text-xs text-surface-400">描述需求，选择 Pipeline 模板，Agent 团队将接管后续开发</p>
+            <p className="text-xs text-surface-400">描述需求，选择 Pipeline 模板，Agent 团队将自动分析需求并执行</p>
           </div>
         </div>
 

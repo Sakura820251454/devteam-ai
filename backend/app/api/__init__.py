@@ -16,6 +16,8 @@ from app.api.arbitration import router as arbitration_router
 from app.api.workspaces import router as workspaces_router
 from app.api.settings import router as settings_router
 from app.api.execution import router as execution_router
+from app.api.task_analysis import router as task_analysis_router
+from app.api.team_suggestion import router as team_suggestion_router
 
 __all__ = [
     "agents_router",
@@ -36,4 +38,6 @@ __all__ = [
     "workspaces_router",
     "settings_router",
     "execution_router",
+    "task_analysis_router",
+    "team_suggestion_router",
 ]

@@ -15,7 +15,7 @@ from app.services.equipment.equipment_service import (
     ResourceCost,
 )
 
-router = APIRouter(prefix="/equipment", tags=["equipment"])
+router = APIRouter(prefix="/api/equipment", tags=["equipment"])
 
 
 @router.get("/tools")

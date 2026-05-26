@@ -15,7 +15,7 @@ from app.services.learning.skill_manager import Skill
 from app.services.learning.matcher import SkillMatch
 
 
-router = APIRouter(prefix="/skills", tags=["技能管理"])
+router = APIRouter(prefix="/api/skills", tags=["技能管理"])
 
 
 class SkillResponse(BaseModel):

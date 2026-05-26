@@ -22,7 +22,8 @@ class BaseLLMProvider(ABC):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         timeout: Optional[float] = None,
-        cancellation_token: Optional[asyncio.Event] = None
+        cancellation_token: Optional[asyncio.Event] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> LLMResponse:
         pass
 
@@ -37,6 +38,19 @@ class BaseLLMProvider(ABC):
         cancellation_token: Optional[asyncio.Event] = None
     ) -> AsyncIterator[str]:
         pass
+
+
+def _parse_chat_response(data: Dict, model: str) -> LLMResponse:
+    """Parse OpenAI-compatible chat completion response, including tool_calls."""
+    choice = data["choices"][0]
+    msg = choice["message"]
+    return LLMResponse(
+        content=msg.get("content"),
+        usage=data.get("usage", {}),
+        model=data.get("model", model),
+        finish_reason=choice.get("finish_reason", "stop"),
+        tool_calls=msg.get("tool_calls"),
+    )
 
 
 class OpenAIProvider(BaseLLMProvider):
@@ -66,11 +80,12 @@ class OpenAIProvider(BaseLLMProvider):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         timeout: Optional[float] = None,
-        cancellation_token: Optional[asyncio.Event] = None
+        cancellation_token: Optional[asyncio.Event] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> LLMResponse:
         model = model or "gpt-4o-mini"
 
-        payload = {
+        payload: Dict[str, Any] = {
             "model": model,
             "messages": [msg.to_dict() for msg in messages],
             "temperature": temperature,
@@ -78,6 +93,8 @@ class OpenAIProvider(BaseLLMProvider):
 
         if max_tokens:
             payload["max_tokens"] = max_tokens
+        if tools:
+            payload["tools"] = tools
 
         async with asyncio.timeout(timeout):
             response = await self.client.post("/chat/completions", json=payload)
@@ -87,14 +104,7 @@ class OpenAIProvider(BaseLLMProvider):
                 raise asyncio.CancelledError("LLM call cancelled")
 
             data = response.json()
-            choice = data["choices"][0]
-
-            return LLMResponse(
-                content=choice["message"]["content"],
-                usage=data.get("usage", {}),
-                model=data.get("model", model),
-                finish_reason=choice.get("finish_reason", "stop")
-            )
+            return _parse_chat_response(data, model)
 
     async def stream_chat(
         self,
@@ -160,11 +170,12 @@ class DeepSeekProvider(BaseLLMProvider):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         timeout: Optional[float] = None,
-        cancellation_token: Optional[asyncio.Event] = None
+        cancellation_token: Optional[asyncio.Event] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> LLMResponse:
         model = model or "deepseek-v4-flash"
 
-        payload = {
+        payload: Dict[str, Any] = {
             "model": model,
             "messages": [msg.to_dict() for msg in messages],
             "temperature": temperature,
@@ -172,6 +183,8 @@ class DeepSeekProvider(BaseLLMProvider):
 
         if max_tokens:
             payload["max_tokens"] = max_tokens
+        if tools:
+            payload["tools"] = tools
 
         async with asyncio.timeout(timeout):
             response = await self.client.post("/chat/completions", json=payload)
@@ -181,14 +194,7 @@ class DeepSeekProvider(BaseLLMProvider):
                 raise asyncio.CancelledError("LLM call cancelled")
 
             data = response.json()
-            choice = data["choices"][0]
-
-            return LLMResponse(
-                content=choice["message"]["content"],
-                usage=data.get("usage", {}),
-                model=data.get("model", model),
-                finish_reason=choice.get("finish_reason", "stop")
-            )
+            return _parse_chat_response(data, model)
 
     async def stream_chat(
         self,
@@ -255,7 +261,8 @@ class AnthropicProvider(BaseLLMProvider):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         timeout: Optional[float] = None,
-        cancellation_token: Optional[asyncio.Event] = None
+        cancellation_token: Optional[asyncio.Event] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> LLMResponse:
         model = model or "claude-3-5-sonnet-20240620"
         max_tokens = max_tokens or 4096
@@ -271,7 +278,7 @@ class AnthropicProvider(BaseLLMProvider):
                     "content": msg.content
                 })
 
-        payload = {
+        payload: Dict[str, Any] = {
             "model": model,
             "messages": chat_messages,
             "temperature": temperature,
@@ -280,6 +287,8 @@ class AnthropicProvider(BaseLLMProvider):
 
         if system_msg:
             payload["system"] = system_msg
+        if tools:
+            payload["tools"] = tools  # Anthropic supports OpenAI-format tools
 
         async with asyncio.timeout(timeout):
             response = await self.client.post("/v1/messages", json=payload)
@@ -290,15 +299,34 @@ class AnthropicProvider(BaseLLMProvider):
 
             data = response.json()
 
+            # Anthropic returns tool_use blocks in content array
+            tool_calls = None
+            text_content = ""
+            for block in data.get("content", []):
+                if block.get("type") == "text":
+                    text_content += block.get("text", "")
+                elif block.get("type") == "tool_use":
+                    if tool_calls is None:
+                        tool_calls = []
+                    tool_calls.append({
+                        "id": block.get("id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": block.get("name", ""),
+                            "arguments": json.dumps(block.get("input", {})),
+                        },
+                    })
+
             return LLMResponse(
-                content=data["content"][0]["text"],
+                content=text_content or None,
                 usage={
                     "prompt_tokens": data.get("usage", {}).get("input_tokens", 0),
                     "completion_tokens": data.get("usage", {}).get("output_tokens", 0),
                     "total_tokens": data.get("usage", {}).get("input_tokens", 0) + data.get("usage", {}).get("output_tokens", 0),
                 },
                 model=model,
-                finish_reason=data.get("stop_reason", "end_turn")
+                finish_reason=data.get("stop_reason", "end_turn"),
+                tool_calls=tool_calls,
             )
 
     async def stream_chat(
@@ -380,17 +408,20 @@ class AzureOpenAIProvider(BaseLLMProvider):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         timeout: Optional[float] = None,
-        cancellation_token: Optional[asyncio.Event] = None
+        cancellation_token: Optional[asyncio.Event] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> LLMResponse:
         deployment_name = model or "gpt-4o-mini"
 
-        payload = {
+        payload: Dict[str, Any] = {
             "messages": [msg.to_dict() for msg in messages],
             "temperature": temperature,
         }
 
         if max_tokens:
             payload["max_tokens"] = max_tokens
+        if tools:
+            payload["tools"] = tools
 
         url = f"/openai/deployments/{deployment_name}/chat/completions?api-version={self.api_version}"
 
@@ -402,14 +433,7 @@ class AzureOpenAIProvider(BaseLLMProvider):
                 raise asyncio.CancelledError("LLM call cancelled")
 
             data = response.json()
-            choice = data["choices"][0]
-
-            return LLMResponse(
-                content=choice["message"]["content"],
-                usage=data.get("usage", {}),
-                model=data.get("model", deployment_name),
-                finish_reason=choice.get("finish_reason", "stop")
-            )
+            return _parse_chat_response(data, deployment_name)
 
     async def stream_chat(
         self,

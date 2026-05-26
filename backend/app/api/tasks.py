@@ -47,6 +47,7 @@ class TaskResponse(BaseModel):
     project_id: str = ""
     status: TaskStatus
     priority: Priority
+    risk_level: str = "low"
     assigned_agents: List[str]
     collaborated_agents: List[str]
     dependencies: List[str]
@@ -56,6 +57,9 @@ class TaskResponse(BaseModel):
     created_at: str
     updated_at: str
     completed_at: Optional[str]
+    approval_required: bool = False
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
     history: List[TaskHistory]
 
 
@@ -67,6 +71,7 @@ def task_to_response(task: Task) -> TaskResponse:
         project_id=getattr(task, 'project_id', ''),
         status=task.status,
         priority=task.priority,
+        risk_level=getattr(task, 'risk_level', 'low') or 'low',
         assigned_agents=task.assigned_agents,
         collaborated_agents=task.collaborated_agents,
         dependencies=task.dependencies,
@@ -76,6 +81,9 @@ def task_to_response(task: Task) -> TaskResponse:
         created_at=task.created_at.isoformat(),
         updated_at=task.updated_at.isoformat(),
         completed_at=task.completed_at.isoformat() if task.completed_at else None,
+        approval_required=getattr(task, 'approval_required', False) or False,
+        approved_by=getattr(task, 'approved_by', None) or None,
+        approved_at=task.approved_at.isoformat() if getattr(task, 'approved_at', None) else None,
         history=task.history
     )
 

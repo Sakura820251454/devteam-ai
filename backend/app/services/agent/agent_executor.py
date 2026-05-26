@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+import traceback
 import uuid
 import logging
 from datetime import datetime
@@ -157,12 +158,20 @@ class AgentExecutor:
         if not agent:
             return {"success": False, "error": "Agent not found"}
 
+        agent_name = agent.get("name", agent_id)
+        project_id = task.project_id
+
+        if project_id:
+            workspace_manager.add_log(project_id, "info", "agent_executor",
+                f"Agent [{agent_name}] 接管任务「{task.title}」— 状态: {task.status.value}")
+
         # 验证 Agent 属于该任务所在项目
-        task_project = task.project_id
-        if task_project:
+        if project_id:
             agent_project = agent_service.get_agent_project(agent_id)
-            if agent_project and agent_project != task_project:
-                return {"success": False, "error": f"Agent {agent_id} 属于项目 {agent_project}，无法执行项目 {task_project} 的任务"}
+            if agent_project and agent_project != project_id:
+                workspace_manager.add_log(project_id, "error", "agent_executor",
+                    f"Agent [{agent_name}] 项目不匹配: agent在{agent_project}, 任务在{project_id}")
+                return {"success": False, "error": f"Agent {agent_id} 属于项目 {agent_project}，无法执行项目 {project_id} 的任务"}
 
         cancellation_token = asyncio.Event()
         self._cancellation_tokens[task_id] = cancellation_token
@@ -171,6 +180,7 @@ class AgentExecutor:
             "agent_id": agent_id,
             "status": ExecutionStatus.RUNNING,
             "started_at": datetime.now(),
+            "completed_at": None,
             "last_heartbeat": datetime.now(),
             "current_step": 0,
             "total_steps": 1,
@@ -181,45 +191,55 @@ class AgentExecutor:
             await task_board.change_status(task_id, TaskStatus.TODO, agent_id)
         await task_board.change_status(task_id, TaskStatus.IN_PROGRESS, agent_id)
 
-        msg = Message(
-            sender_id=agent_id,
-            sender_name=agent.get("name", "Agent"),
-            channel=f"task:{task_id}",
-            content=f"开始执行任务: {task.title}",
-            message_type=MessageType.SYSTEM
-        )
-        await message_bus.send_to_task(msg, task_id)
+        if project_id:
+            workspace_manager.add_log(project_id, "info", "agent_executor",
+                f"任务「{task.title}」状态: {task.status.value} → IN_PROGRESS")
 
         try:
             if cancellation_token.is_set():
                 raise asyncio.CancelledError("Task cancelled before execution")
 
             checkpoint = await checkpoint_manager.load_checkpoint(task_id)
-            if checkpoint and checkpoint.get("step_index", 0) > 0:
-                result = await self._execute_task_with_steps(
-                    task, agent, cancellation_token, start_from_step=checkpoint["step_index"]
-                )
-            else:
-                result = await self._execute_task_with_steps(
-                    task, agent, cancellation_token, start_from_step=0
-                )
+            start_from = checkpoint.get("step_index", 0) if checkpoint else 0
+            if start_from > 0:
+                workspace_manager.add_log(project_id, "info", "agent_executor",
+                    f"任务「{task.title}」从检查点恢复 — step {start_from}")
 
+            result = await self._execute_task_with_steps(
+                task, agent, cancellation_token, start_from_step=start_from
+            )
+
+            elapsed = (datetime.now() - self._running_tasks[task_id]["started_at"]).total_seconds()
             if result.get("success", False):
                 await task_board.change_status(task_id, TaskStatus.REVIEW, agent_id)
                 self._running_tasks[task_id]["status"] = ExecutionStatus.COMPLETED
+                if project_id:
+                    workspace_manager.add_log(project_id, "info", "agent_executor",
+                        f"任务「{task.title}」执行成功 → REVIEW (耗时{elapsed:.1f}s, "
+                        f"步骤: {result.get('steps_completed', '?')}/{result.get('total_steps', '?')})")
                 return result
             else:
                 self._running_tasks[task_id]["status"] = ExecutionStatus.FAILED
+                if project_id:
+                    workspace_manager.add_log(project_id, "error", "agent_executor",
+                        f"任务「{task.title}」执行失败 (耗时{elapsed:.1f}s): {result.get('error', 'Unknown')[:200]}")
                 return result
 
         except asyncio.CancelledError:
             self._running_tasks[task_id]["status"] = ExecutionStatus.PAUSED
+            if project_id:
+                workspace_manager.add_log(project_id, "warning", "agent_executor",
+                    f"任务「{task.title}」被暂停/取消")
             await task_board.add_comment(task_id, "任务被暂停/取消", "system")
             await task_board.change_status(task_id, TaskStatus.PAUSED, "system")
             return {"success": False, "error": "Task cancelled", "paused": True}
 
         except Exception as e:
             self._running_tasks[task_id]["status"] = ExecutionStatus.FAILED
+            tb = traceback.format_exc()
+            if project_id:
+                workspace_manager.add_log(project_id, "error", "agent_executor",
+                    f"任务「{task.title}」执行异常: {str(e)}\n{tb[-400:]}")
             await task_board.add_comment(task_id, f"执行失败: {str(e)}", agent_id)
             return {"success": False, "error": str(e)}
 
@@ -235,13 +255,27 @@ class AgentExecutor:
     ) -> Dict[str, Any]:
         task_id = task.id
         agent_id = agent.get("id", "unknown")
+        agent_name = agent.get("name", agent_id)
+        project_id = task.project_id
         execution = self._running_tasks.get(task_id, {})
+
+        if project_id:
+            workspace_manager.add_log(project_id, "info", "agent_executor",
+                f"[{agent_name}] 规划任务步骤: 「{task.title}」")
 
         steps = await self._plan_task_steps(task, agent)
         if not steps:
+            if project_id:
+                workspace_manager.add_log(project_id, "warning", "agent_executor",
+                    f"[{agent_name}] 步骤规划为空，回退到单次执行: 「{task.title}」")
             return await self._fallback_single_execution(task, agent, cancellation_token)
 
         total_steps = len(steps)
+        step_names = [s.get("name", f"step{i+1}")[:30] for i, s in enumerate(steps)]
+        if project_id:
+            workspace_manager.add_log(project_id, "info", "agent_executor",
+                f"[{agent_name}] 步骤规划完成: {total_steps}步 — {step_names}")
+
         execution["total_steps"] = total_steps
         execution["current_step"] = start_from_step
 
@@ -254,7 +288,8 @@ class AgentExecutor:
         )
 
         accumulated_output = ""
-        system_prompt = agent.get("system_prompt", "你是一个专业的开发团队成员。")
+        system_prompt = agent.get("system_prompt", "你是一个专业的团队成员。")
+        step_start_time = datetime.now()
 
         for step_idx in range(start_from_step, total_steps):
             if cancellation_token.is_set():
@@ -262,8 +297,13 @@ class AgentExecutor:
 
             step = steps[step_idx]
             step_name = step.get("name", f"步骤 {step_idx + 1}")
+            step_start_time = datetime.now()
             execution["current_step"] = step_idx
             self._send_heartbeat(task_id)
+
+            if project_id:
+                workspace_manager.add_log(project_id, "info", "agent_executor",
+                    f"[{agent_name}] [{step_idx + 1}/{total_steps}] 开始: {step_name}")
 
             await task_board.add_comment(
                 task_id,
@@ -288,16 +328,29 @@ class AgentExecutor:
                 )
 
                 step_result = response.content
+                step_elapsed = (datetime.now() - step_start_time).total_seconds()
                 accumulated_output += f"\n\n## 步骤 {step_idx + 1}: {step_name}\n{step_result}"
 
-                # 提取代码块写入 workspace（按任务名去重，每次覆盖旧版）
-                self._save_artifacts_from_response(task, step_result)
+                # 提取代码块写入 workspace
+                saved_files = self._save_artifacts_from_response(task, step_result)
+
+                if project_id:
+                    tokens_info = ""
+                    if hasattr(response, 'usage') and response.usage:
+                        tokens_info = f", tokens: {getattr(response.usage, 'total_tokens', '?')}"
+                    workspace_manager.add_log(project_id, "info", "agent_executor",
+                        f"[{agent_name}] [{step_idx + 1}/{total_steps}] 完成: {step_name} "
+                        f"({len(step_result)}字符, {step_elapsed:.1f}s{tokens_info}, "
+                        f"产出物: {saved_files or '无'})")
 
                 await self._save_checkpoint(task_id, step_idx, step_name, llm_messages, accumulated_output)
                 await task_persistence_service.update_heartbeat(task_id, step_idx, total_steps)
                 self._send_heartbeat(task_id)
 
             except asyncio.TimeoutError:
+                if project_id:
+                    workspace_manager.add_log(project_id, "error", "agent_executor",
+                        f"[{agent_name}] [{step_idx + 1}/{total_steps}] 步骤超时: {step_name}")
                 await self._save_checkpoint(task_id, step_idx, step_name, llm_messages, accumulated_output)
                 raise
 
@@ -305,10 +358,17 @@ class AgentExecutor:
         execution["total_steps"] = total_steps
         self._send_heartbeat(task_id)
 
+        total_elapsed = (datetime.now() - execution.get("started_at", step_start_time)).total_seconds()
+        if project_id:
+            workspace_manager.add_log(project_id, "info", "agent_executor",
+                f"[{agent_name}] 全部{total_steps}步骤执行完成 ({total_elapsed:.1f}s)")
+
         return {
             "success": True,
             "result": accumulated_output,
-            "summary": self._summarize_task_result(task.title, accumulated_output)
+            "summary": self._summarize_task_result(task.title, accumulated_output),
+            "steps_completed": total_steps,
+            "total_steps": total_steps,
         }
 
     async def _plan_task_steps(self, task: Task, agent: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -417,25 +477,60 @@ class AgentExecutor:
         execution_prompt = self._build_task_execution_prompt(task, agent)
         system_prompt = agent.get("system_prompt") or registry.render("agent.executor.fallback_system", {})
 
-        llm_messages = [
-            LLMMessage(role="system", content=system_prompt),
-            LLMMessage(role="user", content=execution_prompt)
-        ]
+        project_id = getattr(task, 'project_id', '')
 
-        response = await llm_service.chat(
-            llm_messages,
-            agent=None,
-            track_cost=True,
-            task_id=task.id,
-            timeout=self._step_timeout,
-            cancellation_token=cancellation_token
-        )
+        # 有工作区时启用工具调用（对标 Claude Code 的工具体系）
+        if project_id:
+            from app.services.agent.tool_executor import tool_executor as te
+            from app.services.agent.tools import get_tool_registry
+
+            tools = get_tool_registry().get_openai_tools()
+            llm_messages = [
+                LLMMessage(role="system", content=system_prompt),
+                LLMMessage(role="user", content=execution_prompt)
+            ]
+
+            try:
+                result_content = await te.run(
+                    messages=llm_messages,
+                    tools=tools,
+                    project_id=project_id,
+                    cancellation_token=cancellation_token,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                workspace_manager.add_log(project_id, "warning", "tool_executor",
+                    f"工具调用执行失败，回退到普通模式: {e}")
+                # 回退到不带工具的 LLM 调用
+                response = await llm_service.chat(
+                    llm_messages,
+                    agent=None,
+                    track_cost=True,
+                    task_id=task.id,
+                    timeout=self._step_timeout,
+                    cancellation_token=cancellation_token
+                )
+                result_content = response.content or ""
+        else:
+            llm_messages = [
+                LLMMessage(role="system", content=system_prompt),
+                LLMMessage(role="user", content=execution_prompt)
+            ]
+            response = await llm_service.chat(
+                llm_messages,
+                agent=None,
+                track_cost=True,
+                task_id=task.id,
+                timeout=self._step_timeout,
+                cancellation_token=cancellation_token
+            )
+            result_content = response.content or ""
 
         if cancellation_token.is_set():
             raise asyncio.CancelledError("Task cancelled after LLM response")
 
-        result_content = response.content
-        self._save_artifacts_from_response(task, result_content, task.title.replace(" ", "_"))
+        self._save_artifacts_from_response(task, result_content)
         await task_board.add_comment(task.id, f"执行结果:\n{result_content}", agent.get("id", "system"))
 
         return {
@@ -446,10 +541,35 @@ class AgentExecutor:
 
     def _build_task_execution_prompt(self, task: Task, agent: Dict[str, Any]) -> str:
         task_tags = ", ".join(task.tags) if task.tags else "无"
+        upstream_context = self._build_upstream_context(task)
         return registry.render("agent.executor.task_execution", {
             "task_title": task.title,
             "task_description": task.description,
             "task_tags": task_tags,
+            "upstream_context": upstream_context,
+        })
+
+    def _build_upstream_context(self, task: Task) -> str:
+        """构建上游依赖任务清单（pull 模型：告知 agent 有哪些产出物可用，agent 按需拉取）。"""
+        project_id = getattr(task, 'project_id', '')
+        if not project_id:
+            return ""
+
+        deps = getattr(task, 'dependencies', []) or []
+        if not deps:
+            return ""
+
+        items = []
+        for dep_id in deps:
+            dep_task = task_board.get_task(dep_id)
+            dep_title = getattr(dep_task, 'title', dep_id) if dep_task else dep_id
+            items.append(f"- **{dep_title}** (task_id: {dep_id})")
+
+        if not items:
+            return ""
+
+        return registry.render("agent.executor.upstream_manifest", {
+            "upstream_items": "\n".join(items),
         })
 
     def _summarize_task_result(self, task_title: str, result: str) -> str:
@@ -458,22 +578,31 @@ class AgentExecutor:
         return f"{task_title}: {result}"
 
     @staticmethod
-    def _save_artifacts_from_response(task, response_text: str) -> None:
-        """从 LLM 响应中提取代码块，写入项目 workspace。
+    def _infer_stage_key(task) -> str:
+        """根据任务 tags 中的阶段信息推断产出物目录 (BUG #5 fix)。"""
+        known_phases = {
+            "requirement_analysis", "task_breakdown",
+            "analysis", "design", "coding", "execution",
+            "testing", "review", "delivery", "deploy",
+        }
+        tags = getattr(task, "tags", []) or []
+        for tag in tags:
+            if tag in known_phases:
+                return tag
+        return "coding"
 
-        文件名基于任务标题 + 代码内容（类名/函数名）组合生成。
-        同一步骤重试时，相同文件名自然覆盖旧版，不会留下迭代残渣。
-        不同步骤产生不同文件（不同类/函数名），互不干扰。
-        """
+    @staticmethod
+    def _save_artifacts_from_response(task, response_text: str) -> list:
+        """从 LLM 响应中提取代码块，写入项目 workspace。返回保存的文件名列表。"""
         import re
 
         project_id = getattr(task, "project_id", None)
         if not project_id:
-            return
+            return []
 
         code_blocks = re.findall(r"```(\w*)\n(.*?)```", response_text, re.DOTALL)
         if not code_blocks:
-            return
+            return []
 
         from app.services.project.workspace_manager import workspace_manager
 
@@ -488,11 +617,12 @@ class AgentExecutor:
             "markdown": ".md", "md": ".md",
         }
 
-        # Sanitize task title for use in filenames
         task_title = getattr(task, "title", "unknown") or "unknown"
         safe_title = re.sub(r'[\s\\/:*?"<>|]+', '_', task_title).strip('_')
 
-        stage_key = "coding"
+        # 根据任务阶段 tag 选择产出物目录 (BUG #5 fix)
+        stage_key = AgentExecutor._infer_stage_key(task)
+        saved_files = []
 
         for i, (lang, code) in enumerate(code_blocks):
             code = code.strip()
@@ -501,7 +631,6 @@ class AgentExecutor:
             lang_lower = lang.strip().lower()
             ext = ext_map.get(lang_lower, ".txt")
 
-            # Try to extract a meaningful name from the code block
             code_name = _extract_code_name(code, lang_lower)
             if code_name:
                 filename = f"{safe_title}_{code_name}{ext}"
@@ -512,34 +641,13 @@ class AgentExecutor:
 
             try:
                 workspace_manager.add_artifact(project_id, stage_key, filename, code)
+                saved_files.append(filename)
+                workspace_manager.add_log(project_id, "debug", "agent_executor",
+                    f"产出物: {filename} ({len(code)}字符, {lang_lower or 'text'})")
             except Exception as e:
                 logger.warning(f"Failed to save artifact {filename}: {e}")
 
-
-def _extract_code_name(code: str, lang: str) -> str:
-    """从代码块中提取有意义的名称（类名或函数名）作为文件名片段。"""
-    import re
-
-    if lang in ("python", "py"):
-        m = re.search(r'class\s+(\w+)', code)
-        if m:
-            return m.group(1).lower()
-        m = re.search(r'def\s+(\w+)', code)
-        if m:
-            return m.group(1).lower()
-
-    if lang in ("typescript", "ts", "tsx", "javascript", "js", "jsx"):
-        m = re.search(r'(?:export\s+)?class\s+(\w+)', code)
-        if m:
-            return m.group(1).lower()
-        m = re.search(r'(?:export\s+)?(?:async\s+)?function\s+(\w+)', code)
-        if m:
-            return m.group(1).lower()
-        m = re.search(r'(?:const|let|var)\s+(\w+)\s*=', code)
-        if m:
-            return m.group(1).lower()
-
-    return ""
+        return saved_files
 
     async def pause_execution(self, task_id: str) -> bool:
         async with self._lock:
@@ -570,6 +678,7 @@ def _extract_code_name(code: str, lang: str) -> str:
                         "agent_id": db_execution["agent_id"],
                         "status": ExecutionStatus(db_execution["status"]),
                         "started_at": db_execution["started_at"],
+                        "completed_at": db_execution.get("completed_at"),
                         "last_heartbeat": db_execution["last_heartbeat"],
                         "current_step": db_execution["current_step_index"],
                         "total_steps": db_execution["total_steps"],
@@ -678,16 +787,25 @@ def _extract_code_name(code: str, lang: str) -> str:
         if not execution:
             return None
 
-        return {
-            "task_id": task_id,
-            "agent_id": execution["agent_id"],
-            "status": execution["status"].value,
-            "started_at": execution["started_at"].isoformat() if execution["started_at"] else None,
-            "completed_at": execution["completed_at"].isoformat() if execution["completed_at"] else None,
-            "last_heartbeat": execution.get("last_heartbeat").isoformat() if execution.get("last_heartbeat") else None,
-            "current_step": execution.get("current_step", 0),
-            "total_steps": execution.get("total_steps", 1),
-        }
+        try:
+            status = execution.get("status")
+            started_at = execution.get("started_at")
+            completed_at = execution.get("completed_at")
+            last_heartbeat = execution.get("last_heartbeat")
+
+            return {
+                "task_id": task_id,
+                "agent_id": execution.get("agent_id", ""),
+                "status": status.value if hasattr(status, 'value') else str(status),
+                "started_at": started_at.isoformat() if started_at else None,
+                "completed_at": completed_at.isoformat() if completed_at else None,
+                "last_heartbeat": last_heartbeat.isoformat() if last_heartbeat else None,
+                "current_step": execution.get("current_step", 0),
+                "total_steps": execution.get("total_steps", 1),
+            }
+        except Exception:
+            logger.warning(f"Corrupt execution status for task {task_id}", exc_info=True)
+            return None
 
     def _send_heartbeat(self, task_id: str) -> None:
         execution = self._running_tasks.get(task_id)
@@ -698,11 +816,15 @@ def _extract_code_name(code: str, lang: str) -> str:
         return self._agent_tasks.get(agent_id)
 
     def get_running_tasks(self) -> List[Dict[str, Any]]:
-        return [
-            self.get_execution_status(task_id)
-            for task_id in self._running_tasks.keys()
-            if self.get_execution_status(task_id)
-        ]
+        results = []
+        for task_id in list(self._running_tasks.keys()):
+            try:
+                status = self.get_execution_status(task_id)
+                if status:
+                    results.append(status)
+            except Exception:
+                logger.warning(f"Failed to get status for task {task_id}", exc_info=True)
+        return results
 
     def is_global_paused(self) -> bool:
         return any(self._project_paused.values())
@@ -859,6 +981,32 @@ def _extract_code_name(code: str, lang: str) -> str:
                     task.description = original_desc  # 确保恢复
 
         return result
+
+
+def _extract_code_name(code: str, lang: str) -> str:
+    """从代码块中提取有意义的名称（类名或函数名）作为文件名片段。"""
+    import re
+
+    if lang in ("python", "py"):
+        m = re.search(r'class\s+(\w+)', code)
+        if m:
+            return m.group(1).lower()
+        m = re.search(r'def\s+(\w+)', code)
+        if m:
+            return m.group(1).lower()
+
+    if lang in ("typescript", "ts", "tsx", "javascript", "js", "jsx"):
+        m = re.search(r'(?:export\s+)?class\s+(\w+)', code)
+        if m:
+            return m.group(1).lower()
+        m = re.search(r'(?:export\s+)?(?:async\s+)?function\s+(\w+)', code)
+        if m:
+            return m.group(1).lower()
+        m = re.search(r'(?:const|let|var)\s+(\w+)\s*=', code)
+        if m:
+            return m.group(1).lower()
+
+    return ""
 
 
 agent_executor = AgentExecutor()
