@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from app.models.core_db import PipelineModel
-from app.services.collaboration.pipeline_orchestrator import Pipeline, PipelineStatus, PipelineStage
+from app.services.collaboration.pipeline_orchestrator import Pipeline, PipelineStatus
 
 
 class PipelinePersistenceService:
@@ -47,7 +47,7 @@ class PipelinePersistenceService:
             if existing:
                 existing.name = pipeline.name
                 existing.status = pipeline.status.value
-                existing.current_stage = pipeline.current_stage.value
+                existing.current_stage = pipeline.current_stage
                 existing.progress = pipeline.progress
                 existing.agents = pipeline.agents
                 existing.task_ids = pipeline.task_ids
@@ -56,7 +56,7 @@ class PipelinePersistenceService:
                 existing.team_config = getattr(pipeline, 'team_config', {})
                 existing.agent_roles = getattr(pipeline, 'agent_roles', {})
                 existing.stages = getattr(pipeline, 'stages', [])
-                existing.paused = pipeline.paused
+                existing.paused = (pipeline.status == PipelineStatus.PAUSED)
                 existing.stop_requested = pipeline.stop_requested
                 existing.started_at = pipeline.started_at
                 existing.completed_at = pipeline.completed_at
@@ -87,7 +87,7 @@ def _model_from_pipeline(pipeline: Pipeline, logs: List[Dict] = None) -> Pipelin
         project_id=pipeline.project_id,
         name=pipeline.name,
         status=pipeline.status.value,
-        current_stage=pipeline.current_stage.value,
+        current_stage=pipeline.current_stage,
         progress=pipeline.progress,
         agents=pipeline.agents,
         task_ids=pipeline.task_ids,
@@ -96,7 +96,7 @@ def _model_from_pipeline(pipeline: Pipeline, logs: List[Dict] = None) -> Pipelin
         team_config=getattr(pipeline, 'team_config', {}),
         agent_roles=getattr(pipeline, 'agent_roles', {}),
         stages=getattr(pipeline, 'stages', []),
-        paused=pipeline.paused,
+        paused=(pipeline.status == PipelineStatus.PAUSED),
         stop_requested=pipeline.stop_requested,
         created_at=pipeline.created_at,
         started_at=pipeline.started_at,
@@ -110,7 +110,10 @@ def _pipeline_from_model(model: PipelineModel) -> Pipeline:
     pipeline.project_id = model.project_id
     pipeline.name = model.name
     pipeline.status = PipelineStatus(model.status)
-    pipeline.current_stage = PipelineStage(model.current_stage)
+    # 数据完整性修复：DB 中 paused 标记与 status 不一致时，以 paused 为准
+    if model.paused and model.status != PipelineStatus.PAUSED.value:
+        pipeline.status = PipelineStatus.PAUSED
+    pipeline.current_stage = model.current_stage or ""
     pipeline.progress = model.progress
     pipeline.agents = model.agents or []
     pipeline.task_ids = model.task_ids or []
@@ -119,7 +122,6 @@ def _pipeline_from_model(model: PipelineModel) -> Pipeline:
     pipeline.team_config = model.team_config or {}
     pipeline.agent_roles = model.agent_roles or {}
     pipeline.stages = model.stages or []
-    pipeline.paused = model.paused or False
     pipeline.stop_requested = model.stop_requested or False
     pipeline.created_at = model.created_at
     pipeline.started_at = model.started_at

@@ -1,0 +1,36 @@
+{
+  "name": "阶段调整",
+  "prompt_pattern": "pipeline_templates.*adjustment|阶段调整|调整.*阶段",
+  "response": {
+    "analysis": "当前阶段设置合理，无需大幅调整",
+    "changes": {
+      "add": [],
+      "remove": [],
+      "reorder": [],
+      "rename": []
+    },
+    "final_stages": [
+      {
+        "key": "collect",
+        "label": "资料收集",
+        "description": "收集项目相关的各类资料和信息",
+        "expected_artifact": "资料清单和原始数据",
+        "parallel_group": null
+      },
+      {
+        "key": "analyze",
+        "label": "分析处理",
+        "description": "对收集到的资料进行分析和整理",
+        "expected_artifact": "分析报告",
+        "parallel_group": null
+      },
+      {
+        "key": "report",
+        "label": "报告输出",
+        "description": "生成最终的项目报告",
+        "expected_artifact": "最终报告文档",
+        "parallel_group": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "Agent 能力画像",
+  "prompt_pattern": "agent\\.trait\\.generate|能力画像|soul\\.md",
+  "response": {
+    "role_label": "全栈开发者",
+    "skills": ["Python", "FastAPI", "React", "PostgreSQL"],
+    "strength_areas": ["后端架构", "API 设计", "数据库优化"],
+    "collaboration_style": "务实型",
+    "communication_style": "简洁型",
+    "summary": "擅长全栈开发的工程师，注重代码质量和系统稳定性"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "团队建议",
+  "prompt_pattern": "team\\.build_suggestion|团队建议|组建团队",
+  "response": {
+    "team_name": "调查分析团队",
+    "roles": [
+      {
+        "role_name": "信息研究员",
+        "responsibilities": "负责收集和整理信息",
+        "required_capabilities": ["信息检索", "数据分析"],
+        "suggested_soul": "研究员型",
+        "matching_reason": "具备信息收集和分析能力",
+        "priority": "recommended"
+      },
+      {
+        "role_name": "报告撰写员",
+        "responsibilities": "负责汇总分析结果并撰写最终报告",
+        "required_capabilities": ["文档写作", "逻辑组织"],
+        "suggested_soul": "分析师型",
+        "matching_reason": "具备文档撰写和总结能力",
+        "priority": "optional"
+      }
+    ],
+    "strategy": {
+      "recommended": "sequential",
+      "reasoning": "收集和分析阶段有明显的前后依赖关系",
+      "alternatives": [
+        {"strategy": "discussion", "reason": "如果需要多角度分析可以讨论模式"}
+      ]
+    },
+    "overall_rationale": "项目需要先收集信息再分析，适合顺序执行"
+  }
+}

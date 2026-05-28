@@ -1,6 +1,4 @@
 import asyncio
-import json
-import re
 import traceback
 import uuid
 import logging
@@ -288,7 +286,25 @@ class AgentExecutor:
         )
 
         accumulated_output = ""
-        system_prompt = agent.get("system_prompt", "你是一个专业的团队成员。")
+        base_system_prompt = agent.get("system_prompt", "你是一个专业的团队成员。")
+
+        # 注入第一性原理 — 避免过度工程 + 主动提问
+        first_principles = (
+            "\n\n## 第一性原理 (First Principles)\n"
+            "- 先判断任务本质，选择最简单直接的完成方式。\n"
+            "- 不要为简单任务增加不必要的复杂度。\n"
+            "- 优先完成任务目标，而非构建完美系统。\n"
+            "- 能用现有工具解决的，不编写新代码。\n"
+            "- 能用分析报告解决的，不构建应用。\n"
+            "- 产出物要与任务类型匹配：研究类任务产出报告，开发类任务产出代码。\n"
+            "- 每项产出都要直接服务于最终目标，不做过度工程。\n"
+            "- **遇到不确定就问用户**：只要对任务的任何方面不确定（方向、方案、内容、\n"
+            "  数据、风格、取舍等），都应使用 [ASK_USER] 向用户提问。\n"
+            "  从用户处获取信息是最快、最有效的方式，远优于自行假设或编造。\n"
+            "- **模拟不等于完成**：模拟发送邮件/确认/收集等不是真正的产出物。\n"
+            "  必须产生真实的文件产出，或使用 [ASK_USER] 获取真实信息。"
+        )
+        system_prompt = base_system_prompt + first_principles
         step_start_time = datetime.now()
 
         for step_idx in range(start_from_step, total_steps):
@@ -328,6 +344,20 @@ class AgentExecutor:
                 )
 
                 step_result = response.content
+
+                # 检测 Agent 是否在向用户提问
+                ask_user_match = self._parse_ask_user(step_result)
+                if ask_user_match:
+                    await self._handle_ask_user(task, agent, ask_user_match, project_id, step_idx, step_name)
+                    return {
+                        "success": False,
+                        "result": step_result,
+                        "waiting_for_user": True,
+                        "question": ask_user_match,
+                        "steps_completed": step_idx,
+                        "total_steps": total_steps,
+                    }
+
                 step_elapsed = (datetime.now() - step_start_time).total_seconds()
                 accumulated_output += f"\n\n## 步骤 {step_idx + 1}: {step_name}\n{step_result}"
 
@@ -392,17 +422,21 @@ class AgentExecutor:
         return []
 
     def _parse_steps_from_response(self, response_text: str) -> List[Dict[str, Any]]:
-        json_match = re.search(r'\{[\s\S]*"steps"[\s\S]*\}', response_text)
-        if json_match:
-            try:
-                data = json.loads(json_match.group())
-                return data.get("steps", [])
-            except json.JSONDecodeError:
-                pass
+        from app.services.shared.json_extractor import extract_and_validate, JSONExtractionError, JSONValidationError
+        from app.services.shared.validation import TaskStepPlan
 
+        try:
+            plan = extract_and_validate(response_text, TaskStepPlan)
+            if plan.steps:
+                return [s.model_dump() for s in plan.steps]
+        except (JSONExtractionError, JSONValidationError) as e:
+            logger.warning(f"步骤解析失败，尝试回退解析: {e}")
+
+        # 回退：从纯文本中按编号列表提取
         lines = response_text.strip().split("\n")
         steps = []
         for line in lines:
+            import re
             match = re.match(r'^\d+[\.\)]\s*(.+)', line.strip())
             if match:
                 steps.append({"name": match.group(1), "description": "", "expected_output": ""})
@@ -475,7 +509,23 @@ class AgentExecutor:
         cancellation_token: asyncio.Event
     ) -> Dict[str, Any]:
         execution_prompt = self._build_task_execution_prompt(task, agent)
-        system_prompt = agent.get("system_prompt") or registry.render("agent.executor.fallback_system", {})
+        base_system_prompt = agent.get("system_prompt") or registry.render("agent.executor.fallback_system", {})
+        first_principles = (
+            "\n\n## 第一性原理 (First Principles)\n"
+            "- 先判断任务本质，选择最简单直接的完成方式。\n"
+            "- 不要为简单任务增加不必要的复杂度。\n"
+            "- 优先完成任务目标，而非构建完美系统。\n"
+            "- 能用现有工具解决的，不编写新代码。\n"
+            "- 能用分析报告解决的，不构建应用。\n"
+            "- 产出物要与任务类型匹配：研究类任务产出报告，开发类任务产出代码。\n"
+            "- 每项产出都要直接服务于最终目标，不做过度工程。\n"
+            "- **遇到不确定就问用户**：只要对任务的任何方面不确定（方向、方案、内容、\n"
+            "  数据、风格、取舍等），都应使用 [ASK_USER] 向用户提问。\n"
+            "  从用户处获取信息是最快、最有效的方式，远优于自行假设或编造。\n"
+            "- **模拟不等于完成**：模拟发送邮件/确认/收集等不是真正的产出物。\n"
+            "  必须产生真实的文件产出，或使用 [ASK_USER] 获取真实信息。"
+        )
+        system_prompt = base_system_prompt + first_principles
 
         project_id = getattr(task, 'project_id', '')
 
@@ -559,11 +609,26 @@ class AgentExecutor:
         if not deps:
             return ""
 
+        # 提前获取所有产出物文件列表（只调用一次）
+        try:
+            all_artifact_files = workspace_manager.list_artifact_files(project_id)
+        except Exception:
+            all_artifact_files = []
+
         items = []
         for dep_id in deps:
             dep_task = task_board.get_task(dep_id)
             dep_title = getattr(dep_task, 'title', dep_id) if dep_task else dep_id
-            items.append(f"- **{dep_title}** (task_id: {dep_id})")
+            dep_desc = getattr(dep_task, 'description', '')[:120] if dep_task else ''
+            line = f"- **{dep_title}** (task_id: {dep_id})\n  摘要: {dep_desc}" if dep_desc else f"- **{dep_title}** (task_id: {dep_id})"
+
+            # 匹配与上游任务相关的产出物文件
+            safe_title = re.sub(r'[\s\\/:*?"<>|]+', '_', dep_title).strip('_')
+            matched = [af["path"] for af in all_artifact_files if safe_title[:15] in af["name"]]
+            if matched:
+                line += f"\n  产出物: {', '.join(matched)}"
+
+            items.append(line)
 
         if not items:
             return ""
@@ -572,6 +637,74 @@ class AgentExecutor:
             "upstream_items": "\n".join(items),
         })
 
+    @staticmethod
+    def _parse_ask_user(text: str) -> dict | None:
+        """检测 LLM 输出是否包含 [ASK_USER] 标记，提取问题内容。"""
+        import re
+        match = re.search(r'\[ASK_USER\]\s*\n?\s*问题:\s*(.+?)(?:\n\s*上下文:\s*(.*?))?(?:\n\s*选项:?\s*(.*?))?(?:\n|$)', text, re.DOTALL)
+        if not match:
+            return None
+        question = match.group(1).strip()
+        context = match.group(2).strip() if match.group(2) else ""
+        options = match.group(3).strip() if match.group(3) else ""
+        return {
+            "question": question,
+            "context": context,
+            "options": options,
+            "agent_name": "",  # filled by caller
+        }
+
+    async def _handle_ask_user(
+        self,
+        task: Task,
+        agent: Dict[str, Any],
+        question: dict,
+        project_id: str,
+        step_idx: int,
+        step_name: str,
+    ) -> None:
+        """将 Agent 的问题写入干预队列，暂停任务等待用户答复。"""
+        from app.services.collaboration.pipeline_orchestrator import pipeline_orchestrator
+        from app.services.collaboration.task_board import task_board
+
+        agent_name = agent.get("name", agent.get("id", "unknown"))
+        question["agent_name"] = agent_name
+
+        # 1. 写入 task 评论
+        q_text = f"❓ **Agent 提问** (步骤 {step_idx + 1}: {step_name})\n\n**问题:** {question['question']}"
+        if question.get("context"):
+            q_text += f"\n\n**上下文:** {question['context']}"
+        await task_board.add_comment(task.id, q_text, agent.get("id", "system"))
+
+        # 2. 将任务状态改为 WAITING_FOR_USER
+        from app.models.task import TaskStatus
+        await task_board.change_status(task.id, TaskStatus.WAITING_FOR_USER, agent.get("id", "system"))
+
+        # 3. 写入 pipeline 干预队列
+        pipeline = pipeline_orchestrator._pipelines.get(
+            pipeline_orchestrator._active_pipelines.get(project_id, "")
+        ) if project_id else None
+        if pipeline:
+            pipeline._human_intervention_queue.append({
+                "type": "question_for_user",
+                "task_id": task.id,
+                "task_title": task.title,
+                "agent_name": agent_name,
+                "question": question["question"],
+                "context": question.get("context", ""),
+                "options": question.get("options", ""),
+                "timestamp": datetime.now().isoformat(),
+            })
+            if project_id:
+                from app.services.project.workspace_manager import workspace_manager
+                workspace_manager.add_log(project_id, "warning", "agent_executor",
+                    f"[{agent_name}] 向用户提问: {question['question'][:100]} — 等待用户答复")
+            # Pause pipeline: don't execute more tasks until user responds
+            from app.services.collaboration.pipeline_orchestrator import PipelineStatus
+            pipeline_orchestrator.transition(pipeline, PipelineStatus.PAUSED)
+            pipeline.add_log("agent_executor",
+                f"Agent [{agent_name}] 暂停等待用户答复 — 问题: {question['question'][:150]}", "warning")
+
     def _summarize_task_result(self, task_title: str, result: str) -> str:
         if len(result) > 500:
             return f"{task_title}: {result[:200]}..."
@@ -579,16 +712,34 @@ class AgentExecutor:
 
     @staticmethod
     def _infer_stage_key(task) -> str:
-        """根据任务 tags 中的阶段信息推断产出物目录 (BUG #5 fix)。"""
+        """根据任务标签/描述推断产出物目录。"""
         known_phases = {
             "requirement_analysis", "task_breakdown",
             "analysis", "design", "coding", "execution",
             "testing", "review", "delivery", "deploy",
+            "research", "report", "summary",
         }
         tags = getattr(task, "tags", []) or []
         for tag in tags:
             if tag in known_phases:
                 return tag
+
+        # 基于描述关键词推断更好的默认值
+        desc = (getattr(task, "description", "") or "").lower()
+        research_kw = ["调研", "研究", "分析", "报告", "research", "调查", "综述", "总结"]
+        content_kw = ["写作", "撰写", "文档", "文案", "内容", "编写", "write"]
+        test_kw = ["测试", "验证", "检查", "test", "验证"]
+
+        for kw in research_kw:
+            if kw in desc:
+                return "analysis"
+        for kw in content_kw:
+            if kw in desc:
+                return "report"
+        for kw in test_kw:
+            if kw in desc:
+                return "testing"
+
         return "coding"
 
     @staticmethod
@@ -602,6 +753,17 @@ class AgentExecutor:
 
         code_blocks = re.findall(r"```(\w*)\n(.*?)```", response_text, re.DOTALL)
         if not code_blocks:
+            # 无代码块时，将完整响应保存为 markdown 文件（交付物兜底）
+            task_title_safe = re.sub(r'[\s\\/:*?"<>|]+', '_', task.title).strip('_')
+            stage_key = AgentExecutor._infer_stage_key(task)
+            filename = f"{task_title_safe}_result.md"
+            try:
+                workspace_manager.add_artifact(project_id, stage_key, filename, response_text)
+                workspace_manager.add_log(project_id, "debug", "agent_executor",
+                    f"产出物(文本): {filename} ({len(response_text)}字符)")
+                return [filename]
+            except Exception as e:
+                logger.warning(f"Failed to save artifact {filename}: {e}")
             return []
 
         from app.services.project.workspace_manager import workspace_manager

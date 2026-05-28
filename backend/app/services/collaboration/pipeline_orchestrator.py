@@ -29,12 +29,26 @@ class PipelineStatus(str, Enum):
     FAILED = "failed"
 
 
-class PipelineStage(str, Enum):
-    REQUIREMENT_ANALYSIS = "requirement_analysis"
-    TASK_BREAKDOWN = "task_breakdown"
-    TASK_EXECUTION = "task_execution"
-    REVIEW = "review"
-    COMPLETED = "completed"
+# 合法的状态转移路径
+_ALLOWED_TRANSITIONS: dict[PipelineStatus, set[PipelineStatus]] = {
+    PipelineStatus.IDLE:      {PipelineStatus.RUNNING, PipelineStatus.FAILED},
+    PipelineStatus.RUNNING:   {PipelineStatus.PAUSED, PipelineStatus.COMPLETED, PipelineStatus.FAILED},
+    PipelineStatus.PAUSED:    {PipelineStatus.RUNNING, PipelineStatus.FAILED},
+    PipelineStatus.COMPLETED: set(),       # 终态
+    PipelineStatus.FAILED:    {PipelineStatus.RUNNING},  # 允许重启
+}
+
+
+class IllegalStateTransition(Exception):
+    """非法的状态转移。"""
+    def __init__(self, current: PipelineStatus, target: PipelineStatus):
+        super().__init__(f"非法的状态转移: {current.value} → {target.value}")
+
+
+# Standard stage keys — used as stage_handler lookup, not to restrict what stages can exist.
+# User-confirmed stages drive the pipeline; these are just the known handler bindings.
+STAGE_REQUIREMENT_ANALYSIS = "requirement_analysis"
+STAGE_TASK_BREAKDOWN = "task_breakdown"
 
 
 class Pipeline:
@@ -43,7 +57,7 @@ class Pipeline:
         self.project_id: str = ""
         self.name: str = ""
         self.status: PipelineStatus = PipelineStatus.IDLE
-        self.current_stage: PipelineStage = PipelineStage.REQUIREMENT_ANALYSIS
+        self.current_stage: str = ""  # set to stages[0]["key"] once stages are confirmed
         self.created_at: datetime = datetime.now()
         self.started_at: Optional[datetime] = None
         self.completed_at: Optional[datetime] = None
@@ -52,12 +66,13 @@ class Pipeline:
         self.progress: float = 0.0
         self.logs: List[Dict[str, Any]] = []
         self.context: Dict[str, Any] = {}
-        self.paused: bool = False
         self.stop_requested: bool = False
         self.team_config: Dict[str, Any] = {}
         self.agent_roles: Dict[str, str] = {}  # agent_id -> inferred role label
         self.stages: List[Dict[str, Any]] = []
         self._assignment_queue: List[str] = []  # FIFO queue for round-robin assignment
+        self._human_intervention_queue: List[Dict[str, Any]] = []  # queue for user intervention requests
+        self.project_type: str = "development"  # 项目类型（research/content/development/analysis/design）
 
     def add_log(self, stage: str, message: str, level: str = "info") -> None:
         entry = {
@@ -88,6 +103,22 @@ class PipelineOrchestrator:
 
     def initialize(self, db_service) -> None:
         self._db = db_service
+
+    @staticmethod
+    def transition(pipeline: Pipeline, new_status: PipelineStatus) -> None:
+        """执行 Pipeline 状态转移，合法性校验。
+
+        非法的转移路径会抛出 IllegalStateTransition。
+        这是修改 pipeline.status 的唯一入口。
+        """
+        allowed = _ALLOWED_TRANSITIONS.get(pipeline.status, set())
+        if new_status not in allowed:
+            raise IllegalStateTransition(pipeline.status, new_status)
+        old_status = pipeline.status
+        pipeline.status = new_status
+        if old_status != new_status:
+            pipeline.add_log("control",
+                f"状态转移: {old_status.value} → {new_status.value}", "debug")
 
     async def load_all(self) -> None:
         if self._db:
@@ -137,6 +168,27 @@ class PipelineOrchestrator:
 
             self._pipelines[pipeline.id] = pipeline
             self.add_log(f"流水线创建: {name}", "init")
+
+            # 检测项目类型以指导后续任务拆解
+            project = project_service.get_project(project_id)
+            if project and project.requirements:
+                try:
+                    from app.services.task.task_analyzer import task_analyzer
+                    analysis = await task_analyzer.analyze(project.requirements)
+                    pipeline.context["project_type_analysis"] = {
+                        "domain": analysis.domain,
+                        "task_type": analysis.task_type,
+                        "complexity": analysis.complexity,
+                        "breakdown": analysis.breakdown,
+                        "summary": analysis.analysis_summary,
+                    }
+                    pipeline.project_type = self._domain_to_project_type(analysis.domain)
+                    pipeline.add_log("init",
+                        f"项目类型检测: domain={analysis.domain}, type={analysis.task_type}, "
+                        f"project_type={pipeline.project_type}")
+                except Exception as e:
+                    pipeline.add_log("init", f"项目类型检测失败，使用默认值(development): {e}", "warning")
+
             if self._db:
                 await self._db.save(pipeline)
             return pipeline
@@ -150,13 +202,16 @@ class PipelineOrchestrator:
             if pipeline.status == PipelineStatus.RUNNING:
                 return False
 
+            if not pipeline.context.get("stages_confirmed"):
+                pipeline.add_log("init", "阶段未确认，无法启动", "error")
+                return False
+
             project = project_service.get_project(pipeline.project_id)
             if not project:
                 return False
 
-            pipeline.status = PipelineStatus.RUNNING
+            self.transition(pipeline, PipelineStatus.RUNNING)
             pipeline.started_at = pipeline.started_at or datetime.now()
-            pipeline.current_stage = pipeline.current_stage  # keep stage if resuming
             self._active_pipelines[pipeline.project_id] = pipeline_id
 
             task = asyncio.create_task(self._run_pipeline(pipeline_id))
@@ -164,6 +219,20 @@ class PipelineOrchestrator:
             if self._db:
                 await self._db.save(pipeline)
             return True
+
+    def _stage_index(self, pipeline, stage_key: str) -> int:
+        """Return the index of stage_key in pipeline.stages, or -1 if not found."""
+        for i, s in enumerate(pipeline.stages):
+            if s.get("key") == stage_key:
+                return i
+        return -1
+
+    def _resume_from_stage(self, pipeline, stage_idx: int) -> None:
+        """Mark all stages before stage_idx as completed for resume support."""
+        for i in range(stage_idx):
+            key = pipeline.stages[i].get("key", "")
+            if key:
+                self._update_stage_status(pipeline, key, "completed")
 
     async def _run_pipeline(self, pipeline_id: str) -> None:
         pipeline = self._pipelines.get(pipeline_id)
@@ -179,11 +248,22 @@ class PipelineOrchestrator:
             for aid in pipeline.agents:
                 a = agent_service.get_agent(aid)
                 agent_names.append(a.get("name", aid) if a else aid)
+
+            confirmed_stages = pipeline.stages or []
+            if not confirmed_stages:
+                pipeline.add_log("init", "无确认阶段，流水线中止", "error")
+                self.transition(pipeline, PipelineStatus.FAILED)
+                self._cleanup_pipeline_agents(pipeline)
+                if self._db:
+                    await self._db.save(pipeline)
+                return
+
+            stage_labels = [s.get("label", s.get("key", "")) for s in confirmed_stages]
             pipeline.add_log("init",
                 f"流水线启动 — 项目: {project.name}, Agent: {agent_names}, "
-                f"任务数: {len(pipeline.task_ids)}, 阶段: {pipeline.current_stage.value}")
+                f"阶段({len(confirmed_stages)}): {stage_labels}")
 
-            # 确保 workspace 存在
+            # Ensure workspace exists
             from app.services.project.workspace_manager import workspace_manager
             try:
                 ws = workspace_manager.get_workspace(pipeline.project_id)
@@ -192,81 +272,121 @@ class PipelineOrchestrator:
                         project_id=pipeline.project_id,
                         name=project.name,
                         description=project.description or "",
+                        stages=confirmed_stages,
                     )
                     pipeline.add_log("init", "Workspace 已创建")
             except Exception as e:
                 pipeline.add_log("init", f"Workspace 创建失败: {e}", "warning")
 
-            # 根据 current_stage 决定从哪个阶段开始（支持从保存状态恢复）
-            if pipeline.current_stage in (PipelineStage.REQUIREMENT_ANALYSIS,):
-                if pipeline.context.get("requirement_analysis"):
-                    pipeline.add_log("requirement_analysis", "使用已保存的需求分析结果，跳过执行")
-                    pipeline.progress = max(pipeline.progress, 0.2)
-                else:
+            # Determine resume position
+            start_idx = 0
+            if pipeline.current_stage:
+                idx = self._stage_index(pipeline, pipeline.current_stage)
+                if idx >= 0:
+                    start_idx = idx
+                    self._resume_from_stage(pipeline, start_idx)
+                    pipeline.add_log("init",
+                        f"从阶段「{pipeline.current_stage}」(#{start_idx + 1}/{len(confirmed_stages)}) 恢复执行")
+
+            # Auto-run requirement analysis + task breakdown if needed before execution stages
+            has_requirement_stage = any(
+                s.get("key") == STAGE_REQUIREMENT_ANALYSIS for s in confirmed_stages
+            )
+            has_breakdown_stage = any(
+                s.get("key") == STAGE_TASK_BREAKDOWN for s in confirmed_stages
+            )
+            if not has_requirement_stage and not has_breakdown_stage and not pipeline.task_ids:
+                pipeline.add_log("init", "自动触发需求分析（未在阶段列表中）")
+                if not pipeline.context.get("requirement_analysis"):
                     await self._stage_requirement_analysis(pipeline)
-                    if self._db:
-                        await self._db.save(pipeline)
-
-            if pipeline.stop_requested:
-                pipeline.status = PipelineStatus.FAILED
-                self._cleanup_pipeline_agents(pipeline)
-                if self._db:
-                    await self._db.save(pipeline)
-                return
-
-            if pipeline.current_stage in (PipelineStage.REQUIREMENT_ANALYSIS, PipelineStage.TASK_BREAKDOWN):
-                if pipeline.context.get("task_breakdown") and pipeline.task_ids:
-                    pipeline.add_log("task_breakdown", f"使用已保存的任务分解（{len(pipeline.task_ids)} 个任务），跳过执行")
-                    pipeline.progress = max(pipeline.progress, 0.4)
-                else:
+                # 需求分析阶段可能触发 _handle_ask_user 设置 paused=True，
+                # 此时应继续推进到任务拆解，不应在此阻塞
+                if pipeline.status == PipelineStatus.PAUSED and not pipeline.stop_requested:
+                    pipeline.add_log("init", "需求分析产生的用户提问已记录，继续推进任务拆解")
+                    self.transition(pipeline, PipelineStatus.RUNNING)
+                pipeline.add_log("init", "自动触发任务拆解（未在阶段列表中）")
+                if not pipeline.context.get("task_breakdown"):
                     await self._stage_task_breakdown(pipeline, project)
-                    if self._db:
-                        await self._db.save(pipeline)
-
-            if pipeline.stop_requested:
-                pipeline.status = PipelineStatus.FAILED
-                self._cleanup_pipeline_agents(pipeline)
+                await project_service.advance_phase(pipeline.project_id)
                 if self._db:
                     await self._db.save(pipeline)
-                return
-
-            if pipeline.current_stage in (
-                PipelineStage.REQUIREMENT_ANALYSIS, PipelineStage.TASK_BREAKDOWN, PipelineStage.TASK_EXECUTION
-            ):
-                await self._stage_task_execution(pipeline)
+            elif not has_requirement_stage and not pipeline.context.get("requirement_analysis"):
+                pipeline.add_log("init", "自动触发需求分析（未在阶段列表中）")
+                await self._stage_requirement_analysis(pipeline)
+                if pipeline.status == PipelineStatus.PAUSED and not pipeline.stop_requested:
+                    self.transition(pipeline, PipelineStatus.RUNNING)
+                await self._stage_task_breakdown(pipeline, project)
+                await project_service.advance_phase(pipeline.project_id)
                 if self._db:
                     await self._db.save(pipeline)
 
-            if pipeline.stop_requested:
-                pipeline.status = PipelineStatus.FAILED
-                self._cleanup_pipeline_agents(pipeline)
+            # Iterate through confirmed stages
+            total_stages = len(confirmed_stages)
+            for i in range(start_idx, total_stages):
+                if pipeline.stop_requested or pipeline.status == PipelineStatus.PAUSED:
+                    break
+
+                stage_def = confirmed_stages[i]
+                key = stage_def.get("key", f"stage_{i}")
+                label = stage_def.get("label", key)
+
+                pipeline.current_stage = key
+                self._update_stage_status(pipeline, key, "active")
+                pipeline.progress = i / total_stages if total_stages > 0 else 0
+                pipeline.add_log(key, f"阶段「{label}」开始 ({i + 1}/{total_stages})")
+
+                if key == STAGE_REQUIREMENT_ANALYSIS:
+                    if pipeline.context.get("requirement_analysis"):
+                        pipeline.add_log(key, "使用已保存的需求分析结果，跳过执行")
+                    else:
+                        await self._stage_requirement_analysis(pipeline)
+                    self._update_stage_status(pipeline, key, "completed")
+
+                elif key == STAGE_TASK_BREAKDOWN:
+                    if pipeline.context.get("task_breakdown") and pipeline.task_ids:
+                        pipeline.add_log(key, f"使用已保存的任务分解（{len(pipeline.task_ids)} 个任务），跳过执行")
+                        if not pipeline.stages:
+                            await self._rebuild_stages_from_tasks(pipeline)
+                    else:
+                        await self._stage_task_breakdown(pipeline, project)
+                    self._update_stage_status(pipeline, key, "completed")
+                    await project_service.advance_phase(pipeline.project_id)
+
+                else:
+                    # Execution stage: run tasks tagged with this stage key
+                    await self._stage_task_execution(pipeline, stage_key=key)
+                    # 将该阶段产出物组装到 src/ 目录
+                    try:
+                        from app.services.project.workspace_manager import workspace_manager
+                        assembled = workspace_manager.assemble_artifacts_to_src(pipeline.project_id)
+                        if assembled:
+                            pipeline.add_log(key, f"产出物已组装到 src/: {len(assembled)} 文件")
+                    except Exception as e:
+                        pipeline.add_log(key, f"src 组装失败: {e}", "warning")
+                    self._update_stage_status(pipeline, key, "completed")
+
                 if self._db:
                     await self._db.save(pipeline)
-                return
 
-            if pipeline.paused:
-                pipeline.add_log("task_execution", "流水线已暂停，保存状态", "info")
+            # After all stages: final review gate
+            if not pipeline.stop_requested and pipeline.status != PipelineStatus.PAUSED:
+                await self._stage_review(pipeline)
+
+                if pipeline.status != PipelineStatus.FAILED:
+                    self.transition(pipeline, PipelineStatus.COMPLETED)
+                    pipeline.completed_at = datetime.now()
+                    pipeline.current_stage = "completed"
+                    pipeline.progress = 1.0
+                    await project_service.update_project(pipeline.project_id, status="completed")
                 if self._db:
                     await self._db.save(pipeline)
-                return
 
-            await self._stage_review(pipeline)
-
-            # _stage_review 可能在无完成任务时设置 FAILED，此时跳过完成标记
-            if pipeline.status != PipelineStatus.FAILED:
-                pipeline.status = PipelineStatus.COMPLETED
-                pipeline.completed_at = datetime.now()
-                pipeline.current_stage = PipelineStage.COMPLETED
-
-                await project_service.update_project(pipeline.project_id, status="completed")
-            if self._db:
-                await self._db.save(pipeline)
-
-            # Step 10: 触发学习闭环
-            try:
-                await self._trigger_learning_cycle(pipeline)
-            except Exception as e:
-                pipeline.add_log("learning", f"学习闭环执行失败: {e}", "warning")
+            # Trigger learning cycle
+            if pipeline.status == PipelineStatus.COMPLETED:
+                try:
+                    await self._trigger_learning_cycle(pipeline)
+                except Exception as e:
+                    pipeline.add_log("learning", f"学习闭环执行失败: {e}", "warning")
 
         except asyncio.CancelledError:
             pipeline.add_log("control", "流水线任务被取消（用户关闭项目）", "info")
@@ -274,14 +394,14 @@ class PipelineOrchestrator:
                 await self._db.save(pipeline)
             raise
         except Exception as e:
-            pipeline.status = PipelineStatus.FAILED
+            self.transition(pipeline, PipelineStatus.FAILED)
             tb = traceback.format_exc()
             pipeline.add_log("error", f"流水线异常终止 — {str(e)}\n{tb[-500:]}", "error")
             if self._db:
                 await self._db.save(pipeline)
             raise
         finally:
-            if not pipeline.paused:
+            if pipeline.status != PipelineStatus.PAUSED:
                 self._cleanup_pipeline_agents(pipeline)
                 self._active_pipelines.pop(pipeline.project_id, None)
             self._execution_tasks.pop(pipeline_id, None)
@@ -291,8 +411,8 @@ class PipelineOrchestrator:
             agent_service.release_agent_from_project(agent_id, pipeline.project_id)
 
     async def _stage_requirement_analysis(self, pipeline: Pipeline) -> None:
-        pipeline.current_stage = PipelineStage.REQUIREMENT_ANALYSIS
-        self._update_stage_status(pipeline, "requirement_analysis", "active")
+        pipeline.current_stage = STAGE_REQUIREMENT_ANALYSIS
+        self._update_stage_status(pipeline, STAGE_REQUIREMENT_ANALYSIS, "active")
 
         project = project_service.get_project(pipeline.project_id)
         if not project:
@@ -301,6 +421,17 @@ class PipelineOrchestrator:
         # 选择参与分析的 agent（PM + 架构师优先）
         participants = self._select_stage_participants(pipeline, ["PM", "架构师"])
         participant_names = [pipeline.agent_roles.get(aid, aid) for aid in participants]
+
+        # 根据项目类型调整分析角度
+        project_type = getattr(pipeline, 'project_type', 'development')
+        if project_type == "research":
+            analysis_angles = "信息完整性、分析深度、潜在偏差、改进建议、优先级建议"
+        elif project_type == "content":
+            analysis_angles = "内容完整性、受众匹配度、潜在问题、改进建议、优先级建议"
+        elif project_type == "analysis":
+            analysis_angles = "数据完整性、分析方法、潜在偏差、改进建议、优先级建议"
+        else:
+            analysis_angles = "需求完整性、技术可行性、潜在风险、改进建议、优先级建议"
 
         pipeline.add_log("requirement_analysis",
             f"需求分析启动 — 参与者({len(participants)}): {participant_names}, "
@@ -320,7 +451,7 @@ class PipelineOrchestrator:
                     "项目名称": project.name,
                     "项目描述": project.description or "无",
                     "需求内容": project.requirements or "无",
-                    "分析角度": "需求完整性、技术可行性、潜在风险、改进建议、优先级建议",
+                    "分析角度": analysis_angles,
                     "团队成员": ", ".join(
                         f"{pipeline.agent_roles.get(aid, aid)}" for aid in participants
                     ),
@@ -329,8 +460,12 @@ class PipelineOrchestrator:
                 max_rounds=2,
             )
 
+            # 先保存分析上下文，供 merge 使用
+            pipeline.context["analysis_angles"] = analysis_angles
+            pipeline.context["project_type"] = project_type
+
             # 合并多 agent 观点为完整分析报告
-            final_analysis = await self._merge_discussion_into_analysis(result, project)
+            final_analysis = await self._merge_discussion_into_analysis(result, project, pipeline)
 
             pipeline.context["requirement_analysis"] = final_analysis
             pipeline.context["requirement_discussion"] = {
@@ -362,6 +497,27 @@ class PipelineOrchestrator:
                 f"需求分析完成 — 讨论{len(result.transcript)}条发言, "
                 f"共识: {result.consensus_reached}, 报告{len(final_analysis)}字符")
 
+            # 检查是否需要用户澄清
+            clarification_questions = self._extract_clarification_questions(
+                result, final_analysis
+            )
+            if clarification_questions:
+                for q in clarification_questions:
+                    pipeline._human_intervention_queue.append({
+                        "type": "question_for_user",
+                        "task_id": None,
+                        "task_title": "需求分析",
+                        "agent_name": "讨论组",
+                        "question": q,
+                        "context": f"项目: {project.name}",
+                        "options": "",
+                        "timestamp": datetime.now().isoformat(),
+                    })
+                self.transition(pipeline, PipelineStatus.PAUSED)
+                pipeline.add_log("requirement_analysis",
+                    f"发现 {len(clarification_questions)} 个需要用户澄清的问题，暂停等待答复",
+                    "warning")
+
         except Exception as e:
             tb = traceback.format_exc()
             pipeline.add_log("requirement_analysis",
@@ -372,11 +528,14 @@ class PipelineOrchestrator:
 
     async def _single_llm_requirement_analysis(self, pipeline: Pipeline, project) -> None:
         """单 LLM 需求分析的兜底方案"""
-        analysis_prompt = self._build_requirement_analysis_prompt(project)
+        project_type = getattr(pipeline, 'project_type', 'development')
+        analysis_angles = pipeline.context.get("analysis_angles", "")
+        analyst_role = self._analyst_role_for_type(project_type)
+        analysis_prompt = self._build_requirement_analysis_prompt(project, analysis_angles)
         try:
             response = await llm_service.chat(
                 messages=[
-                    LLMMessage(role="system", content=registry.render("collaboration.pipeline.requirement_analysis_system", {})),
+                    LLMMessage(role="system", content=registry.render("collaboration.pipeline.requirement_analysis_system", {"analyst_role": analyst_role})),
                     LLMMessage(role="user", content=analysis_prompt),
                 ],
                 track_cost=True,
@@ -388,20 +547,54 @@ class PipelineOrchestrator:
             pipeline.add_log("requirement_analysis", f"分析失败: {str(e)}", "error")
             pipeline.context["requirement_analysis"] = f"Error: {str(e)}"
 
-    async def _merge_discussion_into_analysis(self, discussion, project) -> str:
+    async def _merge_discussion_into_analysis(self, discussion, project, pipeline: Pipeline = None) -> str:
         """将多 agent 讨论记录合并为一份完整的需求分析报告"""
         transcript_text = "\n\n".join(
             f"### {dm.agent_name} ({dm.role_label})\n{dm.content}"
             for dm in discussion.transcript
         )
 
+        project_type = getattr(pipeline, 'project_type', 'development') if pipeline else 'development'
+        analysis_angles = pipeline.context.get("analysis_angles", "") if pipeline else ""
+        analyst_role = self._analyst_role_for_type(project_type)
+
+        # 按项目类型覆盖合并报告的章节要求
+        if project_type == "research":
+            merge_sections = (
+                "1. 信息完整性分析\n"
+                "2. 分析深度与视角评估\n"
+                "3. 潜在偏差与盲区\n"
+                "4. 改进建议\n"
+                "5. 优先级建议"
+            )
+        elif project_type == "content":
+            merge_sections = (
+                "1. 内容完整性分析\n"
+                "2. 受众匹配度评估\n"
+                "3. 潜在问题\n"
+                "4. 改进建议\n"
+                "5. 优先级建议"
+            )
+        else:
+            merge_sections = (
+                "1. 需求完整性分析\n"
+                "2. 技术可行性分析\n"
+                "3. 潜在风险\n"
+                "4. 改进建议\n"
+                "5. 优先级建议"
+            )
+
         try:
+            # 直接用项目类型感知的角色和结构，不依赖 registry 变量渲染
+            system_content = (
+                f"你是一位{analyst_role}。请将以下多 Agent 讨论合并为一份完整的需求分析报告。"
+                f"保留所有有价值的分歧和不同视角。"
+                f"遵循第一性原理：分析角度要与项目类型匹配，不做过度分析。"
+            )
+
             response = await llm_service.chat(
                 messages=[
-                    LLMMessage(
-                        role="system",
-                        content=registry.render("collaboration.pipeline.merge_analysis_system", {}),
-                    ),
+                    LLMMessage(role="system", content=system_content),
                     LLMMessage(
                         role="user",
                         content=registry.render("collaboration.pipeline.merge_analysis", {
@@ -409,6 +602,7 @@ class PipelineOrchestrator:
                             "project_description": project.description,
                             "requirements": project.requirements,
                             "transcript_text": transcript_text,
+                            "analysis_angles": merge_sections,
                         }),
                     ),
                 ],
@@ -420,15 +614,18 @@ class PipelineOrchestrator:
             # 合并失败 → 直接拼接讨论记录
             return f"# 需求分析（多 Agent 讨论记录）\n\n{transcript_text}"
 
-    def _build_requirement_analysis_prompt(self, project) -> str:
+    def _build_requirement_analysis_prompt(self, project, analysis_angles: str = "") -> str:
+        if not analysis_angles:
+            analysis_angles = "1. 需求完整性\n2. 技术可行性\n3. 潜在风险\n4. 改进建议\n5. 优先级建议"
         return registry.render("collaboration.pipeline.requirement_analysis", {
             "project_name": project.name,
             "project_description": project.description,
             "requirements": project.requirements,
+            "analysis_angles": analysis_angles,
         })
 
     async def _stage_task_breakdown(self, pipeline: Pipeline, project) -> None:
-        pipeline.current_stage = PipelineStage.TASK_BREAKDOWN
+        pipeline.current_stage = STAGE_TASK_BREAKDOWN
 
         previous_analysis = pipeline.context.get("requirement_analysis", "")
         prev_len = len(previous_analysis)
@@ -456,7 +653,18 @@ class PipelineOrchestrator:
             
             breakdown_result = response.content
             
-            tasks = self._parse_task_breakdown(breakdown_result)
+            exec_stages = [
+                s for s in (pipeline.stages or [])
+                if s.get("key") not in (STAGE_REQUIREMENT_ANALYSIS, STAGE_TASK_BREAKDOWN)
+            ]
+            tasks = self._parse_task_breakdown(breakdown_result, exec_stages)
+
+            # 诊断：记录被自动修正 phase 的任务
+            auto_fixed = [t for t in tasks if t.pop("_phase_auto_fixed", None)]
+            if auto_fixed:
+                names = ", ".join(t["title"] for t in auto_fixed)
+                pipeline.add_log("task_breakdown",
+                    f"⚠ {len(auto_fixed)} 个任务的 phase 值无效，已自动分配: {names}", "warning")
 
             # 第一遍：创建所有任务，建立 title→task_id 映射
             title_to_id: Dict[str, str] = {}
@@ -545,30 +753,14 @@ class PipelineOrchestrator:
                     f"依赖: {task.get('dependencies', [])}",
                     "debug")
 
-            # 从任务阶段构建 pipeline.stages (BUG #4 fix)
-            if not pipeline.stages:
-                phase_labels = {
-                    "analysis": "需求分析", "execution": "任务执行",
-                    "review": "审查", "testing": "测试", "delivery": "交付",
-                }
-                seen_keys = set()
-                stages = [
-                    {"key": "requirement_analysis", "label": "需求分析", "status": "completed"},
-                    {"key": "task_breakdown", "label": "任务拆解", "status": "active"},
-                ]
-                for t in tasks:
-                    phase = t.get("phase", "")
-                    if phase and phase not in seen_keys:
-                        seen_keys.add(phase)
-                        stages.append({
-                            "key": phase,
-                            "label": phase_labels.get(phase, phase),
-                            "status": "pending",
-                        })
-                stages.append({"key": "review", "label": "审查", "status": "pending"})
-                pipeline.stages = stages
-                pipeline.add_log("task_breakdown",
-                    f"Pipeline 阶段已构建: {[s['label'] for s in stages]}", "debug")
+            # 任务已按确认阶段分配 phase 标签，pipeline.stages 保持不变
+            exec_stages = [
+                s.get("label", s.get("key", ""))
+                for s in pipeline.stages
+                if s.get("key") not in (STAGE_REQUIREMENT_ANALYSIS, STAGE_TASK_BREAKDOWN)
+            ]
+            pipeline.add_log("task_breakdown",
+                f"任务已分配至阶段: {exec_stages}", "debug")
 
         except Exception as e:
             tb = traceback.format_exc()
@@ -583,57 +775,181 @@ class PipelineOrchestrator:
             f"- {agent_id}: {agent_service.get_agent(agent_id).get('name', 'Agent') if agent_service.get_agent(agent_id) else 'Agent'}"
             for agent_id in pipeline.agents if agent_service.get_agent(agent_id)
         ]) if pipeline.agents else "可用Agent信息未配置"
-        
+
+        project_type = getattr(pipeline, 'project_type', 'development')
+        type_analysis = pipeline.context.get("project_type_analysis", {})
+        type_guide = self._build_type_guide(project_type, type_analysis)
+
+        # Build stage guide from confirmed stages (exclude meta-stages)
+        exec_stages = [
+            s for s in (pipeline.stages or [])
+            if s.get("key") not in (STAGE_REQUIREMENT_ANALYSIS, STAGE_TASK_BREAKDOWN)
+        ]
+        stage_guide = ""
+        if exec_stages:
+            stage_labels = ", ".join(
+                f'"{s.get("key")}"({s.get("label", "")})' for s in exec_stages
+            )
+            stage_guide = (
+                f"\n## 阶段约束\n"
+                f"请仅使用以下阶段作为任务的 phase 值：{stage_labels}\n"
+                f"每个任务的 phase 必须是上述阶段之一，不要自行创造新阶段。"
+            )
+
         return registry.render("collaboration.pipeline.task_breakdown", {
             "project_name": project.name,
             "requirements": project.requirements,
             "previous_analysis": previous_analysis,
             "agent_info": agent_info,
+            "project_type_guide": type_guide,
+            "stage_guide": stage_guide,
         })
 
-    def _parse_task_breakdown(self, breakdown_text: str) -> List[Dict[str, Any]]:
-        import json
+    @staticmethod
+    def _build_type_guide(project_type: str, analysis: dict) -> str:
+        """根据项目类型生成任务拆解的指导指令。"""
+        domain = analysis.get("domain", "")
+        task_type = analysis.get("task_type", "")
+
+        if project_type == "research":
+            return (
+                "\n## 项目类型：研究调研型（" + domain + "/" + task_type + "）\n"
+                "这是研究调研任务，不是软件开发项目。\n"
+                "任务应 ONLY 包含以下三类：\n"
+                "  1. 信息收集 — 搜索、收集、整理相关资料和数据\n"
+                "  2. 分析整理 — 梳理信息，提炼关键发现，对比分析\n"
+                "  3. 报告撰写 — 撰写结构化的最终调研报告\n\n"
+                "禁止事项：\n"
+                "  - 不要生成编码任务（不要写代码、不要建管道、不要开发工具）\n"
+                "  - 不要生成 Dashboard/前端开发任务\n"
+                "  - 不要生成 API 设计或数据库设计任务\n"
+                "  - 不要生成运维/部署任务\n\n"
+                "assigned_role 必须使用研究/内容角色(如调研分析、内容撰写、信息检索)，\n"
+                "不能使用后端开发、前端开发、测试工程师等开发角色。\n"
+                "phase 应使用 analysis 或 delivery，不要用 coding 或 execution。"
+            )
+        elif project_type == "content":
+            return (
+                "\n## 项目类型：内容创作型（" + domain + "/" + task_type + "）\n"
+                "这是内容创作任务，不是软件开发项目。\n"
+                "任务应 ONLY 包含：\n"
+                "  1. 内容策划 — 确定框架、大纲和风格\n"
+                "  2. 内容撰写 — 撰写具体内容\n"
+                "  3. 审核修改 — 校对、优化和完善\n\n"
+                "禁止生成任何开发任务。角色应为内容角色。"
+            )
+        elif project_type == "analysis":
+            return (
+                "\n## 项目类型：数据分析型（" + domain + "/" + task_type + "）\n"
+                "这是数据分析任务。\n"
+                "任务应包括：数据收集→数据清洗→分析建模→结果呈现。\n"
+                "仅在必要时编写数据处理/分析脚本，不要生成全栈开发任务。"
+            )
+        elif project_type == "design":
+            return (
+                "\n## 项目类型：设计策划型（" + domain + "/" + task_type + "）\n"
+                "这是设计/策划任务。\n"
+                "任务应包括：分析→构思→设计→评审。"
+            )
+        else:  # development (default)
+            return (
+                "\n## 项目类型：软件开发\n"
+                "按标准开发流程拆解：需求分析→设计→编码→测试→部署。"
+            )
+
+    def _parse_task_breakdown(self, breakdown_text: str, valid_exec_stages: List[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         import re
-        
-        json_match = re.search(r'\{[\s\S]*"tasks"[\s\S]*\}', breakdown_text)
-        if json_match:
-            try:
-                data = json.loads(json_match.group())
-                return data.get("tasks", [])
-            except json.JSONDecodeError:
-                pass
-        
+        from app.services.shared.json_extractor import extract_and_validate, JSONExtractionError, JSONValidationError
+        from app.services.shared.validation import TaskBreakdownResult
+
+        valid_phases = []
+        if valid_exec_stages:
+            valid_phases = [s.get("key", "") for s in valid_exec_stages if s.get("key")]
+
+        # 优先使用统一的 JSON 提取 + Pydantic 校验
+        try:
+            result = extract_and_validate(breakdown_text, TaskBreakdownResult)
+            tasks = [t.model_dump() for t in result.tasks]
+            return self._fixup_task_phases(tasks, valid_phases)
+        except (JSONExtractionError, JSONValidationError):
+            pass  # 回退到正则分块解析
+
+        # Fallback: 按编号分块解析（保留对非标准格式的兼容）
         task_blocks = re.split(r'\n\d+\.\s+', breakdown_text)
         tasks = []
-        
+
         for block in task_blocks:
             if not block.strip() or 'task' not in block.lower():
                 continue
-            
+
             lines = block.strip().split('\n')
             if not lines:
                 continue
-            
+
             title = lines[0].strip('[]- ').strip()
             description = '\n'.join(lines[1:]) if len(lines) > 1 else title
-            
+
+            infer_phase = self._infer_phase_from_text(
+                block, valid_phases, valid_exec_stages
+            )
+
             task = {
                 "title": title,
                 "description": description,
                 "assigned_role": self._infer_role(description),
                 "priority": "medium",
-                "phase": "execution",
+                "phase": infer_phase or "execution",
                 "dependencies": [],
                 "acceptance_criteria": []
             }
-            
+
             if "[high]" in block.lower() or "[高]" in block:
                 task["priority"] = "high"
             elif "[low]" in block.lower() or "[低]" in block:
                 task["priority"] = "low"
-            
+
             tasks.append(task)
-        
+
+        return self._fixup_task_phases(tasks, valid_phases)
+
+    def _infer_phase_from_text(
+        self, text: str, valid_phases: List[str], valid_stages: List[Dict[str, Any]] = None
+    ) -> str:
+        """Try to match task text against valid stage labels/keys to infer phase."""
+        text_lower = text.lower()
+        if valid_stages:
+            for s in valid_stages:
+                key = s.get("key", "")
+                label = s.get("label", "")
+                if key and key.lower() in text_lower:
+                    return key
+                if label and label in text:
+                    return key
+        if valid_phases:
+            for p in valid_phases:
+                if p.lower() in text_lower:
+                    return p
+        return ""
+
+    def _fixup_task_phases(
+        self, tasks: List[Dict[str, Any]], valid_phases: List[str]
+    ) -> List[Dict[str, Any]]:
+        """Validate and fix task phase values to match valid stage keys.
+        Returns the (possibly modified) task list."""
+        if not valid_phases:
+            return tasks
+
+        for i, task in enumerate(tasks):
+            original = task.get("phase", "")
+            if original and original in valid_phases:
+                continue  # OK, matches a stage key
+
+            # Invalid or missing phase — assign based on task index vs stage count
+            stage_idx = i % len(valid_phases)
+            corrected = valid_phases[stage_idx]
+            task["phase"] = corrected
+            task["_phase_auto_fixed"] = True  # marker for caller diagnostic logging
+
         return tasks
 
     def _infer_role(self, description: str) -> str:
@@ -656,23 +972,39 @@ class PipelineOrchestrator:
             return "质量审核"
         return "通用执行"
 
-    async def _stage_task_execution(self, pipeline: Pipeline) -> None:
-        """DAG 并行执行阶段 — 拓扑排序 + 依赖阻塞 + 安全守卫"""
-        pipeline.current_stage = PipelineStage.TASK_EXECUTION
-
-        # 更新 pipeline stages 状态 (BUG #4 fix)
-        self._update_stage_status(pipeline, "task_breakdown", "completed")
-        self._update_stage_status(pipeline, "task_execution", "active")
-
+    async def _stage_task_execution(self, pipeline: Pipeline, stage_key: str = None) -> None:
+        """DAG 并行执行阶段 — 拓扑排序 + 依赖阻塞 + 安全守卫。
+        当 stage_key 指定时，仅执行 tags 中包含该 key 的任务。
+        """
         # 层级策略下确保有 coordinator
         await self._ensure_coordinator(pipeline)
 
-        # 构建 DAG: task_id → Task 对象
+        # 构建 DAG: task_id → Task 对象，按 stage_key 过滤
         all_tasks: Dict[str, Any] = {}
         for task_id in pipeline.task_ids:
             task = task_board.get_task(task_id)
             if task:
+                # 按阶段过滤：仅执行属于当前阶段的任务
+                if stage_key:
+                    task_tags = getattr(task, 'tags', []) or []
+                    if stage_key not in task_tags:
+                        continue
                 all_tasks[task_id] = task
+
+        # 防御性检查：stage_key 过滤后 0 个任务，但 pipeline 有未完成任务
+        if stage_key and not all_tasks and pipeline.task_ids:
+            # 收集现有任务的 tags 用于诊断
+            unmatched_tags = set()
+            for task_id in pipeline.task_ids:
+                task = task_board.get_task(task_id)
+                if task:
+                    for t in (getattr(task, 'tags', []) or []):
+                        unmatched_tags.add(t)
+            pipeline.add_log("task_execution",
+                f"阶段「{stage_key}」未匹配到任何任务！"
+                f"现有任务 tags: {sorted(unmatched_tags)}，阶段 key: {stage_key}"
+                f" — 可能原因: AI 返回的 phase 值与阶段 key 不匹配",
+                "warning")
 
         # 拓扑排序获取执行层级
         execution_levels = self._topological_sort(all_tasks)
@@ -698,7 +1030,7 @@ class PipelineOrchestrator:
             f"待执行: {len(pipeline.task_ids) - pre_completed - pre_failed}")
 
         for level_idx, level in enumerate(execution_levels):
-            if pipeline.paused or pipeline.stop_requested or security_guard.is_emergency:
+            if pipeline.status == PipelineStatus.PAUSED or pipeline.stop_requested or security_guard.is_emergency:
                 pipeline.add_log("task_execution", "执行已暂停/停止/紧急中断", "warning")
                 break
 
@@ -905,47 +1237,84 @@ class PipelineOrchestrator:
         )
         await message_bus.send_to_task(msg, task_id)
 
-        # 执行
-        try:
-            result = await agent_executor.execute_task_with_agent(task_id, agent_id)
-            # 恢复原始描述
-            task.description = original_description
-            success = result.get("success", False)
-
-            # 记录断路器数据
-            await security_guard.record_operation_result(
-                agent_id=agent_id,
-                operation=OperationType.GENERATE_CODE,
-                success=success
-            )
-
-            # 审计日志
-            audit_logger.log(
-                action=AuditAction.TASK_EXECUTED,
-                actor=agent_id,
-                agent_id=agent_id,
-                operation="execute_task",
-                risk_level=risk_level.value,
-                target=task_id,
-                outcome="success" if success else "error",
-                detail=f"Task '{task.title}': {'success' if success else 'failed'}",
-            )
-
-            if success:
-                await task_board.change_status(task_id, TaskStatus.REVIEW, agent_id)
+        # 执行（含超时重试）
+        max_attempts = 2
+        last_error = None
+        for attempt in range(1, max_attempts + 1):
+            if pipeline.stop_requested:
+                break
+            if attempt > 1:
                 pipeline.add_log("task_execution",
-                    f"✓ 任务「{task.title}」完成 → REVIEW (Agent: {agent_name})")
-            else:
-                err_msg = result.get('error', 'Unknown')
-                await task_board.change_status(task_id, TaskStatus.CANCELLED, agent_id)
-                await task_board.add_comment(task_id,
-                    f"执行失败: {err_msg}", "pipeline")
+                    f"重试任务「{task.title}」(第 {attempt} 次)...", "warning")
+                await asyncio.sleep(2)
+
+            try:
+                result = await agent_executor.execute_task_with_agent(task_id, agent_id)
+                # 恢复原始描述
+                task.description = original_description
+                success = result.get("success", False)
+                waiting_for_user = result.get("waiting_for_user", False)
+
+                if waiting_for_user:
+                    # Agent 向用户提问，任务已由 agent_executor 设为 WAITING_FOR_USER
+                    pipeline.add_log("task_execution",
+                        f"⏸ 任务「{task.title}」→ WAITING_FOR_USER — Agent [{agent_name}] 需要用户澄清",
+                        "warning")
+                    self.transition(pipeline, PipelineStatus.PAUSED)
+                    last_error = None
+                    break  # 退出重试循环，等待用户答复
+
+                # 记录断路器数据
+                await security_guard.record_operation_result(
+                    agent_id=agent_id,
+                    operation=OperationType.GENERATE_CODE,
+                    success=success
+                )
+
+                # 审计日志
+                audit_logger.log(
+                    action=AuditAction.TASK_EXECUTED,
+                    actor=agent_id,
+                    agent_id=agent_id,
+                    operation="execute_task",
+                    risk_level=risk_level.value,
+                    target=task_id,
+                    outcome="success" if success else "error",
+                    detail=f"Task '{task.title}': {'success' if success else 'failed'}",
+                )
+
+                if success:
+                    await task_board.change_status(task_id, TaskStatus.REVIEW, agent_id)
+                    pipeline.add_log("task_execution",
+                        f"✓ 任务「{task.title}」完成 → REVIEW (Agent: {agent_name})")
+                else:
+                    err_msg = result.get('error', 'Unknown')
+                    await task_board.change_status(task_id, TaskStatus.CANCELLED, agent_id)
+                    await task_board.add_comment(task_id,
+                        f"执行失败: {err_msg}", "pipeline")
+                    pipeline.add_log("task_execution",
+                        f"✗ 任务「{task.title}」失败 → CANCELLED (Agent: {agent_name}, 原因: {err_msg[:200]})", "error")
+
+                last_error = None
+                break  # 成功或非超时失败，退出重试
+
+            except asyncio.TimeoutError:
+                last_error = f"LLM 调用超时 (attempt {attempt}/{max_attempts})"
                 pipeline.add_log("task_execution",
-                    f"✗ 任务「{task.title}」失败 → CANCELLED (Agent: {agent_name}, 原因: {err_msg[:200]})", "error")
+                    f"任务「{task.title}」尝试 {attempt}/{max_attempts} 超时", "warning")
+                continue
+            except Exception as e:
+                err_str = str(e)
+                # 仅超时类异常触发重试
+                if "timeout" in err_str.lower() or "timed out" in err_str.lower():
+                    last_error = f"{err_str} (attempt {attempt}/{max_attempts})"
+                    pipeline.add_log("task_execution",
+                        f"任务「{task.title}」尝试 {attempt}/{max_attempts} 超时类异常", "warning")
+                    continue
+                last_error = err_str
+                break  # 非超时异常，不重试
 
-            return success
-
-        except Exception as e:
+        if last_error:
             # 恢复原始描述
             task.description = original_description
 
@@ -958,8 +1327,9 @@ class PipelineOrchestrator:
 
             tb = traceback.format_exc()
             pipeline.add_log("task_execution",
-                f"✗ 任务「{task.title}」执行异常 → {str(e)}\n{tb[-300:]}", "error")
-            await task_board.add_comment(task_id, f"执行异常: {str(e)}", "pipeline")
+                f"✗ 任务「{task.title}」执行失败 (重试{max_attempts-1}次后) — {last_error}\n{tb[-300:]}", "error")
+            await task_board.add_comment(task_id,
+                f"执行失败 (重试后): {last_error}", "pipeline")
 
             audit_logger.log(
                 action=AuditAction.TASK_EXECUTED,
@@ -967,10 +1337,12 @@ class PipelineOrchestrator:
                 agent_id=agent_id,
                 target=task_id,
                 outcome="error",
-                detail=str(e),
+                detail=str(last_error),
             )
 
             return False
+
+        return success  # result.get("success", False)
 
     def _build_upstream_manifest(
         self, task, all_tasks: Dict[str, Any], project_id: str
@@ -982,6 +1354,14 @@ class PipelineOrchestrator:
         if not deps:
             return ""
 
+        from app.services.project.workspace_manager import workspace_manager as _wm
+
+        # 提前获取所有产出物文件列表（只调用一次）
+        try:
+            all_artifact_files = _wm.list_artifact_files(project_id)
+        except Exception:
+            all_artifact_files = []
+
         items = []
         for dep_id in deps:
             dep_task = all_tasks.get(dep_id)
@@ -992,7 +1372,15 @@ class PipelineOrchestrator:
             dep_desc = getattr(dep_task, 'description', '') or ''
             # 只取前 100 字符作为摘要
             dep_summary = dep_desc[:100] + "..." if len(dep_desc) > 100 else dep_desc
-            items.append(f"- **{dep_title}** (阶段: {dep_phase or '无'})\n  摘要: {dep_summary}")
+            line = f"- **{dep_title}** (阶段: {dep_phase or '无'})\n  摘要: {dep_summary}"
+
+            # 匹配与上游任务相关的产出物文件
+            safe_title = re.sub(r'[\s\\/:*?"<>|]+', '_', dep_title).strip('_')
+            matched = [af["path"] for af in all_artifact_files if safe_title[:15] in af["name"]]
+            if matched:
+                line += f"\n  产出物文件: {', '.join(matched)}"
+
+            items.append(line)
 
         if not items:
             return ""
@@ -1187,6 +1575,100 @@ class PipelineOrchestrator:
         return result
 
     @staticmethod
+    def _analyst_role_for_type(project_type: str) -> str:
+        """根据项目类型返回需求分析的角色定位。"""
+        roles = {
+            "research": "资深研究分析师",
+            "content": "资深内容策划",
+            "analysis": "资深数据分析师",
+            "design": "资深设计顾问",
+            "development": "资深产品经理",
+        }
+        return roles.get(project_type, "资深产品经理")
+
+    @staticmethod
+    def _domain_to_project_type(domain: str) -> str:
+        """将 TaskAnalyzer 的领域分类映射为项目类型。支持逗号分隔的多领域字符串。"""
+        mapping = {
+            "信息查询": "research",
+            "分析研究": "research",
+            "文案写作": "content",
+            "软件开发": "development",
+            "数据分析": "analysis",
+            "设计创意": "design",
+        }
+        # 处理逗号分隔的多领域字符串，优先级: research > analysis > content > design > development
+        domains = [d.strip() for d in domain.replace("，", ",").split(",")]
+        priority = ["research", "analysis", "content", "design", "development"]
+        found_types = set()
+        for d in domains:
+            if d in mapping:
+                found_types.add(mapping[d])
+        for pt in priority:
+            if pt in found_types:
+                return pt
+        return "development"
+
+    async def _rebuild_stages_from_tasks(self, pipeline: Pipeline) -> None:
+        """从已保存的任务中重建 pipeline.stages（用于恢复场景）。"""
+        phase_labels = {
+            "analysis": "分析", "execution": "执行",
+            "review": "审查", "testing": "测试", "delivery": "交付",
+        }
+        seen_keys = set()
+        stages = [
+            {"key": "requirement_analysis", "label": "需求分析", "status": "completed"},
+            {"key": "task_breakdown", "label": "任务拆解", "status": "completed"},
+        ]
+        for task_id in pipeline.task_ids:
+            task = task_board.get_task(task_id)
+            if not task or not task.tags:
+                continue
+            for tag in task.tags:
+                if tag in phase_labels and tag not in seen_keys:
+                    seen_keys.add(tag)
+                    stages.append({"key": tag, "label": phase_labels.get(tag, tag), "status": "pending"})
+        stages.append({"key": "review", "label": "审查", "status": "pending"})
+        pipeline.stages = stages
+        pipeline.add_log("task_breakdown", f"从 {len(pipeline.task_ids)} 个任务重建阶段", "debug")
+
+    @staticmethod
+    def _extract_clarification_questions(discussion_result, final_analysis: str) -> list:
+        """从讨论报告和记录中提取需要用户澄清的问题。"""
+        import re
+        questions = []
+
+        # 1. 从合并报告中提取 "需要用户澄清" 章节
+        clar_section = re.search(
+            r'##\s*需要用户澄清\s*\n(.*?)(?=\n##|\Z)',
+            final_analysis, re.DOTALL
+        )
+        if clar_section:
+            for line in clar_section.group(1).strip().split('\n'):
+                line = line.strip()
+                # 匹配 "- xxx?" 或 "- **xxx?**"
+                q_match = re.match(r'[-*]\s*(?:\*\*)?(.+?\?)(?:\*\*)?$', line)
+                if q_match:
+                    questions.append(q_match.group(1).strip())
+
+        # 2. 从讨论记录中提取 [NEEDS_CLARIFICATION] 标记
+        for msg in getattr(discussion_result, 'transcript', []) or []:
+            content = getattr(msg, 'content', '') if hasattr(msg, 'content') else str(msg)
+            if '[NEEDS_CLARIFICATION]' in content:
+                # 提取标记后的所有问题行
+                parts = content.split('[NEEDS_CLARIFICATION]', 1)
+                if len(parts) > 1:
+                    for line in parts[1].strip().split('\n'):
+                        line = line.strip()
+                        q_match = re.match(r'[-*]\s*(.+?\?)', line)
+                        if q_match:
+                            q = q_match.group(1).strip()
+                            if q not in questions:
+                                questions.append(q)
+
+        return questions
+
+    @staticmethod
     def _update_stage_status(pipeline, stage_key: str, status: str) -> None:
         """更新 pipeline.stages 中指定阶段的状态 (BUG #4 fix)。"""
         for stage in (pipeline.stages or []):
@@ -1203,10 +1685,6 @@ class PipelineOrchestrator:
         return list(pipeline.agents)
 
     async def _stage_review(self, pipeline: Pipeline) -> None:
-        pipeline.current_stage = PipelineStage.REVIEW
-
-        # 更新 pipeline stages 状态 (BUG #4 fix)
-        self._update_stage_status(pipeline, "task_execution", "completed")
         self._update_stage_status(pipeline, "review", "active")
 
         review_tasks = task_board.get_tasks_by_status(TaskStatus.REVIEW, project_id=pipeline.project_id)
@@ -1249,7 +1727,7 @@ class PipelineOrchestrator:
                     message_type=MessageType.SYSTEM
                 )
                 await message_bus.broadcast(msg)
-                pipeline.status = PipelineStatus.FAILED
+                self.transition(pipeline, PipelineStatus.FAILED)
             return
 
         # 选择参与者（测试 + 架构师优先，确保多视角审查）
@@ -1304,21 +1782,22 @@ class PipelineOrchestrator:
         )
         await message_bus.broadcast(msg)
 
-        # 基于风险等级自动审批任务
+        # 基于风险等级自动审批任务（使用枚举直接比较，避免字符串转换歧义）
         auto_approved = 0
         pending_approval = 0
         for task in review_tasks:
             risk = getattr(task, 'risk_level', None)
-            risk_str = str(risk) if risk else "low"
             task_id_val = getattr(task, 'id', str(task))
-            if risk_str in ("low", "medium"):
+            # 默认低风险自动通过，空值兜底也自动通过
+            is_auto = risk is None or risk in (RiskLevel.LOW, RiskLevel.MEDIUM)
+            is_high = risk == RiskLevel.HIGH
+            if is_auto:
                 await task_board.change_status(task_id_val, TaskStatus.DONE, "system")
                 auto_approved += 1
-            elif risk_str == "high":
-                # 高风险任务保持 REVIEW，等待人工审批
+            elif is_high:
                 pending_approval += 1
             else:
-                # 无风险等级或 CRITICAL — 保守起见保持 REVIEW
+                # CRITICAL 或其他未知级别 — 保守起见保持 REVIEW
                 pending_approval += 1
 
         pipeline.add_log("review",
@@ -1545,19 +2024,133 @@ class PipelineOrchestrator:
         with open(growth_path, "w", encoding="utf-8") as f:
             json.dump(growth, f, ensure_ascii=False, indent=2, default=str)
 
+    async def confirm_stages(
+        self, pipeline_id: str, stages: List[Dict[str, Any]]
+    ) -> bool:
+        """确认阶段配置。必须在 start_pipeline 之前调用。"""
+        async with self._lock:
+            pipeline = self._pipelines.get(pipeline_id)
+            if not pipeline:
+                return False
+
+            if pipeline.status == PipelineStatus.RUNNING:
+                return False  # already running, can't reconfigure
+
+            pipeline.stages = stages
+            pipeline.current_stage = stages[0].get("key", "") if stages else ""
+            pipeline.context["stages_confirmed"] = True
+            pipeline.add_log("init",
+                f"阶段已确认: {[s.get('label', s.get('key', '')) for s in stages]}")
+
+            # Persist to workspace project.json
+            try:
+                from app.services.project.workspace_manager import workspace_manager
+                workspace_manager.update_stages(pipeline.project_id, stages)
+            except Exception:
+                pass
+
+            if self._db:
+                await self._db.save(pipeline)
+            return True
+
+    async def respond_to_agent(
+        self, pipeline_id: str, answer: str, task_id: str = None
+    ) -> bool:
+        """用户答复 Agent 的提问，恢复任务执行。"""
+        async with self._lock:
+            pipeline = self._pipelines.get(pipeline_id)
+            if not pipeline:
+                return False
+
+            # 1. 找到等待中的任务并注入用户答复
+            if task_id:
+                task = task_board.get_task(task_id)
+                if task and task.status == TaskStatus.WAITING_FOR_USER:
+                    # 将用户答复写入任务评论
+                    await task_board.add_comment(
+                        task_id,
+                        f"👤 **用户答复:** {answer}",
+                        "human",
+                    )
+                    # 将答复注入任务描述，Agent 恢复执行时能看到
+                    original_desc = task.description or ""
+                    task.description = (
+                        f"{original_desc}\n\n## 用户答复\n{answer}"
+                    )
+                    task.updated_at = datetime.now()
+                    # 恢复任务
+                    await task_board.change_status(task_id, TaskStatus.IN_PROGRESS, "human")
+                    pipeline.add_log("intervention",
+                        f"用户答复任务「{task.title}」: {answer[:100]}")
+
+            # 2. 清理干预队列中的相关条目
+            pipeline._human_intervention_queue = [
+                item for item in pipeline._human_intervention_queue
+                if not (
+                    item.get("type") == "question_for_user"
+                    and (task_id is None or item.get("task_id") == task_id)
+                )
+            ]
+
+            # 3. 将答复写入 pipeline 上下文，供后续阶段使用
+            if "user_responses" not in pipeline.context:
+                pipeline.context["user_responses"] = []
+            pipeline.context["user_responses"].append({
+                "task_id": task_id,
+                "answer": answer,
+                "timestamp": datetime.now().isoformat(),
+            })
+
+            # 4. 恢复 pipeline
+            self.transition(pipeline, PipelineStatus.RUNNING)
+            self._active_pipelines[pipeline.project_id] = pipeline_id
+
+            # 5. 启动新的执行任务继续处理
+            if pipeline_id in self._execution_tasks:
+                old_task = self._execution_tasks.pop(pipeline_id, None)
+                if old_task and not old_task.done():
+                    old_task.cancel()
+            new_task = asyncio.create_task(self._run_pipeline(pipeline_id))
+            self._execution_tasks[pipeline_id] = new_task
+
+            pipeline.add_log("intervention",
+                f"用户答复已注入，流水线恢复执行 — task: {task_id or 'all'}")
+            if self._db:
+                await self._db.save(pipeline)
+            return True
+
+    async def approve_task(self, pipeline_id: str, task_id: str) -> bool:
+        """人工审批通过 REVIEW 状态的任务，转为 DONE。"""
+        pipeline = self._pipelines.get(pipeline_id)
+        if not pipeline:
+            return False
+        task = task_board.get_task(task_id)
+        if not task:
+            return False
+        if task.status != TaskStatus.REVIEW:
+            return False
+        await task_board.change_status(task_id, TaskStatus.DONE, "human_approver")
+        await task_board.add_comment(task_id, "人工审批通过", "human_approver")
+        pipeline.add_log("review", f"任务「{task.title}」已人工审批通过")
+        # 如果有待审批任务全部通过，解除暂停
+        remaining = task_board.get_tasks_by_status(TaskStatus.REVIEW, project_id=pipeline.project_id)
+        if not remaining:
+            self.transition(pipeline, PipelineStatus.RUNNING)
+            pipeline.add_log("review", "所有任务审批完成，流水线可继续")
+        return True
+
     async def pause_pipeline(self, pipeline_id: str) -> bool:
         async with self._lock:
             pipeline = self._pipelines.get(pipeline_id)
             if not pipeline or pipeline.status != PipelineStatus.RUNNING:
                 return False
 
-            pipeline.status = PipelineStatus.PAUSED
-            pipeline.paused = True
+            self.transition(pipeline, PipelineStatus.PAUSED)
             await agent_executor.pause_project(pipeline.project_id)
             speaking_controller.set_mode(pipeline_id, SpeakingMode.FREE_STYLE)
 
             pipeline.add_log("control",
-                f"流水线已暂停 — 阶段: {pipeline.current_stage.value}, "
+                f"流水线已暂停 — 阶段: {pipeline.current_stage}, "
                 f"进度: {pipeline.progress:.0%}, 任务: {len(pipeline.task_ids)}个")
             if self._db:
                 await self._db.save(pipeline)
@@ -1569,13 +2162,12 @@ class PipelineOrchestrator:
             if not pipeline or pipeline.status != PipelineStatus.PAUSED:
                 return False
 
-            pipeline.status = PipelineStatus.RUNNING
-            pipeline.paused = False
+            self.transition(pipeline, PipelineStatus.RUNNING)
             await agent_executor.resume_project(pipeline.project_id)
             speaking_controller.set_mode(pipeline_id, SpeakingMode.PRIORITY_BASED)
 
             pipeline.add_log("control",
-                f"流水线已恢复 — 从阶段: {pipeline.current_stage.value} 继续, "
+                f"流水线已恢复 — 从阶段: {pipeline.current_stage} 继续, "
                 f"进度: {pipeline.progress:.0%}")
             if self._db:
                 await self._db.save(pipeline)
@@ -1590,7 +2182,7 @@ class PipelineOrchestrator:
             task_count = len(pipeline.task_ids)
             progress = pipeline.progress
             pipeline.stop_requested = True
-            pipeline.status = PipelineStatus.FAILED
+            self.transition(pipeline, PipelineStatus.FAILED)
             self._cleanup_pipeline_agents(pipeline)
             self._active_pipelines.pop(pipeline.project_id, None)
 
@@ -1600,7 +2192,7 @@ class PipelineOrchestrator:
                 task.cancel()
 
             pipeline.add_log("control",
-                f"流水线已停止 — 阶段: {pipeline.current_stage.value}, "
+                f"流水线已停止 — 阶段: {pipeline.current_stage}, "
                 f"进度曾为: {progress:.0%}, 任务: {task_count}个")
             if self._db:
                 await self._db.save(pipeline)
@@ -1630,15 +2222,15 @@ class PipelineOrchestrator:
 
             # 3. 保存完整状态
             pipeline.stop_requested = False
-            pipeline.paused = True
-            pipeline.status = PipelineStatus.PAUSED
+            if pipeline.status != PipelineStatus.PAUSED:
+                self.transition(pipeline, PipelineStatus.PAUSED)
             self._active_pipelines.pop(pipeline.project_id, None)
 
             # 4. 释放 agent
             self._cleanup_pipeline_agents(pipeline)
 
             pipeline.add_log("control",
-                f"流水线已关闭保存 — 阶段: {pipeline.current_stage.value}, "
+                f"流水线已关闭保存 — 阶段: {pipeline.current_stage}, "
                 f"进度: {pipeline.progress:.0%}, 任务: {len(pipeline.task_ids)}个, 可恢复")
 
             # 5. 同步更新 workspace project.json
@@ -1671,8 +2263,7 @@ class PipelineOrchestrator:
 
             # 2. 重置标志
             pipeline.stop_requested = False
-            pipeline.paused = False
-            pipeline.status = PipelineStatus.RUNNING
+            self.transition(pipeline, PipelineStatus.RUNNING)
             self._active_pipelines[pipeline.project_id] = pipeline_id
 
             pipeline.add_log("control", "流水线已从保存状态恢复")
@@ -1734,7 +2325,7 @@ class PipelineOrchestrator:
             "project_id": pipeline.project_id,
             "name": pipeline.name,
             "status": pipeline.status.value,
-            "current_stage": pipeline.current_stage.value,
+            "current_stage": pipeline.current_stage,
             "progress": pipeline.progress,
             "agents": pipeline.agents,
             "task_count": len(pipeline.task_ids),
@@ -1746,7 +2337,7 @@ class PipelineOrchestrator:
             "team_config": getattr(pipeline, 'team_config', {}),
             "agent_roles": getattr(pipeline, 'agent_roles', {}),
             "stages": getattr(pipeline, 'stages', []),
-            "can_resume": pipeline.status == PipelineStatus.PAUSED,
+            "can_resume": pipeline.status in (PipelineStatus.PAUSED, PipelineStatus.COMPLETED, PipelineStatus.FAILED),
         }
 
     def list_pipelines(self) -> List[Dict[str, Any]]:

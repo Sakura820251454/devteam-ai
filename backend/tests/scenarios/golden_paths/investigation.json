@@ -1,0 +1,121 @@
+{
+  "name": "investigation",
+  "description": "Golden path: 调查山西长治煤矿爆炸案进展 — 完整 pipeline trace",
+  "recorded_at": "2026-05-28T00:00:00",
+  "total_calls": 5,
+  "trace": [
+    {
+      "step": 1,
+      "timestamp": "2026-05-28T00:00:01",
+      "phase": "requirement_analysis",
+      "input": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是一位需求分析专家。分析用户任务的结构化特征。只输出JSON。"
+          },
+          {
+            "role": "user",
+            "content": "请分析以下任务：调查山西长治煤矿爆炸案的最新进展"
+          }
+        ]
+      },
+      "output": {
+        "content": "{\"domain\": \"信息查询\", \"task_type\": \"探索研究型\", \"sub_types\": [\"新闻检索\", \"事实核查\"], \"complexity\": \"中\", \"breakdown\": [\"搜索新闻\", \"核实来源\", \"整理报告\"], \"key_challenge\": \"信息来源的可靠性和时效性\", \"analysis_summary\": \"这是一个典型的信息查询与分析任务，需要分阶段收集、核实和整理信息\"}"
+      }
+    },
+    {
+      "step": 2,
+      "timestamp": "2026-05-28T00:00:05",
+      "phase": "task_breakdown",
+      "input": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是一位经验丰富的项目经理。拆解任务为可执行子任务。只输出JSON。"
+          },
+          {
+            "role": "user",
+            "content": "基于需求分析结果，拆解具体任务。项目类型：信息收集。阶段约束：collect, analyze, report"
+          }
+        ]
+      },
+      "output": {
+        "content": "{\"tasks\": [{\"title\": \"搜索最新新闻\", \"description\": \"从百度新闻、新华社等来源搜索煤矿爆炸案的最新报道\", \"assigned_role\": \"研究员\", \"priority\": \"high\", \"phase\": \"collect\", \"dependencies\": [], \"acceptance_criteria\": [\"至少找到5篇相关报道\"], \"required_skills\": [\"信息检索\"]}, {\"title\": \"核实信息来源\", \"description\": \"对收集到的新闻进行来源核实和交叉验证\", \"assigned_role\": \"分析师\", \"priority\": \"high\", \"phase\": \"analyze\", \"dependencies\": [], \"acceptance_criteria\": [\"每条信息的来源都有标注\"], \"required_skills\": [\"数据分析\", \"事实核查\"]}, {\"title\": \"撰写调查报告\", \"description\": \"汇总所有核实后的信息，撰写结构化调查报告\", \"assigned_role\": \"报告撰写员\", \"priority\": \"medium\", \"phase\": \"report\", \"dependencies\": [], \"acceptance_criteria\": [\"报告包含事件时间线和现状总结\"], \"required_skills\": [\"文档写作\"]}], \"summary\": \"任务分为搜索、核实、报告三个阶段，每个阶段有一个核心任务\"}"
+      }
+    },
+    {
+      "step": 3,
+      "timestamp": "2026-05-28T00:00:10",
+      "phase": "execution_collect",
+      "input": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是研究员。搜索最新新闻并整理结果。"
+          },
+          {
+            "role": "user",
+            "content": "执行任务：搜索最新新闻"
+          }
+        ]
+      },
+      "output": {
+        "content": "已完成新闻搜索。找到以下关键报道：\n1. 新华社：事故调查组已进驻，初步认定为瓦斯爆炸\n2. 央视新闻：目前已确认12人遇难，救援仍在进行\n3. 地方政府通报：已启动应急预案，善后工作同步展开",
+        "tool_calls": [
+          {
+            "id": "call-1",
+            "function": {"name": "search_content", "arguments": "{\"pattern\": \"长治.*煤矿.*爆炸\"}"}
+          }
+        ]
+      }
+    },
+    {
+      "step": 4,
+      "timestamp": "2026-05-28T00:00:15",
+      "phase": "execution_analyze",
+      "input": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是分析师。核实信息来源并交叉验证。"
+          },
+          {
+            "role": "user",
+            "content": "执行任务：核实信息来源。以下是收集到的信息：\n1. 新华社报道...\n2. 央视新闻报道..."
+          }
+        ]
+      },
+      "output": {
+        "content": "来源核实完成：\n- 新华社报道：官方媒体，可信度 高 ✅\n- 央视新闻报道：官方媒体，可信度 高 ✅\n- 地方政府通报：官方渠道，可信度 高 ✅\n\n交叉验证结论：三家权威来源消息一致，信息可靠。"
+      }
+    },
+    {
+      "step": 5,
+      "timestamp": "2026-05-28T00:00:20",
+      "phase": "execution_report",
+      "input": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是报告撰写员。汇总分析结果生成报告。"
+          },
+          {
+            "role": "user",
+            "content": "执行任务：撰写调查报告"
+          }
+        ]
+      },
+      "output": {
+        "content": "## 山西长治煤矿爆炸案调查报告\n\n### 事件概要\n- 时间：近期\n- 地点：山西长治某煤矿\n- 事故类型：瓦斯爆炸\n\n### 最新进展\n1. 事故调查组已进驻现场\n2. 确认遇难人数：12人\n3. 救援工作仍在继续\n4. 善后工作同步展开\n\n### 信息来源\n- 新华社（官方媒体）\n- 央视新闻（官方媒体）\n- 地方政府通报（官方渠道）\n\n### 总结\n事故原因初步认定为瓦斯爆炸，相关调查和善后工作正在有序推进。"
+      }
+    }
+  ],
+  "expected_assertions": {
+    "stages_correct": {"collect", "analyze", "report"},
+    "task_count": 3,
+    "agent_roles": ["研究员", "分析师", "报告撰写员"],
+    "no_ask_user_interruptions": true,
+    "all_tasks_completed": true
+  }
+}

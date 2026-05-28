@@ -1,13 +1,14 @@
 """策略推荐服务 — LLM 根据项目需求和 Agent 组合推荐协作策略"""
 
 import asyncio
-import json
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 
 from app.core.llm import Message as LLMMessage
 from app.services.shared.prompt_registry import registry
+from app.services.shared.json_extractor import extract_and_validate, JSONExtractionError, JSONValidationError
+from app.services.shared.validation import StrategyRecommendationResult
 
 logger = logging.getLogger(__name__)
 
@@ -79,32 +80,21 @@ class StrategyRecommender:
                 timeout=30.0,
             )
 
-            data = self._parse_json(response.content)
+            data = extract_and_validate(response.content, StrategyRecommendationResult)
             return StrategyRecommendation(
-                recommended_strategy=data.get("recommended_strategy", "sequential"),
-                confidence=data.get("confidence", 0.5),
-                reasoning=data.get("reasoning", ""),
-                suggested_coordinator=data.get("suggested_coordinator"),
-                alternative_strategies=data.get("alternative_strategies", []),
+                recommended_strategy=data.recommended_strategy,
+                confidence=data.confidence,
+                reasoning=data.reasoning,
+                suggested_coordinator=data.suggested_coordinator,
+                alternative_strategies=data.alternative_strategies,
             )
-        except Exception as e:
-            logger.warning(f"Strategy recommendation failed: {e}")
+        except (JSONExtractionError, JSONValidationError) as e:
+            logger.warning(f"策略推荐 JSON 解析失败: {e}")
             return StrategyRecommendation(
                 recommended_strategy="sequential",
                 confidence=0.3,
                 reasoning=f"推荐失败 ({e})，默认使用顺序执行策略",
             )
-
-    def _parse_json(self, text: str) -> dict:
-        import re
-
-        match = re.search(r"\{[\s\S]*\}", text)
-        if match:
-            try:
-                return json.loads(match.group())
-            except json.JSONDecodeError:
-                pass
-        return {}
 
 
 strategy_recommender = StrategyRecommender()

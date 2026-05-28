@@ -1,0 +1,13 @@
+{
+  "name": "任务分析",
+  "prompt_pattern": "task\\.analyze|任务分析|分析项目",
+  "response": {
+    "domain": "信息查询",
+    "task_type": "探索研究型",
+    "sub_types": ["数据收集", "报告生成"],
+    "complexity": "中",
+    "breakdown": ["收集资料", "分析数据", "撰写报告"],
+    "key_challenge": "确保信息来源的可靠性",
+    "analysis_summary": "这是一个典型的信息查询与分析任务，建议分三个阶段执行"
+  }
+}

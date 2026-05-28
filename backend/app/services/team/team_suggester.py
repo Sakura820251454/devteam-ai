@@ -1,15 +1,15 @@
 """团队组建建议服务 — Step 3: 基于任务分析建议角色+策略"""
 
 import asyncio
-import json
 import logging
-import re
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 from app.core.llm import Message as LLMMessage
 from app.services.shared.prompt_registry import registry
 from app.services.task.task_analyzer import TaskAnalysis
+from app.services.shared.json_extractor import extract_and_validate, JSONExtractionError, JSONValidationError
+from app.services.shared.validation import TeamSuggestionResult
 
 logger = logging.getLogger(__name__)
 
@@ -85,39 +85,30 @@ class TeamSuggester:
             )
 
     def _parse_suggestion(self, text: str) -> TeamSuggestion:
-        match = re.search(r"\{[\s\S]*\}", text)
-        if not match:
-            return TeamSuggestion()
-
         try:
-            data = json.loads(match.group())
-        except json.JSONDecodeError:
+            data = extract_and_validate(text, TeamSuggestionResult)
+            roles = [SuggestedRole(
+                role_name=r.role_name,
+                responsibilities=r.responsibilities,
+                required_capabilities=r.required_capabilities,
+                suggested_soul=r.suggested_soul,
+                matching_reason=r.matching_reason,
+                priority=r.priority,
+            ) for r in data.roles]
+            strategy = StrategySuggestion(
+                recommended=data.strategy.recommended,
+                reasoning=data.strategy.reasoning,
+                alternatives=[a.model_dump() if hasattr(a, 'model_dump') else a for a in data.strategy.alternatives],
+            )
+            return TeamSuggestion(
+                team_name=data.team_name,
+                roles=roles,
+                strategy=strategy,
+                overall_rationale=data.overall_rationale,
+            )
+        except (JSONExtractionError, JSONValidationError) as e:
+            logger.warning(f"团队建议 JSON 解析失败: {e}")
             return TeamSuggestion()
-
-        roles = []
-        for r in data.get("roles", []):
-            roles.append(SuggestedRole(
-                role_name=r.get("role_name", ""),
-                responsibilities=r.get("responsibilities", ""),
-                required_capabilities=r.get("required_capabilities", []),
-                suggested_soul=r.get("suggested_soul", ""),
-                matching_reason=r.get("matching_reason", ""),
-                priority=r.get("priority", "recommended"),
-            ))
-
-        strat_data = data.get("strategy", {})
-        strategy = StrategySuggestion(
-            recommended=strat_data.get("recommended", "sequential"),
-            reasoning=strat_data.get("reasoning", ""),
-            alternatives=strat_data.get("alternatives", []),
-        )
-
-        return TeamSuggestion(
-            team_name=data.get("team_name", ""),
-            roles=roles,
-            strategy=strategy,
-            overall_rationale=data.get("overall_rationale", ""),
-        )
 
 
 team_suggester = TeamSuggester()

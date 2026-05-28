@@ -1,0 +1,13 @@
+{
+  "name": "策略推荐",
+  "prompt_pattern": "strategy_recommender|策略推荐|推荐.*策略",
+  "response": {
+    "recommended_strategy": "sequential",
+    "confidence": 0.85,
+    "reasoning": "任务阶段之间有明确的依赖关系，顺序执行最合适",
+    "suggested_coordinator": null,
+    "alternative_strategies": [
+      {"strategy": "hierarchical", "reason": "如果团队规模扩大可考虑层级模式"}
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "协调者选举",
+  "prompt_pattern": "election|选举|coordinator.*选择",
+  "response": {
+    "elected_agent_id": "agent-001",
+    "reason": "agent-001 在讨论中展现出最强的统筹能力和技术深度"
+  }
+}

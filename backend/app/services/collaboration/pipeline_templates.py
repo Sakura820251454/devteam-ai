@@ -9,11 +9,13 @@ Pipeline（WHAT）与 协作策略（HOW）正交：
 """
 
 import json
-import re
+import logging
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 
 from app.services.shared.prompt_registry import registry
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -362,15 +364,16 @@ async def suggest_stage_adjustments(
         response = await llm_service.chat(llm_messages, track_cost=True, task_id="pipeline_adjustment")
         result_text = response.content
 
-        # Parse JSON from response
-        json_match = re.search(r'\{[\s\S]*\}', result_text)
-        if json_match:
-            return json.loads(json_match.group())
-        else:
-            # LLM didn't return valid JSON, return no changes
+        # Parse JSON from response (统一提取器)
+        from app.services.shared.json_extractor import extract_and_validate, JSONExtractionError, JSONValidationError
+        from app.services.shared.validation import StageAdjustmentResult
+        try:
+            data = extract_and_validate(result_text, StageAdjustmentResult)
+            return data.model_dump()
+        except (JSONExtractionError, JSONValidationError) as e:
+            logger.warning(f"阶段调整 JSON 解析失败: {e}")
             return {
-                "analysis": "无法解析 LLM 响应，保持原模板不变",
-                "recommended_strategy": template.suggested_strategy,
+                "analysis": f"无法解析 LLM 响应 ({e})，保持原模板不变",
                 "changes": {"add": [], "remove": [], "reorder": [], "rename": []},
                 "final_stages": current_stages,
             }

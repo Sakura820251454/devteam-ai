@@ -1,14 +1,14 @@
 """任务分析服务 — Step 2: 分析任务领域、类型、复杂度"""
 
 import asyncio
-import json
 import logging
-import re
 from dataclasses import dataclass, field
 from typing import List
 
 from app.core.llm import Message as LLMMessage
 from app.services.shared.prompt_registry import registry
+from app.services.shared.json_extractor import extract_and_validate, JSONExtractionError, JSONValidationError
+from app.services.shared.validation import TaskAnalysisResult
 
 logger = logging.getLogger(__name__)
 
@@ -59,34 +59,25 @@ class TaskAnalyzer:
             )
 
     def _parse_analysis(self, text: str) -> TaskAnalysis:
-        match = re.search(r"\{[\s\S]*\}", text)
-        if not match:
-            return TaskAnalysis(
-                domain="其他领域",
-                task_type="探索研究型",
-                breakdown=[],
-                analysis_summary="无法解析分析结果",
-            )
-
         try:
-            data = json.loads(match.group())
-        except json.JSONDecodeError:
+            data = extract_and_validate(text, TaskAnalysisResult)
+            return TaskAnalysis(
+                domain=data.domain,
+                task_type=data.task_type,
+                sub_types=data.sub_types,
+                complexity=data.complexity,
+                breakdown=data.breakdown,
+                key_challenge=data.key_challenge,
+                analysis_summary=data.analysis_summary,
+            )
+        except (JSONExtractionError, JSONValidationError) as e:
+            logger.warning(f"任务分析 JSON 解析失败: {e}")
             return TaskAnalysis(
                 domain="其他领域",
                 task_type="探索研究型",
                 breakdown=[],
-                analysis_summary="JSON解析失败",
+                analysis_summary=f"无法解析分析结果 ({e})",
             )
-
-        return TaskAnalysis(
-            domain=data.get("domain", "其他领域"),
-            task_type=data.get("task_type", "探索研究型"),
-            sub_types=data.get("sub_types", []),
-            complexity=data.get("complexity", "中"),
-            breakdown=data.get("breakdown", []),
-            key_challenge=data.get("key_challenge", ""),
-            analysis_summary=data.get("analysis_summary", ""),
-        )
 
 
 task_analyzer = TaskAnalyzer()

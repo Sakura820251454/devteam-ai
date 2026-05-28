@@ -5,7 +5,6 @@
 """
 
 import asyncio
-import json
 import uuid
 import logging
 from datetime import datetime
@@ -13,6 +12,8 @@ from enum import Enum
 from typing import Dict, List, Optional, Any, Tuple
 
 from pydantic import BaseModel, Field
+from app.services.shared.json_extractor import extract_and_validate, JSONExtractionError
+from app.services.shared.validation import ConsensusCheckResult, CoordinatorElectionResult
 
 from app.core.llm import Message as LLMMessage
 from app.services.shared.prompt_registry import registry
@@ -359,9 +360,9 @@ class DiscussionOrchestrator:
                 timeout=20.0,
             )
 
-            data = self._parse_json(response.content)
-            return data.get("consensus", False), data.get("conclusion")
-        except Exception as e:
+            data = extract_and_validate(response.content, ConsensusCheckResult)
+            return data.consensus, data.conclusion
+        except (JSONExtractionError, Exception) as e:
             logger.warning(f"Consensus check failed: {e}")
             return False, None
 
@@ -410,16 +411,6 @@ class DiscussionOrchestrator:
             logger.warning(f"Discussion summary failed: {e}")
             return f"讨论于 {datetime.now().isoformat()} 结束，共 {len(transcript)} 条发言。"
 
-    def _parse_json(self, text: str) -> dict:
-        import re
-
-        match = re.search(r"\{[\s\S]*\}", text)
-        if match:
-            try:
-                return json.loads(match.group())
-            except json.JSONDecodeError:
-                pass
-        return {}
 
     # ---- Coordinator Election ----
 
@@ -507,11 +498,11 @@ class DiscussionOrchestrator:
                 timeout=20.0,
             )
 
-            data = self._parse_json(response.content)
-            elected = data.get("elected_agent_id", "")
+            data = extract_and_validate(response.content, CoordinatorElectionResult)
+            elected = data.elected_agent_id
             if elected and elected in agent_ids:
                 return elected
-        except Exception as e:
+        except (JSONExtractionError, Exception) as e:
             logger.warning(f"Election decision failed: {e}")
 
         return agent_ids[0]

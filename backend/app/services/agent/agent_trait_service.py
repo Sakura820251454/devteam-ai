@@ -1,13 +1,14 @@
 """Agent 特质服务 — 用 LLM 从 soul.md 生成结构化能力画像，用于任务匹配"""
 
 import asyncio
-import json
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from app.core.llm import Message as LLMMessage
 from app.services.shared.prompt_registry import registry
+from app.services.shared.json_extractor import extract_and_validate, JSONExtractionError, JSONValidationError
+from app.services.shared.validation import AgentTraitResult
 
 logger = logging.getLogger(__name__)
 
@@ -100,30 +101,19 @@ class AgentTraitService:
                 timeout=55.0,
             )
 
-            data = self._parse_trait_json(response.content)
+            data = extract_and_validate(response.content, AgentTraitResult)
             return AgentTraits(
                 agent_id=agent_id,
-                role_label=data.get("role_label", agent.get("name", agent_id)),
-                skills=data.get("skills", []),
-                strength_areas=data.get("strength_areas", []),
-                collaboration_style=data.get("collaboration_style", "务实型"),
-                communication_style=data.get("communication_style", "简洁型"),
-                summary=data.get("summary", f"{agent.get('name', agent_id)} 的核心能力"),
+                role_label=data.role_label or agent.get("name", agent_id),
+                skills=data.skills,
+                strength_areas=data.strength_areas,
+                collaboration_style=data.collaboration_style,
+                communication_style=data.communication_style,
+                summary=data.summary or f"{agent.get('name', agent_id)} 的核心能力",
             )
-        except Exception as e:
+        except (JSONExtractionError, JSONValidationError) as e:
             logger.warning(f"Trait generation for {agent_id} failed: {e}")
             return self._fallback_traits(agent_id)
-
-    def _parse_trait_json(self, text: str) -> dict:
-        import re
-
-        match = re.search(r"\{[\s\S]*\}", text)
-        if match:
-            try:
-                return json.loads(match.group())
-            except json.JSONDecodeError:
-                pass
-        return {}
 
     def _fallback_traits(self, agent_id: str) -> AgentTraits:
         from app.services.agent.agent_service import agent_service

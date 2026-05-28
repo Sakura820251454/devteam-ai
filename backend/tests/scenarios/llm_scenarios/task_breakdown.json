@@ -1,0 +1,29 @@
+{
+  "name": "任务拆解",
+  "prompt_pattern": "task_breakdown|任务拆解|拆解",
+  "response": {
+    "tasks": [
+      {
+        "title": "收集相关资料",
+        "description": "从可靠来源收集项目所需的数据和资料",
+        "assigned_role": "研究员",
+        "priority": "high",
+        "phase": "collect",
+        "dependencies": [],
+        "acceptance_criteria": ["至少收集5个来源的资料"],
+        "required_skills": ["信息检索", "数据分析"]
+      },
+      {
+        "title": "分析并整理报告",
+        "description": "对收集的资料进行分析并生成报告",
+        "assigned_role": "分析师",
+        "priority": "medium",
+        "phase": "analyze",
+        "dependencies": ["factory-task-001"],
+        "acceptance_criteria": ["报告包含数据分析和建议"],
+        "required_skills": ["数据分析", "报告撰写"]
+      }
+    ],
+    "summary": "项目分为收集和分析两个主要阶段"
+  }
+}

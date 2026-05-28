@@ -1,0 +1,8 @@
+{
+  "name": "共识检查",
+  "prompt_pattern": "consensus_check|共识|达成一致",
+  "response": {
+    "consensus": true,
+    "conclusion": "各方在主要问题上达成一致，同意按顺序执行方案推进"
+  }
+}

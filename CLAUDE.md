@@ -2,40 +2,28 @@
 
 ## Project overview
 
-DevTeam-AI is a multi-agent collaborative development platform. FastAPI backend orchestrates AI agents through a pipeline system; React frontend provides visualization and human intervention.
+DevTeam-AI is a multi-agent collaborative development platform. FastAPI backend + React frontend + VitePress docs.
 
 ## Development commands
 
-### Backend (Python 3.12 / FastAPI)
-
 ```bash
-# Python 3.12 at: C:\Users\AA\python-sdk\python3.12.9
+# Backend (Python 3.12 at C:/Users/AA/python-sdk/python3.12.9)
+cd backend
 C:/Users/AA/python-sdk/python3.12.9/python.exe -m uvicorn app.main:app --reload --port 8000
-pytest tests/ -v              # LLM_MODE=mock required
+pytest tests/ -v                    # LLM_MODE=mock required
 ruff check .
-```
 
-### Frontend (React 18 / TypeScript / Vite)
-
-```bash
-npm run dev                   # port 3000, proxies /api → localhost:8000
+# Frontend (React 18 / TypeScript / Vite)
+cd frontend
+npm run dev                         # port 3000, proxies /api → localhost:8000
 npx tsc --noEmit
 npm run lint
 npm test
-```
 
-### Docs (VitePress)
-
-```bash
+# Docs (VitePress)
 npm run docs:dev
 npm run docs:build
 ```
-
-## Testing & CI
-
-- Backend: `pytest tests/ -v` with `LLM_MODE=mock`
-- Frontend: Vitest (unit) + Playwright (e2e)
-- CI: Python Ruff lint + pytest, TypeScript `tsc --noEmit` + Vite build, VitePress build
 
 ## Key config files
 
@@ -44,21 +32,20 @@ npm run docs:build
 - `frontend/vite.config.ts` — port, API proxy
 - `backend/agents/*/soul.md` — agent personas
 
-## Task persistence rule
+## Testing & CI
 
-When working through a multi-phase plan with TaskCreate tasks, **do not abandon incomplete tasks** after finishing the first few. Before ending a session or reporting "done", always check TaskList and explicitly report which tasks were completed and which remain. If the user interrupts with a new direction mid-plan, note which tasks are paused and will need resumption. This prevents half-finished implementations where earlier phases are done but later phases are forgotten.
+- Backend: `pytest tests/ -v`（`LLM_MODE=mock`）
+- Frontend: Vitest (unit) + Playwright (e2e)
+- CI: Ruff lint + pytest, `tsc --noEmit` + Vite build, VitePress build
 
-## Prompt management
+## Documentation
 
-All LLM prompts live in `backend/app/prompts/registry.yaml` as the single source of truth — never write f-string prompts in code.
-Use `registry.render(id, vars)` instead. After changing prompts, run `python scripts/prompt_doc_gen.py` to update docs.
+- 架构变更 → ADR (`docs/02-design/decisions/`)
+- 新模块/公开接口变更 → 模块文档 (`docs/04-modules/`)
+- 代码中非显而易见的"为什么" → 中文注释
 
-## Documentation maintenance
+## Per-directory rules
 
-Use `documentation-and-adrs` skill. Before writing docs, search existing ones to avoid conflicts.
-If overriding a prior decision, write an ADR explaining why and mark the old one superseded.
-
-- Direction/architecture change → ADR (`docs/02-design/decisions/`)
-- New feature/module → module doc (`04-modules/`) + API doc if public-facing
-- Modified behavior → update corresponding doc in `04-modules/` or `05-api/`
-- New data model → update `04-modules/backend/models/`
+- `backend/CLAUDE.md` — 后端编码规则（prompt 管理、AI 安全网、状态机）
+- `backend/tests/CLAUDE.md` — 测试策略和规范
+- `frontend/CLAUDE.md` — 前端约定

@@ -1,0 +1,23 @@
+{
+  "name": "任务步骤规划",
+  "prompt_pattern": "step_planning|步骤规划|执行步骤",
+  "response": {
+    "steps": [
+      {
+        "name": "环境准备",
+        "description": "确认开发环境和依赖项",
+        "expected_output": "环境配置清单"
+      },
+      {
+        "name": "核心实现",
+        "description": "实现核心业务逻辑",
+        "expected_output": "功能代码和单元测试"
+      },
+      {
+        "name": "验证和文档",
+        "description": "运行测试并编写文档",
+        "expected_output": "测试报告和 API 文档"
+      }
+    ]
+  }
+}

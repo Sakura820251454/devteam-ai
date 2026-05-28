@@ -1,6 +1,8 @@
 import { defineConfig } from 'vitepress'
+import { withMermaid } from 'vitepress-plugin-mermaid'
 
-export default defineConfig({
+export default withMermaid(
+  defineConfig({
   title: 'DevTeam-AI',
   description: '多 Agent 协作开发平台文档',
   ignoreDeadLinks: [
@@ -105,15 +107,23 @@ export default defineConfig({
             { text: '后端首页', link: '/04-modules/backend/' },
             { text: 'Agent 服务', link: '/04-modules/backend/agent-service' },
             { text: 'Agent 执行器', link: '/04-modules/backend/agent-executor' },
+            { text: 'Agent 工具系统', link: '/04-modules/backend/tools' },
+            { text: 'Agent 特质服务', link: '/04-modules/backend/agent-trait-service' },
             { text: '消息总线', link: '/04-modules/backend/message-bus' },
             { text: '发言控制器', link: '/04-modules/backend/speaking-controller' },
+            { text: '讨论编排器', link: '/04-modules/backend/discussion-orchestrator' },
             { text: '任务看板', link: '/04-modules/backend/task-board' },
             { text: 'Pipeline 编排器', link: '/04-modules/backend/pipeline-orchestrator' },
+            { text: 'Pipeline 模板', link: '/04-modules/backend/pipeline-templates' },
+            { text: '策略推荐器', link: '/04-modules/backend/strategy-recommender' },
+            { text: '任务分析服务', link: '/04-modules/backend/task-analyzer' },
+            { text: '团队建议服务', link: '/04-modules/backend/team-suggester' },
             { text: '项目管理', link: '/04-modules/backend/project-service' },
             { text: '冲突仲裁', link: '/04-modules/backend/arbitration-service' },
             { text: '安全服务', link: '/04-modules/backend/security-service' },
             { text: '记忆服务', link: '/04-modules/backend/memory-service' },
             { text: 'LLM 服务', link: '/04-modules/backend/llm-service' },
+            { text: 'Prompt 注册中心', link: '/04-modules/backend/prompt-registry' },
             { text: '装备服务', link: '/04-modules/backend/equipment-service' },
             { text: '知识服务', link: '/04-modules/backend/knowledge-service' },
             { text: '学习服务', link: '/04-modules/backend/learning-service' },
@@ -216,6 +226,7 @@ export default defineConfig({
   },
 
   markdown: {
-    lineNumbers: true
+    lineNumbers: true,
+    mermaid: true
   }
-})
+}))
