@@ -384,7 +384,7 @@ class PipelineOrchestrator:
                 if self._db:
                     await self._db.save(pipeline)
 
-            # Trigger learning cycle
+            # Trigger learning cycle — pipeline 完成即用户需求完成（大任务），触发复盘
             if pipeline.status == PipelineStatus.COMPLETED:
                 try:
                     await self._trigger_learning_cycle(pipeline)
@@ -1933,6 +1933,50 @@ class PipelineOrchestrator:
                         pipeline.add_log("learning", f"growth.json 更新失败: {e}", "warning")
             except Exception as e:
                 pipeline.add_log("learning", f"Agent {agent_id} 学习失败: {e}", "warning")
+
+        # 手动晋升：将本次任务中高频使用的记忆晋升到更高层级
+        await self._promote_key_memories(pipeline)
+
+    async def _promote_key_memories(self, pipeline: Pipeline) -> None:
+        """复盘后手动晋升关键记忆（双轨晋升的手动轨）"""
+        try:
+            from app.services.memory.persistent_memory_manager import PersistentMemoryManager
+            from app.services.memory.memory_promotion import promotion_service
+
+            manager = PersistentMemoryManager()
+            promoted_count = 0
+
+            for agent_id in pipeline.agents:
+                memories = await manager.get_agent_memories(agent_id)
+                if not memories:
+                    continue
+
+                memory_dicts = []
+                for m in memories:
+                    memory_dicts.append({
+                        "id": m.id,
+                        "level": m.level,
+                        "usage_count": m.usage_count,
+                        "relevance_score": m.relevance_score,
+                        "created_at": m.created_at,
+                    })
+
+                # 晋升使用次数 ≥ 3 的 L1 记忆到 L2
+                candidates = promotion_service.manual_promote(
+                    memory_dicts,
+                    [m["id"] for m in memory_dicts if m["usage_count"] >= 3 and m["level"] == "working"],
+                    "short_term",
+                )
+
+                for memory_data, target_level in candidates:
+                    success = await manager.promote_memory(memory_data["id"], target_level)
+                    if success:
+                        promoted_count += 1
+
+            if promoted_count > 0:
+                pipeline.add_log("learning", f"手动晋升 {promoted_count} 条关键记忆")
+        except Exception as e:
+            pipeline.add_log("learning", f"手动晋升记忆失败: {e}", "warning")
 
     def _extract_decisions_for_agent(self, pipeline: Pipeline, agent_id: str) -> list:
         """从 pipeline 日志中提取某 agent 的决策记录"""

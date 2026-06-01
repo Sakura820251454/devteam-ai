@@ -122,7 +122,51 @@ class MemoryPromotionService:
         )
         
         return candidates
-    
+
+    def manual_promote(
+        self,
+        memories: List[Dict[str, Any]],
+        memory_ids: List[str],
+        target_level: str,
+    ) -> List[tuple[Dict[str, Any], str]]:
+        """
+        手动晋升 — 统筹 Agent 在复盘时调用
+
+        跳过自动规则检查，直接晋升指定记忆到目标层级。
+
+        Args:
+            memories: 所有记忆数据列表
+            memory_ids: 要晋升的记忆 ID 列表
+            target_level: 目标层级
+
+        Returns:
+            [(memory, target_level), ...] 验证通过的记忆列表
+        """
+        # 合法的晋升路径
+        valid_targets = {
+            MemoryLevel.WORKING: [MemoryLevel.SHORT_TERM, MemoryLevel.LONG_TERM],
+            MemoryLevel.SHORT_TERM: [MemoryLevel.LONG_TERM],
+        }
+
+        # 验证目标层级是否已知
+        known_levels = {MemoryLevel.WORKING, MemoryLevel.SHORT_TERM, MemoryLevel.LONG_TERM}
+        if target_level not in known_levels:
+            return []
+
+        id_set = set(memory_ids)
+        results = []
+
+        for memory in memories:
+            if memory.get("id") not in id_set:
+                continue
+
+            current_level = memory.get("level", MemoryLevel.WORKING)
+            allowed = valid_targets.get(current_level, [])
+            if target_level in allowed or target_level == current_level:
+                results.append((memory, target_level))
+
+        return results
+
     def should_archive(
         self,
         memory: Dict[str, Any],
