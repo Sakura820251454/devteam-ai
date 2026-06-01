@@ -21,7 +21,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     content: str
-    usage: Dict[str, int]
+    usage: Dict[str, Any]
     model: str
     finish_reason: str
     cost: Optional[float] = None

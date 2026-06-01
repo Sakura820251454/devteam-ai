@@ -26,26 +26,26 @@ class TestLLMModels:
 
     def test_available_models(self):
         assert "gpt-4o" in AVAILABLE_MODELS
-        assert "deepseek-chat" in AVAILABLE_MODELS
+        assert "deepseek-v4-flash" in AVAILABLE_MODELS
         assert "mock-model" in AVAILABLE_MODELS
         
-        model = AVAILABLE_MODELS["deepseek-chat"]
+        model = AVAILABLE_MODELS["deepseek-v4-flash"]
         assert model.provider == LLMProviderType.DEEPSEEK
-        assert model.input_cost_per_1k == 0.1
-        assert model.output_cost_per_1k == 0.3
+        assert model.input_cost_per_1k == 0.001
+        assert model.output_cost_per_1k == 0.002
 
     def test_get_model_info(self):
-        model_info = get_model_info("deepseek-chat")
-        assert model_info.name == "deepseek-chat"
+        model_info = get_model_info("deepseek-v4-flash")
+        assert model_info.name == "deepseek-v4-flash"
         assert model_info.provider == LLMProviderType.DEEPSEEK
 
     def test_get_model_info_default(self):
         model_info = get_model_info("unknown-model")
-        assert model_info.name == "deepseek-chat"  # falls back to default provider model
+        assert model_info.name == "deepseek-v4-flash"  # falls back to default provider model
 
     def test_calculate_cost_deepseek(self):
-        cost = calculate_cost("deepseek-chat", 1000, 500)
-        expected = (1000 / 1000) * 0.1 + (500 / 1000) * 0.3
+        cost = calculate_cost("deepseek-v4-flash", 1000, 500)
+        expected = (1000 / 1000) * 0.001 + (500 / 1000) * 0.002
         assert abs(cost - expected) < 0.0001
 
     def test_calculate_cost_openai(self):
@@ -138,7 +138,7 @@ class TestLLMProviderFactory:
 
     def test_get_all_models(self):
         models = LLMProviderFactory.get_all_models()
-        assert "deepseek-chat" in models
+        assert "deepseek-v4-flash" in models
         assert "gpt-4o" in models
 
 
@@ -148,7 +148,7 @@ class TestLLMConfig:
 
         config = LLMConfig()
         assert config.provider == LLMProviderType.DEEPSEEK
-        assert config.model == "deepseek-chat"
+        assert config.model == "deepseek-v4-flash"
         assert config.temperature == 0.7
 
     def test_llm_config_custom(self):
@@ -156,12 +156,12 @@ class TestLLMConfig:
         
         config = LLMConfig(
             provider=LLMProviderType.DEEPSEEK,
-            model="deepseek-chat",
+            model="deepseek-v4-flash",
             temperature=0.5,
             max_tokens=2000
         )
         assert config.provider == LLMProviderType.DEEPSEEK
-        assert config.model == "deepseek-chat"
+        assert config.model == "deepseek-v4-flash"
         assert config.temperature == 0.5
         assert config.max_tokens == 2000
 
@@ -173,7 +173,7 @@ class TestLLMConfig:
             role="Developer",
             llm_config=LLMConfig(
                 provider=LLMProviderType.DEEPSEEK,
-                model="deepseek-chat"
+                model="deepseek-v4-flash"
             )
         )
         assert config.llm_config is not None

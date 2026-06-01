@@ -44,8 +44,7 @@ class TestMemoryCRUD:
     @pytest.mark.asyncio
     async def test_add_memory(self, client, test_agent_id):
         """测试添加记忆"""
-        response = await client.post(
-            "/memories/",
+        response = await client.post("/api/memories/",
             json={
                 "agent_id": test_agent_id,
                 "content": "这是一个测试记忆内容",
@@ -62,8 +61,7 @@ class TestMemoryCRUD:
     @pytest.mark.asyncio
     async def test_get_memory(self, client, test_agent_id):
         """测试获取记忆"""
-        add_response = await client.post(
-            "/memories/",
+        add_response = await client.post("/api/memories/",
             json={
                 "agent_id": test_agent_id,
                 "content": "需要获取的记忆",
@@ -73,7 +71,7 @@ class TestMemoryCRUD:
         )
         memory_id = add_response.json()["id"]
 
-        get_response = await client.get(f"/memories/{memory_id}")
+        get_response = await client.get(f"/api/memories/{memory_id}")
         assert get_response.status_code == 200
         memory = get_response.json()
         assert memory["id"] == memory_id
@@ -82,8 +80,7 @@ class TestMemoryCRUD:
     @pytest.mark.asyncio
     async def test_update_memory(self, client, test_agent_id):
         """测试更新记忆"""
-        add_response = await client.post(
-            "/memories/",
+        add_response = await client.post("/api/memories/",
             json={
                 "agent_id": test_agent_id,
                 "content": "原始记忆内容",
@@ -92,8 +89,7 @@ class TestMemoryCRUD:
         )
         memory_id = add_response.json()["id"]
 
-        update_response = await client.put(
-            f"/memories/{memory_id}",
+        update_response = await client.put(f"/api/memories/{memory_id}",
             json={
                 "content": "更新后的记忆内容",
                 "tags": ["updated"]
@@ -107,8 +103,7 @@ class TestMemoryCRUD:
     @pytest.mark.asyncio
     async def test_delete_memory(self, client, test_agent_id):
         """测试删除记忆"""
-        add_response = await client.post(
-            "/memories/",
+        add_response = await client.post("/api/memories/",
             json={
                 "agent_id": test_agent_id,
                 "content": "将被删除的记忆",
@@ -117,18 +112,17 @@ class TestMemoryCRUD:
         )
         memory_id = add_response.json()["id"]
 
-        delete_response = await client.delete(f"/memories/{memory_id}")
+        delete_response = await client.delete(f"/api/memories/{memory_id}")
         assert delete_response.status_code == 200
 
-        get_response = await client.get(f"/memories/{memory_id}")
+        get_response = await client.get(f"/api/memories/{memory_id}")
         assert get_response.status_code == 404
 
     @pytest.mark.asyncio
     async def test_get_agent_memories(self, client, test_agent_id):
         """测试获取 Agent 的所有记忆"""
         for i in range(3):
-            await client.post(
-                "/memories/",
+            await client.post("/api/memories/",
                 json={
                     "agent_id": test_agent_id,
                     "content": f"记忆 {i+1}",
@@ -136,7 +130,7 @@ class TestMemoryCRUD:
                 }
             )
 
-        response = await client.get(f"/memories/agent/{test_agent_id}")
+        response = await client.get(f"/api/memories/agent/{test_agent_id}")
         assert response.status_code == 200
         memories = response.json()
         assert len(memories) >= 3
@@ -146,8 +140,7 @@ class TestMemoryCRUD:
         """测试按层级获取记忆"""
         levels = [MemoryLevel.WORKING, MemoryLevel.SHORT_TERM, MemoryLevel.LONG_TERM]
         for level in levels:
-            await client.post(
-                "/memories/",
+            await client.post("/api/memories/",
                 json={
                     "agent_id": test_agent_id,
                     "content": f"{level.value} 层级记忆",
@@ -156,8 +149,7 @@ class TestMemoryCRUD:
             )
 
         for level in levels:
-            response = await client.get(
-                f"/memories/agent/{test_agent_id}",
+            response = await client.get(f"/api/memories/agent/{test_agent_id}",
                 params={"level": level.value}
             )
             assert response.status_code == 200
@@ -180,8 +172,7 @@ class TestMemoryRetrieval:
         ]
 
         for content in memories_content:
-            await client.post(
-                "/memories/",
+            await client.post("/api/memories/",
                 json={
                     "agent_id": test_agent_id,
                     "content": content,
@@ -190,8 +181,7 @@ class TestMemoryRetrieval:
                 }
             )
 
-        response = await client.post(
-            "/memories/retrieve",
+        response = await client.post("/api/memories/retrieve",
             json={
                 "agent_id": test_agent_id,
                 "search_query": "Python 编程",
@@ -206,8 +196,7 @@ class TestMemoryRetrieval:
     @pytest.mark.asyncio
     async def test_retrieve_memory_with_filter(self, client, test_agent_id):
         """测试带过滤条件的检索"""
-        await client.post(
-            "/memories/",
+        await client.post("/api/memories/",
             json={
                 "agent_id": test_agent_id,
                 "content": "重要的代码片段",
@@ -216,8 +205,7 @@ class TestMemoryRetrieval:
             }
         )
 
-        response = await client.post(
-            "/memories/retrieve",
+        response = await client.post("/api/memories/retrieve",
             json={
                 "agent_id": test_agent_id,
                 "search_query": "代码",
@@ -235,8 +223,7 @@ class TestMemoryPromotion:
     @pytest.mark.asyncio
     async def test_promote_memory(self, client, test_agent_id):
         """测试记忆晋升到更高层级"""
-        add_response = await client.post(
-            "/memories/",
+        add_response = await client.post("/api/memories/",
             json={
                 "agent_id": test_agent_id,
                 "content": "需要晋升的记忆",
@@ -245,8 +232,7 @@ class TestMemoryPromotion:
         )
         memory_id = add_response.json()["id"]
 
-        promote_response = await client.post(
-            f"/memories/promote/{memory_id}",
+        promote_response = await client.post(f"/api/memories/promote/{memory_id}",
             params={"to_level": MemoryLevel.LONG_TERM.value}
         )
         assert promote_response.status_code == 200
@@ -262,8 +248,7 @@ class TestMemoryStatistics:
         """测试获取记忆统计"""
         for level in MemoryLevel:
             for i in range(2):
-                await client.post(
-                    "/memories/",
+                await client.post("/api/memories/",
                     json={
                         "agent_id": test_agent_id,
                         "content": f"{level.value} 记忆 {i+1}",
@@ -271,7 +256,7 @@ class TestMemoryStatistics:
                     }
                 )
 
-        response = await client.get(f"/memories/agent/{test_agent_id}/statistics")
+        response = await client.get(f"/api/memories/agent/{test_agent_id}/statistics")
         assert response.status_code == 200
         stats = response.json()
         assert "working" in stats
@@ -287,8 +272,7 @@ class TestMemoryContext:
     async def test_get_context_prompt(self, client, test_agent_id):
         """测试获取上下文提示词"""
         for i in range(5):
-            await client.post(
-                "/memories/",
+            await client.post("/api/memories/",
                 json={
                     "agent_id": test_agent_id,
                     "content": f"上下文记忆 {i+1}",
@@ -296,7 +280,7 @@ class TestMemoryContext:
                 }
             )
 
-        response = await client.get(f"/memories/context/{test_agent_id}/prompt")
+        response = await client.get(f"/api/memories/context/{test_agent_id}/prompt")
         assert response.status_code == 200
         data = response.json()
         assert "prompt" in data
@@ -305,8 +289,7 @@ class TestMemoryContext:
     @pytest.mark.asyncio
     async def test_create_context(self, client, test_agent_id):
         """测试创建/更新上下文"""
-        response = await client.post(
-            "/memories/context",
+        response = await client.post("/api/memories/context",
             json={
                 "agent_id": test_agent_id,
                 "role": "developer",
@@ -324,8 +307,7 @@ class TestMemoryCompression:
     async def test_compress_context(self, client, test_agent_id):
         """测试上下文压缩"""
         for i in range(20):
-            await client.post(
-                "/memories/",
+            await client.post("/api/memories/",
                 json={
                     "agent_id": test_agent_id,
                     "content": f"长记忆内容 {i+1}，" + "x" * 100,
@@ -333,8 +315,7 @@ class TestMemoryCompression:
                 }
             )
 
-        response = await client.post(
-            f"/memories/agent/{test_agent_id}/compress",
+        response = await client.post(f"/api/memories/agent/{test_agent_id}/compress",
             params={"max_tokens": 1000, "strategy": "auto"}
         )
         assert response.status_code == 200
@@ -345,8 +326,7 @@ class TestMemoryCompression:
     async def test_get_compressed_prompt(self, client, test_agent_id):
         """测试获取压缩后的提示词"""
         for i in range(10):
-            await client.post(
-                "/memories/",
+            await client.post("/api/memories/",
                 json={
                     "agent_id": test_agent_id,
                     "content": f"压缩测试记忆 {i+1}",
@@ -354,8 +334,7 @@ class TestMemoryCompression:
                 }
             )
 
-        response = await client.get(
-            f"/memories/agent/{test_agent_id}/compressed-prompt",
+        response = await client.get(f"/api/memories/agent/{test_agent_id}/compressed-prompt",
             params={"max_tokens": 500}
         )
         assert response.status_code == 200
@@ -370,8 +349,7 @@ class TestMemoryForgetting:
     async def test_get_forget_plan(self, client, test_agent_id):
         """测试获取遗忘计划"""
         for i in range(30):
-            await client.post(
-                "/memories/",
+            await client.post("/api/memories/",
                 json={
                     "agent_id": test_agent_id,
                     "content": f"将被遗忘的记忆 {i+1}",
@@ -379,17 +357,16 @@ class TestMemoryForgetting:
                 }
             )
 
-        response = await client.post(f"/memories/agent/{test_agent_id}/forget-plan")
+        response = await client.post(f"/api/memories/agent/{test_agent_id}/forget-plan")
         assert response.status_code == 200
         plan = response.json()
-        assert "memories_to_forget" in plan or "message" in plan
+        assert "forget_plan" in plan
 
     @pytest.mark.asyncio
     async def test_auto_forget_dry_run(self, client, test_agent_id):
         """测试自动遗忘（干运行）"""
         for i in range(20):
-            await client.post(
-                "/memories/",
+            await client.post("/api/memories/",
                 json={
                     "agent_id": test_agent_id,
                     "content": f"遗忘测试记忆 {i+1}",
@@ -397,8 +374,7 @@ class TestMemoryForgetting:
                 }
             )
 
-        response = await client.post(
-            f"/memories/agent/{test_agent_id}/auto-forget",
+        response = await client.post(f"/api/memories/agent/{test_agent_id}/auto-forget",
             params={"dry_run": True}
         )
         assert response.status_code == 200
@@ -408,7 +384,7 @@ class TestMemoryForgetting:
     @pytest.mark.asyncio
     async def test_capacity_check(self, client, test_agent_id):
         """测试容量检查"""
-        response = await client.post(f"/memories/agent/{test_agent_id}/capacity-check")
+        response = await client.post(f"/api/memories/agent/{test_agent_id}/capacity-check")
         assert response.status_code == 200
         result = response.json()
         assert "capacity" in result
@@ -422,8 +398,7 @@ class TestMemoryDeduplication:
     async def test_deduplicate_memories(self, client, test_agent_id):
         """测试记忆去重"""
         for i in range(3):
-            await client.post(
-                "/memories/",
+            await client.post("/api/memories/",
                 json={
                     "agent_id": test_agent_id,
                     "content": "重复的记忆内容",
@@ -432,7 +407,7 @@ class TestMemoryDeduplication:
                 }
             )
 
-        response = await client.post(f"/memories/agent/{test_agent_id}/deduplicate")
+        response = await client.post(f"/api/memories/agent/{test_agent_id}/deduplicate")
         assert response.status_code == 200
         result = response.json()
         assert "merged_count" in result["result"]
@@ -445,8 +420,7 @@ class TestMemoryRefresh:
     async def test_refresh_memory_scores(self, client, test_agent_id):
         """测试刷新记忆分数"""
         for i in range(5):
-            await client.post(
-                "/memories/",
+            await client.post("/api/memories/",
                 json={
                     "agent_id": test_agent_id,
                     "content": f"需要刷新分数的记忆 {i+1}",
@@ -454,7 +428,7 @@ class TestMemoryRefresh:
                 }
             )
 
-        response = await client.post(f"/memories/agent/{test_agent_id}/refresh-scores")
+        response = await client.post(f"/api/memories/agent/{test_agent_id}/refresh-scores")
         assert response.status_code == 200
         result = response.json()
         assert "statistics" in result
@@ -467,8 +441,7 @@ class TestMemoryExport:
     async def test_export_memories(self, client, test_agent_id):
         """测试导出记忆"""
         for i in range(3):
-            await client.post(
-                "/memories/",
+            await client.post("/api/memories/",
                 json={
                     "agent_id": test_agent_id,
                     "content": f"导出测试 {i+1}",
@@ -477,8 +450,7 @@ class TestMemoryExport:
                 }
             )
 
-        response = await client.post(
-            "/memories/export",
+        response = await client.post("/api/memories/export",
             json={"agent_id": test_agent_id}
         )
         assert response.status_code == 200
@@ -494,8 +466,7 @@ class TestMemoryQuality:
     @pytest.mark.asyncio
     async def test_get_memory_quality(self, client, test_agent_id):
         """测试获取记忆质量评分"""
-        add_response = await client.post(
-            "/memories/",
+        add_response = await client.post("/api/memories/",
             json={
                 "agent_id": test_agent_id,
                 "content": "评估记忆质量",
@@ -504,10 +475,10 @@ class TestMemoryQuality:
         )
         memory_id = add_response.json()["id"]
 
-        response = await client.get(f"/memories/quality/{memory_id}")
+        response = await client.get(f"/api/memories/quality/{memory_id}")
         assert response.status_code == 200
         quality = response.json()
-        assert "quality_score" in quality or "score" in quality
+        assert "quality" in quality
 
 
 class TestCrossSessionMemory:
@@ -522,8 +493,7 @@ class TestCrossSessionMemory:
         )
         session1_id = session1.json()["id"]
 
-        await client.post(
-            "/memories/",
+        await client.post("/api/memories/",
             json={
                 "agent_id": test_agent_id,
                 "content": "跨会话共享的重要信息",
@@ -539,7 +509,7 @@ class TestCrossSessionMemory:
         )
         session2_id = session2.json()["id"]
 
-        memories = await client.get(f"/memories/agent/{test_agent_id}")
+        memories = await client.get(f"/api/memories/agent/{test_agent_id}")
         assert memories.status_code == 200
         shared_memories = memories.json()
         assert any("跨会话共享" in m["content"] for m in shared_memories)
@@ -554,8 +524,7 @@ class TestMemoryIntegration:
         # 1. 添加多个层级的新记忆
         memories_ids = []
         for i, level in enumerate([MemoryLevel.WORKING, MemoryLevel.SHORT_TERM, MemoryLevel.LONG_TERM]):
-            response = await client.post(
-                "/memories/",
+            response = await client.post("/api/memories/",
                 json={
                     "agent_id": test_agent_id,
                     "content": f"生命周期测试记忆 {i+1}",
@@ -567,8 +536,7 @@ class TestMemoryIntegration:
             memories_ids.append(response.json()["id"])
 
         # 2. 检索记忆
-        retrieved = await client.post(
-            "/memories/retrieve",
+        retrieved = await client.post("/api/memories/retrieve",
             json={
                 "agent_id": test_agent_id,
                 "search_query": "生命周期测试",
@@ -578,27 +546,25 @@ class TestMemoryIntegration:
         assert retrieved.status_code == 200
 
         # 3. 更新部分记忆
-        await client.put(
-            f"/memories/{memories_ids[0]}",
+        await client.put(f"/api/memories/{memories_ids[0]}",
             json={"content": "更新后的生命周期测试记忆 1"}
         )
 
         # 4. 晋升记忆
-        await client.post(
-            f"/memories/promote/{memories_ids[0]}",
+        await client.post(f"/api/memories/promote/{memories_ids[0]}",
             params={"to_level": MemoryLevel.LONG_TERM.value}
         )
 
         # 5. 检查统计
-        stats_response = await client.get(f"/memories/agent/{test_agent_id}/statistics")
+        stats_response = await client.get(f"/api/memories/agent/{test_agent_id}/statistics")
         assert stats_response.status_code == 200
 
         # 6. 获取上下文提示词
-        prompt_response = await client.get(f"/memories/context/{test_agent_id}/prompt")
+        prompt_response = await client.get(f"/api/memories/context/{test_agent_id}/prompt")
         assert prompt_response.status_code == 200
 
         # 7. 验证最终状态
-        final_memory = await client.get(f"/memories/{memories_ids[0]}")
+        final_memory = await client.get(f"/api/memories/{memories_ids[0]}")
         assert final_memory.status_code == 200
 
 

@@ -42,6 +42,7 @@ class Message(BaseModel):
 
 @dataclass
 class Subscription:
+    subscription_id: str
     agent_id: str
     channels: List[str]
     callback: Callable[[Message], None]
@@ -69,6 +70,7 @@ class MessageBus:
             if channel not in self._subscribers:
                 self._subscribers[channel] = []
             self._subscribers[channel].append(Subscription(
+                subscription_id=subscription_id,
                 agent_id=agent_id,
                 channels=channels,
                 callback=callback,
@@ -79,7 +81,7 @@ class MessageBus:
     def unsubscribe(self, subscription_id: str) -> bool:
         for channel_subs in self._subscribers.values():
             for i, sub in enumerate(channel_subs):
-                if f"{sub.agent_id}:{sub.callback}" == subscription_id:
+                if sub.subscription_id == subscription_id:
                     channel_subs.pop(i)
                     return True
         return False
@@ -308,6 +310,7 @@ class MessageBus:
                     callback(message)
 
         self._subscribers[channel].append(Subscription(
+            subscription_id=subscription_id,
             agent_id=agent_id,
             channels=[channel],
             callback=topic_filtered_callback,

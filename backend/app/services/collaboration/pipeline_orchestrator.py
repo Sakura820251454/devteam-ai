@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import traceback
 import uuid
 from datetime import datetime
@@ -19,6 +20,8 @@ from app.services.shared.prompt_registry import registry
 from app.models.agent_context import AgentContextFactory
 from app.services.security.guard import security_guard, OperationType
 from app.services.security.audit import audit_logger, AuditAction
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineStatus(str, Enum):
@@ -482,7 +485,7 @@ class PipelineOrchestrator:
                     "requirement_analysis.md", final_analysis,
                 )
             except Exception:
-                pass
+                logger.warning("保存需求分析产物到工作区失败", exc_info=True)
 
             msg = Message(
                 sender_id="system",
@@ -1771,7 +1774,7 @@ class PipelineOrchestrator:
                 "review_report.md", review_result,
             )
         except Exception:
-            pass
+            logger.warning("保存审查报告到工作区失败", exc_info=True)
 
         msg = Message(
             sender_id="system",
@@ -2047,7 +2050,7 @@ class PipelineOrchestrator:
                 from app.services.project.workspace_manager import workspace_manager
                 workspace_manager.update_stages(pipeline.project_id, stages)
             except Exception:
-                pass
+                logger.warning("更新工作区阶段状态失败", exc_info=True)
 
             if self._db:
                 await self._db.save(pipeline)
@@ -2217,8 +2220,10 @@ class PipelineOrchestrator:
                 task.cancel()
                 try:
                     await task
-                except (asyncio.CancelledError, Exception):
-                    pass
+                except asyncio.CancelledError:
+                    pass  # 取消操作的预期异常
+                except Exception:
+                    logger.warning("取消 pipeline 任务时出错", exc_info=True)
 
             # 3. 保存完整状态
             pipeline.stop_requested = False
@@ -2238,7 +2243,7 @@ class PipelineOrchestrator:
                 from app.services.project.workspace_manager import workspace_manager
                 workspace_manager.update_status(pipeline.project_id, "paused")
             except Exception:
-                pass
+                logger.warning("同步工作区暂停状态失败", exc_info=True)
 
             if self._db:
                 await self._db.save(pipeline)
@@ -2273,7 +2278,7 @@ class PipelineOrchestrator:
                 from app.services.project.workspace_manager import workspace_manager
                 workspace_manager.update_status(pipeline.project_id, "running")
             except Exception:
-                pass
+                logger.warning("同步工作区运行状态失败", exc_info=True)
 
             if self._db:
                 await self._db.save(pipeline)

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useStore, type Agent } from '../lib/store'
+import { gsap, useGSAP } from '../lib/gsap'
 import { startSimulation } from '../lib/simulation'
 import PipelineView from '../components/PipelineView'
 import AgentTeamPanel from '../components/AgentTeamPanel'
@@ -9,6 +10,8 @@ import TerminalLog from '../components/TerminalLog'
 import InterventionPanel from '../components/InterventionPanel'
 import AgentChatPanel from '../components/AgentChatPanel'
 import CreateProjectModal from '../components/CreateProjectModal'
+import StageReviewModal from '../components/StageReviewModal'
+import type { StageDef } from '../components/StageReviewModal'
 import AgentConfigModal from '../components/AgentConfigModal'
 import SettingsModal from '../components/SettingsModal'
 import ProjectSwitcher from '../components/ProjectSwitcher'
@@ -42,16 +45,44 @@ export default function Home() {
   const [pendingProject, setPendingProject] = useState<{
     name: string
     description: string
-    template: { id: string; name: string; stages: Array<{ key: string; label: string; expected_artifact: string; parallel_group: string | null }> } | null
+    template: { id: string; name: string; stages: Array<{ key: string; label: string; description?: string; expected_artifact: string; parallel_group: string | null }> } | null
   }>({ name: '', description: '', template: null })
   const [showSettings, setShowSettings] = useState(false)
   const [showOpenDialog, setShowOpenDialog] = useState(false)
+  const [showStageReview, setShowStageReview] = useState(false)
+  const [pendingAgents, setPendingAgents] = useState<Agent[]>([])
+  const [pendingTeamConfig, setPendingTeamConfig] = useState<{ strategy: string; coordinatorId?: string }>({ strategy: 'sequential' })
   const stopSimRefs = useRef<Record<string, () => void>>({})
+  const headerRef = useRef<HTMLElement>(null)
+  const mainRef = useRef<HTMLDivElement>(null)
 
   // Detect backend LLM mode on mount
   useEffect(() => {
     fetchLlmMode()
   }, [fetchLlmMode])
+
+  // 页面加载入场动画
+  useGSAP(() => {
+    const tl = gsap.timeline({ defaults: { ease: 'power2.out' } })
+
+    // Logo 从左滑入
+    tl.from(headerRef.current, {
+      y: -48,
+      opacity: 0,
+      duration: 0.5,
+    })
+
+    // 主内容区淡入 + 上移
+    tl.from(
+      mainRef.current,
+      {
+        opacity: 0,
+        y: 20,
+        duration: 0.6,
+      },
+      '-=0.2',
+    )
+  })
 
   const progress = pipeline ? Math.round(pipeline.progress * 100) : 0
   const statusLabel =
@@ -78,8 +109,12 @@ export default function Home() {
     setShowAgentConfig(true)
   }
 
-  const proceedWithConfig = (agents: Agent[], teamConfig: { strategy: string; coordinatorId?: string }) => {
-    startProject(pendingProject.name, pendingProject.description, agents, teamConfig, pendingProject.template)
+  const proceedWithConfig = (
+    agents: Agent[],
+    teamConfig: { strategy: string; coordinatorId?: string },
+    confirmedStages?: StageDef[],
+  ) => {
+    startProject(pendingProject.name, pendingProject.description, agents, teamConfig, pendingProject.template, confirmedStages)
 
     setTimeout(() => {
       const state = useStore.getState()
@@ -87,7 +122,7 @@ export default function Home() {
       if (pid) {
         if (state.llmMode === 'real') {
           const agentIds = agents.map((a) => a.id)
-          state.startRealPipeline(pid, pendingProject.name, pendingProject.description, agentIds, teamConfig)
+          state.startRealPipeline(pid, pendingProject.name, pendingProject.description, agentIds, teamConfig, confirmedStages)
         } else {
           stopSimRefs.current[pid]?.()
           stopSimRefs.current[pid] = startSimulation(pid, pendingProject.name, pendingProject.description)
@@ -111,8 +146,15 @@ export default function Home() {
       llm_config: a.llm_config,
     }))
 
+    setPendingAgents(agents)
+    setPendingTeamConfig(teamConfig)
     setShowAgentConfig(false)
-    proceedWithConfig(agents, teamConfig)
+    setShowStageReview(true)
+  }
+
+  const handleStageConfirmed = (confirmedStages: StageDef[]) => {
+    setShowStageReview(false)
+    proceedWithConfig(pendingAgents, pendingTeamConfig, confirmedStages)
   }
 
   const handleOpenExample = () => {
@@ -156,22 +198,34 @@ export default function Home() {
     const pid = workspace.id
 
     if (state.llmMode === 'real') {
-      // Find the existing pipeline
+      // Find the existing pipeline — try active first, then list by project
       try {
-        const { getActivePipeline } = await import('../lib/api')
+        const { getActivePipeline, listPipelines } = await import('../lib/api')
+        let backendPipeline: Record<string, unknown> | null = null
+
         const activePipeline = await getActivePipeline(pid)
         if (activePipeline?.id) {
-          const pipelineId = activePipeline.id as string
-          // 对于 paused 状态（用户主动关闭保存的），不自动恢复，等待用户手动操作
-          if (activePipeline.status === 'paused') {
+          backendPipeline = activePipeline
+        } else {
+          // Pipeline was removed from _active_pipelines after close — look it up by project
+          const { pipelines: projectPipelines } = await listPipelines(pid) as { pipelines: Array<Record<string, unknown>> }
+          if (projectPipelines?.length > 0) {
+            backendPipeline = projectPipelines[0]
+          }
+        }
+
+        if (backendPipeline?.id) {
+          const pipelineId = backendPipeline.id as string
+          const backendStatus = backendPipeline.status as string
+          if (backendStatus === 'paused') {
             state.setPipeline(pid, {
               ...(state.pipelines[pid] || {}),
               id: pipelineId,
               status: 'paused',
-              current_stage: activePipeline.current_stage as string,
-              progress: activePipeline.progress as number,
+              current_stage: backendPipeline.current_stage as string,
+              progress: backendPipeline.progress as number,
             } as any)
-          } else if (activePipeline.status === 'running') {
+          } else if (backendStatus === 'running') {
             state.startPolling(pid, pipelineId)
           }
         }
@@ -209,13 +263,14 @@ export default function Home() {
       }
     }
 
-    resetProject()
+    // skipBackend=true: 已经 await 了 closePipeline，不再重复调用
+    await useStore.getState().closeProject(activeProjectId, true)
   }
 
   return (
     <div className="flex flex-col h-screen bg-background text-surface-50 overflow-hidden">
       {/* Top Bar */}
-      <header className="h-12 bg-background-panel border-b border-white/5 flex items-center px-4 shrink-0 z-10">
+      <header ref={headerRef} className="h-12 bg-background-panel border-b border-white/5 flex items-center px-4 shrink-0 z-10">
         <div className="flex items-center gap-3 flex-1 min-w-0">
           <h1 className="text-sm font-semibold text-accent-cyan tracking-wide shrink-0">
             DevTeam-AI
@@ -304,7 +359,7 @@ export default function Home() {
       </header>
 
       {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
+      <div ref={mainRef} className="flex-1 flex overflow-hidden">
         {/* Pipeline — 主视图 */}
         <div className="flex-1 overflow-hidden">
           <PipelineView
@@ -375,13 +430,35 @@ export default function Home() {
         onSubmit={handleCreateProject}
       />
 
-      {/* Agent Config Modal — Step 2+3+4: AI team suggestion + user confirmation */}
+      {/* Agent Config Modal — Step 2+3: AI team suggestion + user confirmation */}
       <AgentConfigModal
         isOpen={showAgentConfig}
         onClose={() => setShowAgentConfig(false)}
         onAgentsConfigured={handleAgentsConfigured}
         projectDescription={pendingProject.description}
         fetchTeamSuggestion={fetchTeamSuggestion}
+      />
+
+      {/* Stage Review Modal — Step 4: Stage confirmation gate */}
+      <StageReviewModal
+        isOpen={showStageReview}
+        onClose={() => setShowStageReview(false)}
+        onConfirmed={handleStageConfirmed}
+        projectName={pendingProject.name}
+        projectDescription={pendingProject.description}
+        templateId={pendingProject.template?.id || 'custom'}
+        templateStages={
+          pendingProject.template?.stages && pendingProject.template.stages.length > 0
+            ? pendingProject.template.stages
+            : [
+                { key: 'requirement_analysis', label: '需求分析', description: '分析需求', expected_artifact: '需求文档.md', parallel_group: null },
+                { key: 'task_breakdown', label: '任务拆解', description: '拆解任务', expected_artifact: '任务清单.md', parallel_group: null },
+                { key: 'coding', label: '编码实现', description: '实现代码', expected_artifact: '代码/', parallel_group: null },
+                { key: 'review', label: '代码审查', description: '审查代码', expected_artifact: '审查报告.md', parallel_group: null },
+                { key: 'testing', label: '测试验证', description: '测试功能', expected_artifact: '测试报告.md', parallel_group: null },
+                { key: 'delivery', label: '交付部署', description: '部署上线', expected_artifact: '交付包/', parallel_group: null },
+              ]
+        }
       />
 
       {/* Open Project Dialog */}

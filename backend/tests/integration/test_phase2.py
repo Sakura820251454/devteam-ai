@@ -210,11 +210,12 @@ class TestTaskBoard:
         self.board = TaskBoard()
 
     def test_create_task(self):
-        task = self.board.create_task(
+        task = asyncio.run(self.board.create_task(
+            project_id="test-project",
             title="Test task",
             description="Description",
             priority=Priority.HIGH
-        )
+        ))
 
         assert task.id is not None
         assert task.title == "Test task"
@@ -224,21 +225,24 @@ class TestTaskBoard:
         assert retrieved.title == "Test task"
 
     def test_update_task(self):
-        task = self.board.create_task(title="Original title")
+        task = asyncio.run(self.board.create_task(project_id="test-project", title="Original title"))
 
-        updated = self.board.update_task(
+
+        updated = asyncio.run(self.board.update_task(
             task_id=task.id,
             title="Updated title",
             priority=Priority.URGENT
-        )
+        ))
 
         assert updated.title == "Updated title"
         assert updated.priority == Priority.URGENT
 
     def test_assign_agents(self):
-        task = self.board.create_task(title="Task 1")
+        task = asyncio.run(self.board.create_task(project_id="test-project", title="Task 1"))
 
-        self.board.assign_agents(task.id, ["agent1", "agent2"])
+
+        asyncio.run(self.board.assign_agents(task.id, ["agent1", "agent2"]))
+
 
         task = self.board.get_task(task.id)
         assert len(task.assigned_agents) == 2
@@ -248,39 +252,53 @@ class TestTaskBoard:
         assert len(agent_tasks) == 1
 
     def test_status_transition(self):
-        task = self.board.create_task(title="Task")
+        task = asyncio.run(self.board.create_task(project_id="test-project", title="Task"))
 
-        self.board.change_status(task.id, TaskStatus.TODO)
+
+        asyncio.run(self.board.change_status(task.id, TaskStatus.TODO))
+
         assert self.board.get_task(task.id).status == TaskStatus.TODO
 
-        self.board.change_status(task.id, TaskStatus.IN_PROGRESS)
+        asyncio.run(self.board.change_status(task.id, TaskStatus.IN_PROGRESS))
+
         assert self.board.get_task(task.id).status == TaskStatus.IN_PROGRESS
 
         with pytest.raises(ValueError):
-            self.board.change_status(task.id, TaskStatus.BACKLOG)
+            asyncio.run(self.board.change_status(task.id, TaskStatus.BACKLOG))
+
 
     def test_invalid_status_transition(self):
-        task = self.board.create_task(title="Task")
+        task = asyncio.run(self.board.create_task(project_id="test-project", title="Task"))
 
-        self.board.change_status(task.id, TaskStatus.TODO)
-        self.board.change_status(task.id, TaskStatus.IN_PROGRESS)
+        asyncio.run(self.board.change_status(task.id, TaskStatus.TODO))
+        asyncio.run(self.board.change_status(task.id, TaskStatus.IN_PROGRESS))
+        asyncio.run(self.board.change_status(task.id, TaskStatus.REVIEW))
+        asyncio.run(self.board.change_status(task.id, TaskStatus.DONE))
 
+        # DONE can only transition to REVIEW
         with pytest.raises(ValueError):
-            self.board.change_status(task.id, TaskStatus.CANCELLED)
+            asyncio.run(self.board.change_status(task.id, TaskStatus.CANCELLED))
+
 
     def test_task_history(self):
-        task = self.board.create_task(title="Task")
+        task = asyncio.run(self.board.create_task(project_id="test-project", title="Task"))
 
-        self.board.change_status(task.id, TaskStatus.TODO)
-        self.board.add_comment(task.id, "Working on it", "agent1")
+
+        asyncio.run(self.board.change_status(task.id, TaskStatus.TODO))
+
+        asyncio.run(self.board.add_comment(task.id, "Working on it", "agent1"))
+
 
         task = self.board.get_task(task.id)
         assert len(task.history) == 2
 
     def test_list_tasks(self):
-        self.board.create_task(title="Task 1", priority=Priority.HIGH)
-        self.board.create_task(title="Task 2", priority=Priority.MEDIUM)
-        self.board.create_task(title="Task 3", priority=Priority.LOW)
+        asyncio.run(self.board.create_task(project_id="test-project", title="Task 1", priority=Priority.HIGH))
+
+        asyncio.run(self.board.create_task(project_id="test-project", title="Task 2", priority=Priority.MEDIUM))
+
+        asyncio.run(self.board.create_task(project_id="test-project", title="Task 3", priority=Priority.LOW))
+
 
         all_tasks = self.board.list_tasks()
         assert len(all_tasks) == 3
@@ -290,31 +308,39 @@ class TestTaskBoard:
         assert len(high_priority) == 1
 
     def test_get_board(self):
-        self.board.create_task(title="Task 1")
-        self.board.create_task(title="Task 2")
-        self.board.create_task(title="Task 3")
+        asyncio.run(self.board.create_task(project_id="test-project", title="Task 1"))
 
-        self.board.change_status(
+        asyncio.run(self.board.create_task(project_id="test-project", title="Task 2"))
+
+        asyncio.run(self.board.create_task(project_id="test-project", title="Task 3"))
+
+
+        asyncio.run(self.board.change_status(
             self.board.list_tasks()[0].id,
             TaskStatus.TODO
-        )
+        ))
 
         board = self.board.get_tasks_by_board()
         assert TaskStatus.BACKLOG in board
         assert TaskStatus.TODO in board
 
     def test_delete_task(self):
-        task = self.board.create_task(title="To delete")
+        task = asyncio.run(self.board.create_task(project_id="test-project", title="To delete"))
+
         task_id = task.id
 
-        success = self.board.delete_task(task_id)
+        success = asyncio.run(self.board.delete_task(task_id))
+
         assert success
         assert self.board.get_task(task_id) is None
 
     def test_search_tasks(self):
-        self.board.create_task(title="Build user authentication")
-        self.board.create_task(title="Build admin panel")
-        self.board.create_task(title="Fix login bug")
+        asyncio.run(self.board.create_task(project_id="test-project", title="Build user authentication"))
+
+        asyncio.run(self.board.create_task(project_id="test-project", title="Build admin panel"))
+
+        asyncio.run(self.board.create_task(project_id="test-project", title="Fix login bug"))
+
 
         results = self.board.search_tasks("build")
         assert len(results) == 2
@@ -323,13 +349,15 @@ class TestTaskBoard:
         assert len(results) == 1
 
     def test_task_count(self):
-        self.board.create_task(title="Task 1")
-        self.board.create_task(title="Task 2")
+        asyncio.run(self.board.create_task(project_id="test-project", title="Task 1"))
 
-        self.board.change_status(
+        asyncio.run(self.board.create_task(project_id="test-project", title="Task 2"))
+
+
+        asyncio.run(self.board.change_status(
             self.board.list_tasks()[0].id,
             TaskStatus.TODO
-        )
+        ))
 
         total = self.board.get_task_count()
         assert total == 2

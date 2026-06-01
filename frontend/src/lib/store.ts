@@ -125,6 +125,7 @@ interface WorkspaceState {
   stuckTasksByProject: Record<string, StuckTaskInfo[]>
   workspacePaths: Record<string, string | null>
   interventionsByProject: Record<string, null | 'whisper' | 'broadcast' | 'pause'>
+  questionsByProject: Record<string, import('./api').AgentQuestion[]>
   tasksLoadingByProject: Record<string, boolean>
   stuckPollingByProject: Record<string, boolean>
 
@@ -154,7 +155,7 @@ interface WorkspaceState {
   // Project management
   createProject: (id: string, name: string, description: string) => void
   switchProject: (projectId: string) => void
-  closeProject: (projectId: string) => void
+  closeProject: (projectId: string, skipBackend?: boolean) => Promise<void>
   updateProjectProgress: (projectId: string, progress: number) => void
 
   // Per-project actions
@@ -175,6 +176,7 @@ interface WorkspaceState {
   addChatMessage: (projectId: string, msg: Omit<ChatMessage, 'id' | 'timestamp'>) => void
   clearChatMessages: (projectId: string) => void
   setInterventionMode: (projectId: string, mode: null | 'whisper' | 'broadcast' | 'pause') => void
+  setQuestions: (projectId: string, questions: import('./api').AgentQuestion[]) => void
   setCostData: (projectId: string, data: CostData | null) => void
   setWorkspacePath: (projectId: string, path: string | null) => void
   setTaskExecution: (projectId: string, taskId: string, status: TaskExecutionStatus) => void
@@ -182,14 +184,14 @@ interface WorkspaceState {
   setStuckPolling: (projectId: string, polling: boolean) => void
 
   // Legacy compatibility
-  startProject: (name: string, description: string, customAgents?: Agent[], teamConfig?: { strategy: string; coordinatorId?: string }, template?: { id: string; name: string; stages: Array<{ key: string; label: string; expected_artifact: string; parallel_group: string | null }> } | null) => void
+  startProject: (name: string, description: string, customAgents?: Agent[], teamConfig?: { strategy: string; coordinatorId?: string }, template?: { id: string; name: string; stages: Array<{ key: string; label: string; expected_artifact: string; parallel_group: string | null }> } | null, confirmedStages?: Array<{ key: string; label: string; expected_artifact?: string; parallel_group?: string | null }>) => void
   restoreProjectFromWorkspace: (workspace: import('./api').WorkspaceInfo) => void
   resetProject: () => void
   resumeProject: (projectId: string, pipelineId: string) => Promise<void>
   teamConfigs: Record<string, { strategy: string; coordinatorId?: string } | null>
 
   // Real backend integration
-  startRealPipeline: (projectId: string, name: string, description: string, agentIds: string[], teamConfig?: { strategy: string; coordinatorId?: string }) => Promise<void>
+  startRealPipeline: (projectId: string, name: string, description: string, agentIds: string[], teamConfig?: { strategy: string; coordinatorId?: string }, confirmedStages?: Array<{ key: string; label: string; description?: string; expected_artifact?: string; parallel_group?: string | null }>) => Promise<void>
   startPolling: (projectId: string, pipelineId: string) => void
   stopPolling: (projectId: string) => void
 
@@ -223,6 +225,7 @@ export const useStore = create<WorkspaceState>((set) => ({
   stuckTasksByProject: {},
   workspacePaths: {},
   interventionsByProject: {},
+  questionsByProject: {},
   tasksLoadingByProject: {},
   stuckPollingByProject: {},
   teamConfigs: {},
@@ -312,20 +315,21 @@ export const useStore = create<WorkspaceState>((set) => ({
 
   switchProject: (projectId) => set({ activeProjectId: projectId }),
 
-  closeProject: (projectId) => {
+  closeProject: async (projectId, skipBackend = false) => {
     const state = useStore.getState()
     // 停止轮询
     state.stopPolling(projectId)
 
-    // 真实模式：通知后端关闭流水线
-    if (state.llmMode === 'real') {
+    // 真实模式：通知后端关闭流水线（先关后端，再清前端）
+    if (!skipBackend && state.llmMode === 'real') {
       const pipeline = state.pipelines[projectId]
       if (pipeline?.id && (pipeline.status === 'running' || pipeline.status === 'paused')) {
-        import('./api').then(({ closePipeline }) => {
-          closePipeline(pipeline.id).catch(err =>
-            console.warn('关闭流水线失败:', err)
-          )
-        })
+        try {
+          const { closePipeline } = await import('./api')
+          await closePipeline(pipeline.id)
+        } catch (err) {
+          console.warn('关闭流水线失败:', err)
+        }
       }
     }
 
@@ -347,9 +351,10 @@ export const useStore = create<WorkspaceState>((set) => ({
       const { [projectId]: _________, ...newStuck } = state.stuckTasksByProject
       const { [projectId]: __________, ...newPaths } = state.workspacePaths
       const { [projectId]: ___________, ...newInterventions } = state.interventionsByProject
-      const { [projectId]: ____________, ...newTasksLoading } = state.tasksLoadingByProject
-      const { [projectId]: _____________, ...newStuckPolling } = state.stuckPollingByProject
-      const { [projectId]: ______________, ...newTeamConfigs } = state.teamConfigs
+      const { [projectId]: ____________, ...newQuestions } = state.questionsByProject
+      const { [projectId]: _____________, ...newTasksLoading } = state.tasksLoadingByProject
+      const { [projectId]: ______________, ...newStuckPolling } = state.stuckPollingByProject
+      const { [projectId]: _______________, ...newTeamConfigs } = state.teamConfigs
 
       delete counters[projectId]
 
@@ -367,6 +372,7 @@ export const useStore = create<WorkspaceState>((set) => ({
         stuckTasksByProject: newStuck,
         workspacePaths: newPaths,
         interventionsByProject: newInterventions,
+        questionsByProject: newQuestions,
         tasksLoadingByProject: newTasksLoading,
         stuckPollingByProject: newStuckPolling,
         teamConfigs: newTeamConfigs,
@@ -563,6 +569,11 @@ export const useStore = create<WorkspaceState>((set) => ({
       interventionsByProject: { ...state.interventionsByProject, [projectId]: mode },
     })),
 
+  setQuestions: (projectId, questions) =>
+    set((state) => ({
+      questionsByProject: { ...state.questionsByProject, [projectId]: questions },
+    })),
+
   setCostData: (projectId, data) =>
     set((state) => ({
       costDataByProject: { ...state.costDataByProject, [projectId]: data },
@@ -596,93 +607,36 @@ export const useStore = create<WorkspaceState>((set) => ({
 
   // --- Legacy compatibility (wraps multi-project API) ---
 
-  startProject: (name, _description, customAgents, teamConfig, template) => {
+  startProject: (name, _description, customAgents, teamConfig, template, confirmedStages) => {
     const now = new Date().toISOString()
     const projectId = `project-${Date.now()}`
 
     const projectAgents = customAgents && customAgents.length > 0 ? customAgents : [];
-    const allGeneric = projectAgents.length > 0 && projectAgents.every(a => a.role === '团队成员');
+    const agentIds = projectAgents.map(a => a.id)
 
-
-    const stageAgentMap: Record<string, string[]> = {
-      requirement_analysis: [],
-      task_breakdown: [],
-      coding: [],
-      review: [],
-      testing: [],
-      delivery: [],
-    }
-    if (allGeneric) {
-      // All agents are generic — assign everyone to all stages, roles determined at runtime
-      for (const agent of projectAgents) {
-        for (const key of Object.keys(stageAgentMap)) {
-          stageAgentMap[key].push(agent.id);
-        }
-      }
-    } else {
-      // Legacy keyword-based role→stage matching
-      for (const agent of projectAgents) {
-        const role = agent.role
-      if (role.includes('需求') || role.includes('产品')) {
-        stageAgentMap.requirement_analysis.push(agent.id)
-        stageAgentMap.task_breakdown.push(agent.id)
-      }
-      if (role.includes('架构') || role.includes('设计')) {
-        stageAgentMap.requirement_analysis.push(agent.id)
-        stageAgentMap.task_breakdown.push(agent.id)
-        stageAgentMap.review.push(agent.id)
-      }
-      if (role.includes('后端')) {
-        stageAgentMap.coding.push(agent.id)
-      }
-      if (role.includes('前端')) {
-        stageAgentMap.coding.push(agent.id)
-      }
-      if (role.includes('测试')) {
-        stageAgentMap.review.push(agent.id)
-        stageAgentMap.testing.push(agent.id)
-      }
-      if (role.includes('运维') || role.includes('部署') || role.includes('DevOps')) {
-        stageAgentMap.delivery.push(agent.id)
-      }
-      if (role.includes('评审')) {
-        stageAgentMap.review.push(agent.id)
-      }
-      if (role.includes('文档')) {
-        stageAgentMap.task_breakdown.push(agent.id)
-      }
-    }
-    }
-
-    for (const key of Object.keys(stageAgentMap)) {
-      stageAgentMap[key] = [...new Set(stageAgentMap[key])]
-      if (stageAgentMap[key].length === 0) {
-        stageAgentMap[key] = [projectAgents[0]?.id || 'pm']
-      }
-    }
-
-    // Build pipeline stages from template or use default 6-stage pipeline
+    // Build pipeline stages from confirmed stages, template, or fallback
     let pipelineStages: PipelineStage[]
-    if (template && template.stages && template.stages.length > 0) {
-      // Use template stages — assign all agents to all stages for generic teams
-      pipelineStages = template.stages.map((s, i) => ({
+    const stagesSource = confirmedStages && confirmedStages.length > 0
+      ? confirmedStages
+      : (template?.stages && template.stages.length > 0 ? template.stages : null)
+
+    if (stagesSource) {
+      pipelineStages = stagesSource.map((s, i) => ({
         key: s.key,
         label: s.label,
         status: (i === 0 ? 'active' : 'pending') as PipelineStage['status'],
-        assignedAgents: allGeneric
-          ? projectAgents.map(a => a.id)
-          : (stageAgentMap[s.key] || [projectAgents[0]?.id || 'pm']),
+        assignedAgents: agentIds,
         artifacts: s.expected_artifact ? [s.expected_artifact] : [],
       }))
     } else {
       // Fallback: legacy 6-stage pipeline
       pipelineStages = [
-        { key: 'requirement_analysis', label: '需求分析', status: 'pending', assignedAgents: stageAgentMap.requirement_analysis, artifacts: [] },
-        { key: 'task_breakdown', label: '任务拆解', status: 'pending', assignedAgents: stageAgentMap.task_breakdown, artifacts: [] },
-        { key: 'coding', label: '编码实现', status: 'pending', assignedAgents: stageAgentMap.coding, artifacts: [] },
-        { key: 'review', label: '代码审查', status: 'pending', assignedAgents: stageAgentMap.review, artifacts: [] },
-        { key: 'testing', label: '测试验证', status: 'pending', assignedAgents: stageAgentMap.testing, artifacts: [] },
-        { key: 'delivery', label: '交付部署', status: 'pending', assignedAgents: stageAgentMap.delivery, artifacts: [] },
+        { key: 'requirement_analysis', label: '需求分析', status: 'pending', assignedAgents: agentIds, artifacts: [] },
+        { key: 'task_breakdown', label: '任务拆解', status: 'pending', assignedAgents: agentIds, artifacts: [] },
+        { key: 'coding', label: '编码实现', status: 'pending', assignedAgents: agentIds, artifacts: [] },
+        { key: 'review', label: '代码审查', status: 'pending', assignedAgents: agentIds, artifacts: [] },
+        { key: 'testing', label: '测试验证', status: 'pending', assignedAgents: agentIds, artifacts: [] },
+        { key: 'delivery', label: '交付部署', status: 'pending', assignedAgents: agentIds, artifacts: [] },
       ]
     }
 
@@ -723,6 +677,7 @@ export const useStore = create<WorkspaceState>((set) => ({
       stuckTasksByProject: { ...state.stuckTasksByProject, [projectId]: [] },
       workspacePaths: { ...state.workspacePaths, [projectId]: null },
       interventionsByProject: { ...state.interventionsByProject, [projectId]: null },
+      questionsByProject: { ...state.questionsByProject, [projectId]: [] },
       tasksLoadingByProject: { ...state.tasksLoadingByProject, [projectId]: false },
       stuckPollingByProject: { ...state.stuckPollingByProject, [projectId]: false },
       teamConfigs: { ...state.teamConfigs, [projectId]: teamConfig || null },
@@ -826,6 +781,7 @@ export const useStore = create<WorkspaceState>((set) => ({
       stuckTasksByProject: { ...state.stuckTasksByProject, [projectId]: [] },
       workspacePaths: { ...state.workspacePaths, [projectId]: workspace.workspace_path || null },
       interventionsByProject: { ...state.interventionsByProject, [projectId]: null },
+      questionsByProject: { ...state.questionsByProject, [projectId]: [] },
       tasksLoadingByProject: { ...state.tasksLoadingByProject, [projectId]: false },
       stuckPollingByProject: { ...state.stuckPollingByProject, [projectId]: false },
       teamConfigs: { ...state.teamConfigs, [projectId]: teamConfig },
@@ -834,70 +790,148 @@ export const useStore = create<WorkspaceState>((set) => ({
     }))
   },
 
-  startRealPipeline: async (projectId, name, description, agentIds, teamConfig) => {
-    const { createProject, createPipeline, startPipeline, createWorkspace } = await import('./api')
+  startRealPipeline: async (projectId, name, description, agentIds, teamConfig, confirmedStages) => {
+    const { createProject, createPipeline, startPipeline, createWorkspace, confirmPipelineStages } = await import('./api')
 
-    // 1. Create project on backend (description IS the user's requirement text)
-    const project = await createProject(name, description, description)
+    let backendProjectId: string | null = null
+    let backendPipelineId: string | null = null
 
-    // 2. Create workspace with the REAL backend project ID (not the frontend-generated one)
-    const s = useStore.getState()
-    const oldAgents = s.agentsByProject[projectId] || []
-    const oldPipeline = s.pipelines[projectId]
-    createWorkspace(
-      project.id,
-      name,
-      description,
-      oldAgents.map((a) => ({ id: a.id, name: a.name, role: a.role, llm_config: a.llm_config })),
-      (oldPipeline?.stages || []).map((s) => ({ key: s.key, label: s.label, assignedAgents: s.assignedAgents })),
-      teamConfig,
-    ).then((result) => set((state) => ({
-      workspacePaths: { ...state.workspacePaths, [project.id]: result.workspace_path },
-    }))).catch((err) => console.warn('创建物理工作区失败:', err.message))
+    try {
+      // 1. Create project on backend (description IS the user's requirement text)
+      const project = await createProject(name, description, description)
+      backendProjectId = project.id
 
-    // 3. Create pipeline on backend (with team_config for strategy-aware assignment)
-    const pipeline = await createPipeline(project.id, name, agentIds, teamConfig)
+      // 2. Create workspace with the REAL backend project ID
+      const s = useStore.getState()
+      const oldAgents = s.agentsByProject[projectId] || []
+      const oldPipeline = s.pipelines[projectId]
+      const effectiveStages = confirmedStages
+        ? confirmedStages.map(s => ({ key: s.key, label: s.label, assignedAgents: [] as string[] }))
+        : (oldPipeline?.stages || []).map((s) => ({ key: s.key, label: s.label, assignedAgents: s.assignedAgents }))
 
-    // 4. Start pipeline execution
-    await startPipeline(pipeline.id)
+      createWorkspace(
+        project.id,
+        name,
+        description,
+        oldAgents.map((a) => ({ id: a.id, name: a.name, role: a.role, llm_config: a.llm_config })),
+        effectiveStages,
+        teamConfig,
+      ).then((result) => set((state) => ({
+        workspacePaths: { ...state.workspacePaths, [project.id]: result.workspace_path },
+      }))).catch((err) => console.warn('创建物理工作区失败:', err.message))
 
-    // 5. Update in-memory project/pipeline IDs to match backend
-    const oldProjectId = projectId
-    const realProjectId = project.id
-    const realPipelineId = pipeline.id
+      // 3. Create pipeline on backend (with team_config for strategy-aware assignment)
+      const pipeline = await createPipeline(project.id, name, agentIds, teamConfig)
+      backendPipelineId = pipeline.id
 
-    // Migrate all per-project state from frontend-generated ID to backend ID
-    set((s) => {
-      const migrate = <T extends Record<string, unknown>>(obj: T, oldId: string, newId: string): T => {
-        if (oldId === newId) return obj
-        const next = { ...obj } as Record<string, unknown>
-        next[newId] = next[oldId]
-        delete next[oldId]
-        return next as T
+      // 4. Confirm stages (or mark as ready to start)
+      if (confirmedStages && confirmedStages.length > 0) {
+        await confirmPipelineStages(
+          pipeline.id,
+          confirmedStages.map(s => ({
+            key: s.key,
+            label: s.label,
+            description: s.description || '',
+            expected_artifact: s.expected_artifact || '',
+            parallel_group: s.parallel_group || null,
+          })),
+          project.id,
+        )
       }
 
-      return {
-        projects: s.projects.map((p) => p.id === oldProjectId ? { ...p, id: realProjectId } : p),
-        activeProjectId: realProjectId,
-        pipelines: migrate(s.pipelines, oldProjectId, realProjectId),
-        agentsByProject: migrate(s.agentsByProject, oldProjectId, realProjectId),
-        tasksByProject: migrate(s.tasksByProject, oldProjectId, realProjectId),
-        logsByProject: migrate(s.logsByProject, oldProjectId, realProjectId),
-        eventsByProject: migrate(s.eventsByProject, oldProjectId, realProjectId),
-        chatMessagesByProject: migrate(s.chatMessagesByProject, oldProjectId, realProjectId),
-        costDataByProject: migrate(s.costDataByProject, oldProjectId, realProjectId),
-        taskExecutionsByProject: migrate(s.taskExecutionsByProject, oldProjectId, realProjectId),
-        stuckTasksByProject: migrate(s.stuckTasksByProject, oldProjectId, realProjectId),
-        workspacePaths: migrate(s.workspacePaths, oldProjectId, realProjectId),
-        interventionsByProject: migrate(s.interventionsByProject, oldProjectId, realProjectId),
-        tasksLoadingByProject: migrate(s.tasksLoadingByProject, oldProjectId, realProjectId),
-        stuckPollingByProject: migrate(s.stuckPollingByProject, oldProjectId, realProjectId),
-        teamConfigs: migrate(s.teamConfigs, oldProjectId, realProjectId),
-      }
-    })
+      // 5. Start pipeline execution
+      await startPipeline(pipeline.id)
 
-    // 6. Start polling for real data
-    useStore.getState().startPolling(realProjectId, realPipelineId)
+      // 6. Update in-memory project/pipeline IDs to match backend
+      const oldProjectId = projectId
+      const realProjectId = project.id
+      const realPipelineId = pipeline.id
+
+      // 7. Migrate all per-project state from frontend-generated ID to backend ID
+      set((s) => {
+        const migrate = <T extends Record<string, unknown>>(obj: T, oldId: string, newId: string): T => {
+          if (oldId === newId) return obj
+          const next = { ...obj } as Record<string, unknown>
+          next[newId] = next[oldId]
+          delete next[oldId]
+          return next as T
+        }
+
+        return {
+          projects: s.projects.map((p) => p.id === oldProjectId ? { ...p, id: realProjectId } : p),
+          activeProjectId: realProjectId,
+          pipelines: migrate(s.pipelines, oldProjectId, realProjectId),
+          agentsByProject: migrate(s.agentsByProject, oldProjectId, realProjectId),
+          tasksByProject: migrate(s.tasksByProject, oldProjectId, realProjectId),
+          logsByProject: migrate(s.logsByProject, oldProjectId, realProjectId),
+          eventsByProject: migrate(s.eventsByProject, oldProjectId, realProjectId),
+          chatMessagesByProject: migrate(s.chatMessagesByProject, oldProjectId, realProjectId),
+          costDataByProject: migrate(s.costDataByProject, oldProjectId, realProjectId),
+          taskExecutionsByProject: migrate(s.taskExecutionsByProject, oldProjectId, realProjectId),
+          stuckTasksByProject: migrate(s.stuckTasksByProject, oldProjectId, realProjectId),
+          workspacePaths: migrate(s.workspacePaths, oldProjectId, realProjectId),
+          interventionsByProject: migrate(s.interventionsByProject, oldProjectId, realProjectId),
+          questionsByProject: migrate(s.questionsByProject, oldProjectId, realProjectId),
+          tasksLoadingByProject: migrate(s.tasksLoadingByProject, oldProjectId, realProjectId),
+          stuckPollingByProject: migrate(s.stuckPollingByProject, oldProjectId, realProjectId),
+          teamConfigs: migrate(s.teamConfigs, oldProjectId, realProjectId),
+        }
+      })
+
+      // 8. Start polling for real data
+      useStore.getState().startPolling(realProjectId, realPipelineId)
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      console.error('启动流水线失败:', errMsg)
+
+      // Clean up partially-created backend resources
+      if (backendPipelineId) {
+        try {
+          const { closePipeline } = await import('./api')
+          await closePipeline(backendPipelineId)
+        } catch { /* ignore cleanup errors */ }
+      }
+      if (backendProjectId) {
+        try {
+          const { deleteProject } = await import('./api')
+          await deleteProject(backendProjectId)
+        } catch { /* ignore cleanup errors */ }
+      }
+
+      // Show error to user and remove the broken frontend project state
+      set((state) => {
+        const newProjects = state.projects.filter((p) => p.id !== projectId)
+        const { [projectId]: _, ...newPipelines } = state.pipelines
+        const { [projectId]: __, ...newAgents } = state.agentsByProject
+        const { [projectId]: ___, ...newLogs } = state.logsByProject
+        const { [projectId]: ____, ...newEvents } = state.eventsByProject
+        const { [projectId]: _____, ...newChat } = state.chatMessagesByProject
+        const { [projectId]: ______, ...newCost } = state.costDataByProject
+        const { [projectId]: _______, ...newExec } = state.taskExecutionsByProject
+        const { [projectId]: ________, ...newStuck } = state.stuckTasksByProject
+        const { [projectId]: _________, ...newPaths } = state.workspacePaths
+        const { [projectId]: __________, ...newInterventions } = state.interventionsByProject
+        const { [projectId]: ___________, ...newQuestions } = state.questionsByProject
+        const { [projectId]: ____________, ...newTeamConfigs } = state.teamConfigs
+        return {
+          projects: newProjects,
+          activeProjectId: newProjects.length > 0 ? newProjects[0].id : null,
+          pipelines: newPipelines,
+          agentsByProject: newAgents,
+          logsByProject: newLogs,
+          eventsByProject: newEvents,
+          chatMessagesByProject: newChat,
+          costDataByProject: newCost,
+          taskExecutionsByProject: newExec,
+          stuckTasksByProject: newStuck,
+          workspacePaths: newPaths,
+          interventionsByProject: newInterventions,
+          questionsByProject: newQuestions,
+          teamConfigs: newTeamConfigs,
+          error: `启动流水线失败: ${errMsg}`,
+        }
+      })
+    }
   },
 
   // Deprecated: strategy recommendation is now part of team suggestion (Step 3)
@@ -1083,6 +1117,24 @@ export const useStore = create<WorkspaceState>((set) => ({
           // Agent status derivation failure is non-critical
         }
 
+        // Poll for agent questions (intervention queue)
+        try {
+          const { getInterventionQueue } = await import('./api')
+          const result = await getInterventionQueue()
+          const questions = (result.queue || []).filter(
+            (item): item is import('./api').AgentQuestion =>
+              item.type === 'question_for_user',
+          )
+          const currentQuestions = useStore.getState().questionsByProject[projectId] || []
+          if (JSON.stringify(questions) !== JSON.stringify(currentQuestions)) {
+            set((s) => ({
+              questionsByProject: { ...s.questionsByProject, [projectId]: questions },
+            }))
+          }
+        } catch {
+          // Intervention queue polling failure is non-critical
+        }
+
         // If pipeline completed or failed, stop polling
         if (backendStatus === 'completed' || backendStatus === 'failed') {
           const interval = pollIntervals[projectId]
@@ -1114,7 +1166,9 @@ export const useStore = create<WorkspaceState>((set) => ({
   resetProject: () => {
     const state = useStore.getState()
     if (state.activeProjectId) {
-      state.closeProject(state.activeProjectId)
+      state.closeProject(state.activeProjectId).catch(err =>
+        console.warn('resetProject closeProject 失败:', err)
+      )
     }
   },
 

@@ -1,13 +1,13 @@
 {
   "soul_name": "ning",
-  "version": 1.7000000000000006,
-  "updated_at": "2026-05-26T11:13:23.226542",
+  "version": 1.8000000000000007,
+  "updated_at": "2026-05-27T11:23:27.500669",
   "stats": {
-    "total_projects": 7,
-    "successful_projects": 7,
+    "total_projects": 8,
+    "successful_projects": 8,
     "success_rate": 1.0,
     "total_tasks": 0,
-    "skills_count": 7
+    "skills_count": 8
   },
   "skills": [
     {
@@ -89,9 +89,26 @@
         "bug"
       ],
       "description": "任务: 测试查询项目\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: eb4b3c7b-3698-4849-8c4e-e2d5031ad5b7\n  - status: completed\n  - tasks_completed: 8"
+    },
+    {
+      "id": "skill_1779852207.496641",
+      "name": "✅ web网页编写",
+      "category": "general",
+      "success_rate": 1.0,
+      "usage_count": 0,
+      "trigger_keywords": [
+        "任务",
+        "bug"
+      ],
+      "description": "任务: web网页编写\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: af312be7-bd20-418e-a4c2-d8ebb4c51c1e\n  - status: completed\n  - tasks_completed: 5"
     }
   ],
   "recent_trajectories": [
+    {
+      "project": "web网页编写",
+      "date": "2026-05-27",
+      "success": true
+    },
     {
       "project": "测试查询项目",
       "date": "2026-05-26",

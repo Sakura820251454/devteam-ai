@@ -25,7 +25,7 @@ class TestPromptRegistry:
         """渲染无变量的 prompt"""
         reg = PromptRegistry()
         reg.load()
-        result = reg.render("collaboration.pipeline.requirement_analysis_system", {})
+        result = reg.render("collaboration.pipeline.requirement_analysis_system", {"analyst_role": "资深产品经理"})
         assert "资深产品经理" in result
 
     def test_render_with_variables(self):

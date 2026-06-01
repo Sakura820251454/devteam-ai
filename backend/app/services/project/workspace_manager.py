@@ -1,8 +1,12 @@
 import json
+import logging
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+
+logger = logging.getLogger(__name__)
 
 
 def _get_workspace_root() -> Path:
@@ -199,7 +203,6 @@ class WorkspaceManager:
         return True
 
     def delete_workspace(self, project_id: str) -> bool:
-        import shutil
         ws_dir = self._workspace_dir(project_id)
         if not ws_dir.exists():
             return False
@@ -269,6 +272,56 @@ class WorkspaceManager:
                     artifacts[stage_key] = files
 
         return artifacts
+
+    def assemble_artifacts_to_src(self, project_id: str) -> List[str]:
+        """将所有 artifacts 目录中的文件复制到 src/ 目录。
+        返回相对于 workspace 根目录的已组装文件路径列表。"""
+        ws_dir = self._workspace_dir(project_id)
+        artifact_dir = ws_dir / "artifacts"
+        src_dir = ws_dir / "src"
+        if not artifact_dir.exists():
+            return []
+        src_dir.mkdir(parents=True, exist_ok=True)
+
+        assembled = []
+        for stage_dir in sorted(artifact_dir.iterdir()):
+            if not stage_dir.is_dir():
+                continue
+            for f in stage_dir.iterdir():
+                if not f.is_file():
+                    continue
+                # 用阶段名做前缀避免文件名冲突
+                dest_name = f"{stage_dir.name}_{f.name}"
+                dest_path = src_dir / dest_name
+                try:
+                    shutil.copy2(f, dest_path)
+                    assembled.append(str(dest_path.relative_to(ws_dir)))
+                except Exception as e:
+                    logger.warning(f"Failed to copy {f} to src/: {e}")
+
+        return assembled
+
+    def list_artifact_files(self, project_id: str) -> List[Dict[str, str]]:
+        """递归列出 artifacts 目录下所有文件。
+        返回 [{"name": 文件名, "path": 相对路径, "stage": 阶段名}, ...]"""
+        ws_dir = self._workspace_dir(project_id)
+        artifact_dir = ws_dir / "artifacts"
+        if not artifact_dir.exists():
+            return []
+
+        files = []
+        for stage_dir in sorted(artifact_dir.iterdir()):
+            if not stage_dir.is_dir():
+                continue
+            for f in sorted(stage_dir.iterdir()):
+                if not f.is_file():
+                    continue
+                files.append({
+                    "name": f.name,
+                    "path": str(f.relative_to(ws_dir)),
+                    "stage": stage_dir.name,
+                })
+        return files
 
     def _build_file_tree(self, ws_dir: Path) -> List[Dict[str, Any]]:
         files = []

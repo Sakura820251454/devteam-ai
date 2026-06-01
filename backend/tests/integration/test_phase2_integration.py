@@ -252,12 +252,13 @@ class TestTaskBoard:
 
     def test_create_task(self):
         """测试创建任务"""
-        task = task_board.create_task(
+        task = asyncio.run(task_board.create_task(
+            project_id="test-project",
             title="设计数据库架构",
             description="设计用户管理模块的数据库表结构",
             priority=Priority.HIGH,
             created_by="pm"
-        )
+        ))
 
         assert task is not None
         assert task.title == "设计数据库架构"
@@ -267,40 +268,48 @@ class TestTaskBoard:
     def test_task_status_transition(self):
         """测试任务状态流转"""
         # 创建任务
-        task = task_board.create_task(
+        task = asyncio.run(task_board.create_task(
+            project_id="test-project",
             title="测试任务",
             created_by="pm"
-        )
+        ))
         task_id = task.id
 
         # 流转: BACKLOG -> TODO -> IN_PROGRESS -> REVIEW -> DONE
-        task_board.change_status(task_id, TaskStatus.TODO, "pm")
+        asyncio.run(task_board.change_status(task_id, TaskStatus.TODO, "pm"))
+
         assert task_board.get_task(task_id).status == TaskStatus.TODO
 
-        task_board.change_status(task_id, TaskStatus.IN_PROGRESS, "backend")
+        asyncio.run(task_board.change_status(task_id, TaskStatus.IN_PROGRESS, "backend"))
+
         assert task_board.get_task(task_id).status == TaskStatus.IN_PROGRESS
 
-        task_board.change_status(task_id, TaskStatus.REVIEW, "backend")
+        asyncio.run(task_board.change_status(task_id, TaskStatus.REVIEW, "backend"))
+
         assert task_board.get_task(task_id).status == TaskStatus.REVIEW
 
-        task_board.change_status(task_id, TaskStatus.DONE, "tester")
+        asyncio.run(task_board.change_status(task_id, TaskStatus.DONE, "tester"))
+
         assert task_board.get_task(task_id).status == TaskStatus.DONE
 
     def test_invalid_status_transition(self):
         """测试无效状态流转"""
-        task = task_board.create_task(title="测试任务", created_by="pm")
+        task = asyncio.run(task_board.create_task(project_id="test-project", title="测试任务", created_by="pm"))
+
 
         # BACKLOG 不能直接到 DONE
         with pytest.raises(ValueError):
-            task_board.change_status(task.id, TaskStatus.DONE, "pm")
+            asyncio.run(task_board.change_status(task.id, TaskStatus.DONE, "pm"))
+
 
     def test_task_assignment(self):
         """测试任务分配"""
-        task = task_board.create_task(
+        task = asyncio.run(task_board.create_task(
+            project_id="test-project",
             title="后端开发",
             assigned_agents=["backend"],
             created_by="pm"
-        )
+        ))
 
         # 按负责人查询
         tasks = task_board.get_tasks_by_agent("backend")
@@ -310,10 +319,14 @@ class TestTaskBoard:
     def test_task_priority(self):
         """测试任务优先级排序"""
         # 创建不同优先级的任务
-        task_board.create_task(title="低优先级", priority=Priority.LOW, created_by="pm")
-        task_board.create_task(title="紧急任务", priority=Priority.URGENT, created_by="pm")
-        task_board.create_task(title="中优先级", priority=Priority.MEDIUM, created_by="pm")
-        task_board.create_task(title="高优先级", priority=Priority.HIGH, created_by="pm")
+        asyncio.run(task_board.create_task(project_id="test-project", title="低优先级", priority=Priority.LOW, created_by="pm"))
+
+        asyncio.run(task_board.create_task(project_id="test-project", title="紧急任务", priority=Priority.URGENT, created_by="pm"))
+
+        asyncio.run(task_board.create_task(project_id="test-project", title="中优先级", priority=Priority.MEDIUM, created_by="pm"))
+
+        asyncio.run(task_board.create_task(project_id="test-project", title="高优先级", priority=Priority.HIGH, created_by="pm"))
+
 
         # 按优先级排序查询
         tasks = task_board.list_tasks()
@@ -325,19 +338,31 @@ class TestTaskBoard:
     def test_task_board_view(self):
         """测试看板视图"""
         task_board.clear_all()
-        task1 = task_board.create_task(title="任务1", created_by="pm")
-        task2 = task_board.create_task(title="任务2", created_by="pm")
-        task3 = task_board.create_task(title="任务3", created_by="pm")
-        task4 = task_board.create_task(title="任务4", created_by="pm")
+        task1 = asyncio.run(task_board.create_task(project_id="test-project", title="任务1", created_by="pm"))
 
-        task_board.change_status(task1.id, TaskStatus.TODO, "pm")
-        task_board.change_status(task2.id, TaskStatus.TODO, "pm")
-        task_board.change_status(task3.id, TaskStatus.TODO, "pm")
-        task_board.change_status(task3.id, TaskStatus.IN_PROGRESS, "pm")
-        task_board.change_status(task4.id, TaskStatus.TODO, "pm")
-        task_board.change_status(task4.id, TaskStatus.IN_PROGRESS, "pm")
-        task_board.change_status(task4.id, TaskStatus.REVIEW, "pm")
-        task_board.change_status(task4.id, TaskStatus.DONE, "pm")
+        task2 = asyncio.run(task_board.create_task(project_id="test-project", title="任务2", created_by="pm"))
+
+        task3 = asyncio.run(task_board.create_task(project_id="test-project", title="任务3", created_by="pm"))
+
+        task4 = asyncio.run(task_board.create_task(project_id="test-project", title="任务4", created_by="pm"))
+
+
+        asyncio.run(task_board.change_status(task1.id, TaskStatus.TODO, "pm"))
+
+        asyncio.run(task_board.change_status(task2.id, TaskStatus.TODO, "pm"))
+
+        asyncio.run(task_board.change_status(task3.id, TaskStatus.TODO, "pm"))
+
+        asyncio.run(task_board.change_status(task3.id, TaskStatus.IN_PROGRESS, "pm"))
+
+        asyncio.run(task_board.change_status(task4.id, TaskStatus.TODO, "pm"))
+
+        asyncio.run(task_board.change_status(task4.id, TaskStatus.IN_PROGRESS, "pm"))
+
+        asyncio.run(task_board.change_status(task4.id, TaskStatus.REVIEW, "pm"))
+
+        asyncio.run(task_board.change_status(task4.id, TaskStatus.DONE, "pm"))
+
 
         # 获取看板视图
         board = task_board.get_tasks_by_board()
@@ -349,9 +374,12 @@ class TestTaskBoard:
 
     def test_task_filter(self):
         """测试任务过滤"""
-        task_board.create_task(title="前端1", priority=Priority.HIGH, created_by="pm")
-        task_board.create_task(title="前端2", priority=Priority.MEDIUM, created_by="pm")
-        task_board.create_task(title="后端1", priority=Priority.HIGH, created_by="pm")
+        asyncio.run(task_board.create_task(project_id="test-project", title="前端1", priority=Priority.HIGH, created_by="pm"))
+
+        asyncio.run(task_board.create_task(project_id="test-project", title="前端2", priority=Priority.MEDIUM, created_by="pm"))
+
+        asyncio.run(task_board.create_task(project_id="test-project", title="后端1", priority=Priority.HIGH, created_by="pm"))
+
 
         # 筛选高优先级
         high_priority = task_board.list_tasks(priority=Priority.HIGH)
@@ -411,12 +439,13 @@ class TestPhase2MockScenario:
         created_tasks = []
         for phase in breakdown_data["phases"]:
             for task_data in phase["tasks"]:
-                task = task_board.create_task(
+                task = asyncio.run(task_board.create_task(
+                    project_id="test-project",
                     title=task_data["title"],
                     description=task_data["description"],
                     priority=Priority(task_data["priority"]),
                     created_by="pm"
-                )
+                ))
                 created_tasks.append(task)
 
         assert len(created_tasks) > 0
@@ -429,12 +458,13 @@ class TestPhase2MockScenario:
 
     def test_collaboration_workflow(self):
         """协作工作流测试"""
-        task = task_board.create_task(
+        task = asyncio.run(task_board.create_task(
+            project_id="test-project",
             title="实现用户注册API",
             description="POST /api/users/register",
             priority=Priority.HIGH,
             created_by="pm"
-        )
+        ))
 
         # 2. 发送任务通知
         msg = Message(
@@ -445,8 +475,10 @@ class TestPhase2MockScenario:
         )
         asyncio.run(message_bus.send_to_task(msg, task.id))
 
-        task_board.change_status(task.id, TaskStatus.TODO, "pm")
-        task_board.change_status(task.id, TaskStatus.IN_PROGRESS, "pm")
+        asyncio.run(task_board.change_status(task.id, TaskStatus.TODO, "pm"))
+
+        asyncio.run(task_board.change_status(task.id, TaskStatus.IN_PROGRESS, "pm"))
+
 
         # 3. Backend 完成任务
         mock_response = get_mock_response(
@@ -464,7 +496,8 @@ class TestPhase2MockScenario:
         )
         asyncio.run(message_bus.send_to_task(msg, task.id))
 
-        task_board.change_status(task.id, TaskStatus.REVIEW, "pm")
+        asyncio.run(task_board.change_status(task.id, TaskStatus.REVIEW, "pm"))
+
 
         # 5. 验证
         assert task_board.get_task(task.id).status == TaskStatus.REVIEW

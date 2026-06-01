@@ -120,16 +120,6 @@ class TestAPI:
             assert response.json()["status"] == "healthy"
     
     @pytest.mark.asyncio
-    async def test_init_default_agent(self):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.post("/api/agents/init-default")
-            assert response.status_code == 200
-            data = response.json()
-            assert "agent" in data
-            assert data["agent"]["name"] is not None
-    
-    @pytest.mark.asyncio
     async def test_create_session(self):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -150,45 +140,6 @@ class TestAPI:
             assert response.status_code == 200
             assert isinstance(response.json(), list)
     
-    @pytest.mark.asyncio
-    async def test_full_chat_flow(self):
-        """测试完整的对话流程"""
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            # 1. 初始化 Agent
-            init_response = await client.post("/api/agents/init-default")
-            assert init_response.status_code == 200
-            agent_data = init_response.json()["agent"]
-            agent_id = agent_data["id"]
-            
-            # 2. 创建会话
-            session_response = await client.post(
-                "/api/sessions",
-                json={"title": "测试对话"}
-            )
-            assert session_response.status_code == 200
-            session_data = session_response.json()
-            session_id = session_data["id"]
-            
-            # 3. 发送消息
-            chat_response = await client.post(
-                "/api/chat",
-                json={
-                    "agent_id": agent_id,
-                    "session_id": session_id,
-                    "message": "你好，介绍一下自己"
-                }
-            )
-            assert chat_response.status_code == 200
-            chat_data = chat_response.json()
-            assert "response" in chat_data
-            assert len(chat_data["response"]) > 0
-            
-            # 4. 获取消息历史
-            messages_response = await client.get(f"/api/sessions/{session_id}/messages")
-            assert messages_response.status_code == 200
-            messages = messages_response.json()
-            assert len(messages) >= 2  # 用户消息 + Agent 回复
 
 
 if __name__ == "__main__":

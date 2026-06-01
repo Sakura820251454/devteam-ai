@@ -1,9 +1,12 @@
+import logging
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Callable
 from enum import Enum
 
 from app.models.task import Task, TaskStatus, Priority, RiskLevel
+
+logger = logging.getLogger(__name__)
 
 
 class TaskBoard:
@@ -166,7 +169,7 @@ class TaskBoard:
                 workspace_manager.add_log(pid, "info", "task_board",
                     f"任务「{task.title}」状态: {old_status.value} → {new_status.value} (by {changed_by})")
         except Exception:
-            pass
+            logger.warning("记录任务状态变更到工作区日志失败", exc_info=True)
 
         self._notify_handlers(task_id, "status_changed", task)
         if self._db:
@@ -294,7 +297,7 @@ class TaskBoard:
                 try:
                     handler(task_id, event, task)
                 except Exception:
-                    pass
+                    logger.warning("任务事件处理器异常: event=%s task_id=%s", event, task_id, exc_info=True)
 
     def clear_all(self) -> None:
         self._tasks.clear()

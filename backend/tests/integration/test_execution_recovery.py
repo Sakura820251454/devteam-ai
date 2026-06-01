@@ -46,21 +46,22 @@ class TestIntegrationFullExecution:
         self.checkpoints = CheckpointManager()
         self.detector = StuckDetector(heartbeat_threshold_seconds=0.5, check_interval_seconds=0.2)
 
-    def _create_task_in_progress(self):
+    async def _create_task_in_progress(self):
         """Helper: create a task and transition to IN_PROGRESS."""
-        task = task_board.create_task(
+        task = await task_board.create_task(
+            project_id="test-project",
             title="Integration Test Task",
             description="Test full execution flow",
             priority=Priority.MEDIUM
         )
-        task_board.change_status(task.id, TaskStatus.TODO)
-        task_board.change_status(task.id, TaskStatus.IN_PROGRESS)
+        await task_board.change_status(task.id, TaskStatus.TODO)
+        await task_board.change_status(task.id, TaskStatus.IN_PROGRESS)
         return task
 
     @pytest.mark.asyncio
     async def test_full_step_execution_with_mock_llm(self):
         """Execute a task with planned steps and get accumulated result."""
-        task = self._create_task_in_progress()
+        task = await self._create_task_in_progress()
         agent = {"id": "agent1", "name": "Dev", "system_prompt": "You are helpful."}
 
         step1 = LLMResponse(content="Step 1 result", usage={}, model="test", finish_reason="stop")
@@ -87,7 +88,7 @@ class TestIntegrationFullExecution:
     @pytest.mark.asyncio
     async def test_execution_stops_at_cancellation(self):
         """Task execution should stop at cancellation boundary between steps."""
-        task = self._create_task_in_progress()
+        task = await self._create_task_in_progress()
         agent = {"id": "agent1", "name": "Dev", "system_prompt": "You are helpful."}
         cancellation_token = asyncio.Event()
 
@@ -123,7 +124,7 @@ class TestIntegrationFullExecution:
     @pytest.mark.asyncio
     async def test_fallback_when_planning_fails(self):
         """Should fall back to single-call execution when step planning returns empty."""
-        task = self._create_task_in_progress()
+        task = await self._create_task_in_progress()
         agent = {"id": "agent1", "name": "Dev", "system_prompt": "You are helpful."}
 
         single_resp = LLMResponse(content="Direct execution result", usage={}, model="test", finish_reason="stop")
@@ -143,7 +144,7 @@ class TestIntegrationFullExecution:
     @pytest.mark.asyncio
     async def test_cancellation_before_execution(self):
         """Should raise CancelledError when token is set before execution starts."""
-        task = self._create_task_in_progress()
+        task = await self._create_task_in_progress()
         agent = {"id": "agent1", "name": "Dev", "system_prompt": "You are helpful."}
 
         cancellation_token = asyncio.Event()
@@ -395,9 +396,12 @@ class TestPauseResumeFlow:
     def setup_method(self):
         from app.services.collaboration.task_board import task_board
         self.executor = AgentExecutor()
-        self.task = task_board.create_task(title="Pause Resume Test", priority=Priority.MEDIUM)
-        task_board.change_status(self.task.id, TaskStatus.TODO)
-        task_board.change_status(self.task.id, TaskStatus.IN_PROGRESS)
+        self.task = asyncio.run(task_board.create_task(project_id="test-project", title="Pause Resume Test", priority=Priority.MEDIUM))
+
+        asyncio.run(task_board.change_status(self.task.id, TaskStatus.TODO))
+
+        asyncio.run(task_board.change_status(self.task.id, TaskStatus.IN_PROGRESS))
+
 
     @pytest.mark.asyncio
     async def test_pause_sets_token_and_changes_status(self):
@@ -565,7 +569,7 @@ class TestAgentAssignment:
     @pytest.mark.asyncio
     async def test_assign_task_backlog_ok(self):
         """Should allow assigning a task in BACKLOG status."""
-        task = task_board.create_task(title="Backlog Task")
+        task = await task_board.create_task(project_id="test-project", title="Backlog Task")
         async def mock_fn(t):
             return {"success": True}
 
@@ -575,8 +579,8 @@ class TestAgentAssignment:
     @pytest.mark.asyncio
     async def test_assign_task_todo_ok(self):
         """Should allow assigning a task in TODO status."""
-        task = task_board.create_task(title="Todo Task")
-        task_board.change_status(task.id, TaskStatus.TODO)
+        task = await task_board.create_task(project_id="test-project", title="Todo Task")
+        await task_board.change_status(task.id, TaskStatus.TODO)
         async def mock_fn(t):
             return {"success": True}
 
@@ -586,9 +590,9 @@ class TestAgentAssignment:
     @pytest.mark.asyncio
     async def test_assign_task_in_progress_fails(self):
         """Should NOT allow assigning a task already IN_PROGRESS."""
-        task = task_board.create_task(title="In Progress Task")
-        task_board.change_status(task.id, TaskStatus.TODO)
-        task_board.change_status(task.id, TaskStatus.IN_PROGRESS)
+        task = await task_board.create_task(project_id="test-project", title="In Progress Task")
+        await task_board.change_status(task.id, TaskStatus.TODO)
+        await task_board.change_status(task.id, TaskStatus.IN_PROGRESS)
         async def mock_fn(t):
             return {"success": True}
 

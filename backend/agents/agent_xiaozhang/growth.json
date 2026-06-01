@@ -1,0 +1,67 @@
+{
+  "soul_name": "xiaozhang",
+  "version": 1.3000000000000003,
+  "updated_at": "2026-05-27T11:23:27.496641",
+  "stats": {
+    "total_projects": 3,
+    "successful_projects": 3,
+    "success_rate": 1.0,
+    "total_tasks": 0,
+    "skills_count": 3
+  },
+  "skills": [
+    {
+      "id": "skill_1779790999.659767",
+      "name": "✅ AI行业新闻调研",
+      "category": "general",
+      "success_rate": 1.0,
+      "usage_count": 0,
+      "trigger_keywords": [
+        "任务",
+        "bug"
+      ],
+      "description": "任务: AI行业新闻调研\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: a3069d5e-697a-4190-b857-9a5a69d2d45c\n  - status: completed\n  - tasks_completed: 10"
+    },
+    {
+      "id": "skill_1779849084.907103",
+      "name": "✅ AI行业新闻调研v3",
+      "category": "general",
+      "success_rate": 1.0,
+      "usage_count": 0,
+      "trigger_keywords": [
+        "任务",
+        "bug"
+      ],
+      "description": "任务: AI行业新闻调研v3\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: fa59acb1-c66b-4b89-9b37-a19f26a7a833\n  - status: completed\n  - tasks_completed: 7"
+    },
+    {
+      "id": "skill_1779852207.492165",
+      "name": "✅ web网页编写",
+      "category": "general",
+      "success_rate": 1.0,
+      "usage_count": 0,
+      "trigger_keywords": [
+        "任务",
+        "bug"
+      ],
+      "description": "任务: web网页编写\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: af312be7-bd20-418e-a4c2-d8ebb4c51c1e\n  - status: completed\n  - tasks_completed: 5"
+    }
+  ],
+  "recent_trajectories": [
+    {
+      "project": "web网页编写",
+      "date": "2026-05-27",
+      "success": true
+    },
+    {
+      "project": "AI行业新闻调研v3",
+      "date": "2026-05-27",
+      "success": true
+    },
+    {
+      "project": "AI行业新闻调研",
+      "date": "2026-05-26",
+      "success": true
+    }
+  ]
+}

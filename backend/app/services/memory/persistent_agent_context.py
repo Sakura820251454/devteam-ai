@@ -2,8 +2,9 @@
 持久化 Agent 上下文管理器
 集成层：将内存记忆系统与持久化系统桥接
 """
-from typing import Optional, List, Dict, Any
+import logging
 from datetime import datetime
+from typing import Optional, List, Dict, Any
 
 from app.models.agent_context import (
     AgentContext,
@@ -13,6 +14,8 @@ from app.models.agent_context import (
 )
 from app.models.memory_db import MemoryLevel as DBMemoryLevel
 from app.services.memory.persistent_memory_manager import PersistentMemoryManager
+
+logger = logging.getLogger(__name__)
 
 
 class PersistentAgentMemoryManager:
@@ -91,7 +94,7 @@ class PersistentAgentMemoryManager:
                     )
             except Exception:
                 # 数据库操作失败不影响内存操作
-                pass
+                logger.warning("持久化记忆存储失败", exc_info=True)
     
     def retrieve_relevant_memory(
         self,
@@ -129,8 +132,8 @@ class PersistentAgentMemoryManager:
                         )
                     )
             except Exception:
-                pass
-        
+                logger.warning("持久化语义检索失败，回退到内存检索", exc_info=True)
+
         # 使用内存检索（快速）
         return self.memory_manager.retrieve_relevant_memory(query, max_results)
     

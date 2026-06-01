@@ -1,0 +1,50 @@
+{
+  "soul_name": "xiaoli",
+  "version": 1.2000000000000002,
+  "updated_at": "2026-05-27T10:31:24.906104",
+  "stats": {
+    "total_projects": 2,
+    "successful_projects": 2,
+    "success_rate": 1.0,
+    "total_tasks": 0,
+    "skills_count": 2
+  },
+  "skills": [
+    {
+      "id": "skill_1779790999.657618",
+      "name": "✅ AI行业新闻调研",
+      "category": "general",
+      "success_rate": 1.0,
+      "usage_count": 0,
+      "trigger_keywords": [
+        "bug",
+        "任务"
+      ],
+      "description": "任务: AI行业新闻调研\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: a3069d5e-697a-4190-b857-9a5a69d2d45c\n  - status: completed\n  - tasks_completed: 10"
+    },
+    {
+      "id": "skill_1779849084.905089",
+      "name": "✅ AI行业新闻调研v3",
+      "category": "general",
+      "success_rate": 1.0,
+      "usage_count": 0,
+      "trigger_keywords": [
+        "bug",
+        "任务"
+      ],
+      "description": "任务: AI行业新闻调研v3\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: fa59acb1-c66b-4b89-9b37-a19f26a7a833\n  - status: completed\n  - tasks_completed: 7"
+    }
+  ],
+  "recent_trajectories": [
+    {
+      "project": "AI行业新闻调研v3",
+      "date": "2026-05-27",
+      "success": true
+    },
+    {
+      "project": "AI行业新闻调研",
+      "date": "2026-05-26",
+      "success": true
+    }
+  ]
+}

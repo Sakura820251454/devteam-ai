@@ -1,9 +1,11 @@
+import json
+import logging
+from datetime import datetime
+from typing import List, Optional, Dict, Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from sqlalchemy.orm import selectinload
-from typing import List, Optional, Dict, Any
-from datetime import datetime
-import json
 
 from app.models.memory_db import (
     MemoryEntryModel,
@@ -16,6 +18,8 @@ from app.services.memory.memory_promotion import promotion_service
 from app.services.memory.memory_enhancement import memory_enhancer
 from app.services.memory.memory_forget import forget_service, capacity_manager
 from app.services.memory.memory_compressor import context_compressor, memory_compressor
+
+logger = logging.getLogger(__name__)
 
 
 class PersistentMemoryManager:
@@ -91,8 +95,8 @@ class PersistentMemoryManager:
                     }
                 )
             except Exception:
-                pass
-        
+                logger.warning("记忆写入向量索引失败: %s", memory_id, exc_info=True)
+
         return self._to_pydantic(entry)
     
     async def get_memory(
@@ -246,7 +250,7 @@ class PersistentMemoryManager:
             for memory_data, target_level in candidates[:5]:
                 await self.promote_memory(memory_data["id"], target_level)
         except Exception:
-            pass
+            logger.warning("自动晋升记忆失败", exc_info=True)
     
     async def promote_memory(self, memory_id: str, target_level: str) -> bool:
         """手动晋升记忆"""
@@ -280,8 +284,8 @@ class PersistentMemoryManager:
                     }
                 )
             except Exception:
-                pass
-        
+                logger.warning("晋升后更新向量索引失败: %s", memory_id, exc_info=True)
+
         return True
     
     async def _keyword_retrieve(
@@ -374,8 +378,8 @@ class PersistentMemoryManager:
                 retriever = await get_semantic_retriever()
                 await retriever.remove_from_index(memory_id)
             except Exception:
-                pass
-        
+                logger.warning("从向量索引删除记忆失败: %s", memory_id, exc_info=True)
+
         result = await self.db.execute(
             delete(MemoryEntryModel).where(MemoryEntryModel.id == memory_id)
         )
@@ -452,6 +456,8 @@ class PersistentMemoryManager:
             level=entry.level,
             tags=entry.tags or [],
             relevance_score=entry.relevance_score or 1.0,
+            usage_count=entry.usage_count or 0,
+            extra_data=entry.extra_data or {},
             created_at=entry.created_at,
             last_accessed_at=entry.last_accessed_at
         )
@@ -601,7 +607,7 @@ class PersistentMemoryManager:
                     for remove_id in remove_ids:
                         await retriever.remove_from_index(remove_id)
                 except Exception:
-                    pass
+                    logger.warning("批量清理向量索引失败", exc_info=True)
         
         await self.db.commit()
         return result
@@ -711,7 +717,7 @@ class PersistentMemoryManager:
                         retriever = await get_semantic_retriever()
                         await retriever.remove_from_index(mem_id)
                     except Exception:
-                        pass
+                        logger.warning("清理 Agent 向量索引失败: %s", mem_id, exc_info=True)
         
         return {
             "agent_id": agent_id,

@@ -10,6 +10,7 @@ WORM 审计日志系统 — 不可篡改的操作记录
 
 import json
 import hashlib
+import logging
 import os
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Iterator
@@ -17,6 +18,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from app.models.task import RiskLevel
+
+logger = logging.getLogger(__name__)
 
 
 class AuditAction(str, Enum):
@@ -101,7 +104,7 @@ class AuditLogger:
                         self._last_hash = entry.get("hash", "")
                         self._entry_count = entry.get("seq", 0)
         except Exception:
-            pass
+            logger.warning("读取审计日志初始状态失败，从头开始记录", exc_info=True)
 
     def _compute_hash(self, entry_data: str, prev_hash: str) -> str:
         """计算 SHA-256 链式哈希"""
@@ -321,9 +324,9 @@ class AuditLogger:
                         if entry.get("risk_level") in (RiskLevel.HIGH.value, RiskLevel.CRITICAL.value):
                             critical_count += 1
                     except json.JSONDecodeError:
-                        pass
+                        logger.warning("审计日志行 JSON 解析失败，已跳过")
         except Exception:
-            pass
+            logger.warning("读取审计日志统计失败", exc_info=True)
 
         return {
             "total_entries": total,

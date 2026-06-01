@@ -91,7 +91,7 @@ class AgentExecutor:
                 try:
                     await task_board.change_status(task_id, TaskStatus.IN_PROGRESS, "system")
                 except ValueError:
-                    pass
+                    logger.debug("任务 %s 状态转移至 IN_PROGRESS 失败（可能已被移动）", task_id)
 
             cancellation_token = asyncio.Event()
             self._cancellation_tokens[task_id] = cancellation_token
@@ -886,7 +886,7 @@ class AgentExecutor:
                         await task_board.change_status(task_id, TaskStatus.BLOCKED, "system")
                         await task_board.change_status(task_id, TaskStatus.CANCELLED, "system")
                     except ValueError:
-                        pass
+                        logger.debug("任务 %s 状态转移至 BLOCKED/CANCELLED 失败", task_id)
 
             agent_id = execution["agent_id"]
             if agent_id in self._agent_tasks:
@@ -1055,7 +1055,7 @@ class AgentExecutor:
                                     for fname, content in files.items():
                                         parts.append(f"**{fname}**:\n```\n{content[:2000]}\n```")
                         except Exception:
-                            pass
+                            logger.warning("读取工作区产物失败", exc_info=True)
 
                     # 3. 前置阶段消息摘要
                     if current_stage and stage_order:
@@ -1070,9 +1070,9 @@ class AgentExecutor:
                                     content_preview = msg.content[:300]
                                     parts.append(f"- **{sender}**: {content_preview}")
                         except Exception:
-                            pass
+                            logger.warning("读取前置阶段消息摘要失败", exc_info=True)
         except Exception:
-            pass
+            logger.warning("构建执行上下文失败", exc_info=True)
 
         # 4. 当前任务历史记录
         try:
@@ -1083,7 +1083,7 @@ class AgentExecutor:
                     entry = f"{h.get('timestamp', '')} [{h.get('by', 'system')}] {h.get('from', '')}→{h.get('to', '')}"
                     parts.append(f"- {entry}")
         except Exception:
-            pass
+            logger.warning("读取任务状态历史失败", exc_info=True)
 
         # 5. 错误信息
         if error_info:

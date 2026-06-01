@@ -20,6 +20,8 @@ class MemoryEntry(BaseModel):
     last_accessed_at: datetime = Field(default_factory=datetime.now)
     tags: List[str] = Field(default_factory=list)
     relevance_score: float = Field(default=1.0)
+    usage_count: int = 0
+    extra_data: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentContext(BaseModel):

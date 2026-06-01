@@ -5,7 +5,7 @@ from app.services.collaboration.speaking_controller import SpeakingController, S
 from app.services.collaboration.task_board import TaskBoard, task_board
 from app.models.task import Task, TaskStatus, Priority, TaskHistory
 from app.services.collaboration.project_service import ProjectService, Project, project_service, ProjectPhase
-from app.services.collaboration.pipeline_orchestrator import PipelineOrchestrator, Pipeline, pipeline_orchestrator, PipelineStage
+from app.services.collaboration.pipeline_orchestrator import PipelineOrchestrator, Pipeline, pipeline_orchestrator
 
 __all__ = [
     "AgentService",
@@ -35,5 +35,4 @@ __all__ = [
     "PipelineOrchestrator",
     "Pipeline",
     "pipeline_orchestrator",
-    "PipelineStage",
 ]

@@ -3,7 +3,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 from app.services.collaboration.project_service import project_service, ProjectPhase
-from app.services.collaboration.pipeline_orchestrator import pipeline_orchestrator, PipelineStage
+from app.services.collaboration.pipeline_orchestrator import pipeline_orchestrator
 
 
 router = APIRouter(prefix="/api/projects", tags=["项目管理"])

@@ -1,8 +1,11 @@
+import logging
 import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from enum import Enum
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectStatus(str, Enum):
@@ -179,7 +182,7 @@ class ProjectService:
         try:
             workspace_manager.delete_workspace(project_id)
         except Exception:
-            pass
+            logger.warning("清理工作区失败: %s", project_id, exc_info=True)
 
     def get_project_summary(self, project_id: str) -> Optional[Dict[str, Any]]:
         """获取项目汇总信息"""
@@ -233,7 +236,7 @@ class ProjectService:
                     await self._db.save(project)
                 return project
         except ValueError:
-            pass
+            logger.debug("更新项目进度: 项目未找到 %s", project_id)
 
         return project
 

@@ -1,13 +1,13 @@
 {
   "soul_name": "mu",
-  "version": 2.100000000000001,
-  "updated_at": "2026-05-26T11:13:23.224442",
+  "version": 2.200000000000001,
+  "updated_at": "2026-05-28T15:47:29.851328",
   "stats": {
     "total_projects": 11,
     "successful_projects": 11,
     "success_rate": 1.0,
     "total_tasks": 0,
-    "skills_count": 11
+    "skills_count": 12
   },
   "skills": [
     {
@@ -146,9 +146,25 @@
         "bug"
       ],
       "description": "任务: 测试查询项目\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: eb4b3c7b-3698-4849-8c4e-e2d5031ad5b7\n  - status: completed\n  - tasks_completed: 8"
+    },
+    {
+      "id": "skill_1779954449.851328",
+      "name": "✅ 调查刘备族谱",
+      "category": "general",
+      "success_rate": 1.0,
+      "usage_count": 0,
+      "trigger_keywords": [
+        "任务"
+      ],
+      "description": "任务: 调查刘备族谱\n\n关键步骤: 10 步\n\n结果: 成功\n\n关键产出:\n  - project_id: 5e13825b-f01e-48c1-bea0-aa6748e2b82b\n  - status: completed\n  - tasks_completed: 0"
     }
   ],
   "recent_trajectories": [
+    {
+      "project": "调查刘备族谱",
+      "date": "2026-05-28",
+      "success": true
+    },
     {
       "project": "测试查询项目",
       "date": "2026-05-26",
@@ -186,11 +202,6 @@
     },
     {
       "project": "调研长治煤矿爆炸最新进展",
-      "date": "2026-05-25",
-      "success": true
-    },
-    {
-      "project": "调查最近的山西长治煤矿瓦斯爆炸的最新进展",
       "date": "2026-05-25",
       "success": true
     },

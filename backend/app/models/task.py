@@ -7,12 +7,13 @@ from datetime import datetime
 class TaskStatus(str, Enum):
     BACKLOG = "backlog"
     TODO = "todo"
-    BLOCKED = "blocked"        # 等待依赖任务完成
+    BLOCKED = "blocked"             # 等待依赖任务完成
     IN_PROGRESS = "in_progress"
     REVIEW = "review"
     DONE = "done"
     PAUSED = "paused"
     CANCELLED = "cancelled"
+    WAITING_FOR_USER = "waiting_for_user"  # Agent 等待用户澄清/答复
 
 
 class RiskLevel(str, Enum):
@@ -66,12 +67,13 @@ class Task(BaseModel):
         valid_transitions = {
             TaskStatus.BACKLOG: [TaskStatus.TODO, TaskStatus.BLOCKED, TaskStatus.CANCELLED],
             TaskStatus.TODO: [TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED, TaskStatus.BACKLOG, TaskStatus.CANCELLED],
-            TaskStatus.BLOCKED: [TaskStatus.TODO, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED],
-            TaskStatus.IN_PROGRESS: [TaskStatus.REVIEW, TaskStatus.PAUSED, TaskStatus.BLOCKED, TaskStatus.CANCELLED],
+            TaskStatus.BLOCKED: [TaskStatus.TODO, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED, TaskStatus.WAITING_FOR_USER],
+            TaskStatus.IN_PROGRESS: [TaskStatus.REVIEW, TaskStatus.PAUSED, TaskStatus.BLOCKED, TaskStatus.CANCELLED, TaskStatus.WAITING_FOR_USER],
             TaskStatus.REVIEW: [TaskStatus.DONE, TaskStatus.IN_PROGRESS],
             TaskStatus.PAUSED: [TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED],
             TaskStatus.DONE: [TaskStatus.REVIEW],
             TaskStatus.CANCELLED: [TaskStatus.BACKLOG],
+            TaskStatus.WAITING_FOR_USER: [TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED, TaskStatus.BACKLOG],
         }
         return valid_transitions.get(self.status, [])
 

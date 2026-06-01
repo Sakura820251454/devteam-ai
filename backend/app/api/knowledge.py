@@ -149,39 +149,11 @@ async def search_knowledge(
     }
 
 
-@router.get("/{knowledge_id}")
-async def get_knowledge(knowledge_id: str):
-    """获取知识资产详情"""
-    knowledge = knowledge_evolution_service.get_knowledge(knowledge_id)
-    
-    if not knowledge:
-        raise HTTPException(status_code=404, detail="知识资产不存在")
-    
-    return _knowledge_to_dict(knowledge)
-
-
-@router.post("/{knowledge_id}/use")
-async def use_knowledge(knowledge_id: str, success: bool = Query(default=True)):
-    """标记知识资产的使用情况"""
-    knowledge = knowledge_evolution_service.get_knowledge(knowledge_id)
-    
-    if not knowledge:
-        raise HTTPException(status_code=404, detail="知识资产不存在")
-    
-    knowledge.use(success)
-    
-    return {
-        "message": "使用记录已更新",
-        "success_rate": knowledge.success_rate,
-        "usage_count": knowledge.usage_count,
-    }
-
-
 @router.post("/patterns/discover")
 async def discover_patterns(task_history: List[Dict[str, Any]]):
     """从历史数据中发现模式"""
     count = knowledge_evolution_service.discover_and_save_patterns(task_history)
-    
+
     return {
         "message": f"发现{count}个新模式",
         "total_patterns": len(knowledge_evolution_service.patterns),
@@ -192,7 +164,7 @@ async def discover_patterns(task_history: List[Dict[str, Any]]):
 async def get_patterns():
     """获取所有发现的模式"""
     patterns = knowledge_evolution_service.patterns
-    
+
     return {
         "patterns": [_pattern_to_dict(p) for p in patterns],
         "count": len(patterns),
@@ -203,7 +175,7 @@ async def get_patterns():
 async def generate_skills(agent_id: str):
     """从成功案例生成技能"""
     skills = knowledge_evolution_service.generate_skills(agent_id)
-    
+
     return {
         "message": f"成功生成{len(skills)}个技能",
         "skills": [_skill_to_dict(s) for s in skills],
@@ -214,7 +186,7 @@ async def generate_skills(agent_id: str):
 async def get_skills():
     """获取所有生成的技能"""
     skills = list(knowledge_evolution_service.generated_skills.values())
-    
+
     return {
         "skills": [_skill_to_dict(s) for s in skills],
         "count": len(skills),
@@ -225,6 +197,34 @@ async def get_skills():
 async def get_knowledge_stats():
     """获取知识库统计"""
     return knowledge_evolution_service.get_knowledge_stats()
+
+
+@router.get("/{knowledge_id}")
+async def get_knowledge(knowledge_id: str):
+    """获取知识资产详情"""
+    knowledge = knowledge_evolution_service.get_knowledge(knowledge_id)
+
+    if not knowledge:
+        raise HTTPException(status_code=404, detail="知识资产不存在")
+
+    return _knowledge_to_dict(knowledge)
+
+
+@router.post("/{knowledge_id}/use")
+async def use_knowledge(knowledge_id: str, success: bool = Query(default=True)):
+    """标记知识资产的使用情况"""
+    knowledge = knowledge_evolution_service.get_knowledge(knowledge_id)
+
+    if not knowledge:
+        raise HTTPException(status_code=404, detail="知识资产不存在")
+
+    knowledge.use(success)
+
+    return {
+        "message": "使用记录已更新",
+        "success_rate": knowledge.success_rate,
+        "usage_count": knowledge.usage_count,
+    }
 
 
 def _knowledge_to_dict(knowledge: KnowledgeAsset) -> Dict[str, Any]:

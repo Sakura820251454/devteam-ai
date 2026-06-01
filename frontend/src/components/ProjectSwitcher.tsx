@@ -61,7 +61,9 @@ export default function ProjectSwitcher({ onNewProject, onOpenExisting }: Projec
               onClick={(e) => {
                 e.stopPropagation()
                 if (confirm(`关闭项目 "${project.name}"？`)) {
-                  closeProject(project.id)
+                  closeProject(project.id).catch(err =>
+                    console.warn('关闭项目失败:', err)
+                  )
                 }
               }}
               className="ml-1 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-opacity"

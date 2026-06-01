@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional
 from pydantic import BaseModel
 
-from app.services.collaboration.pipeline_orchestrator import pipeline_orchestrator, PipelineStage
+from app.services.collaboration.pipeline_orchestrator import pipeline_orchestrator
 from app.services.collaboration.pipeline_templates import (
     get_all_templates, get_template_by_id, get_templates_by_category,
     suggest_stage_adjustments, apply_stage_adjustments,
@@ -179,6 +179,65 @@ async def update_pipeline_stages(pipeline_id: str, request: UpdateStagesRequest)
     return {"status": "ok", "stages": request.stages}
 
 
+class ConfirmStagesRequest(BaseModel):
+    stages: list[dict]
+    project_id: Optional[str] = None
+
+
+@router.post("/{pipeline_id}/confirm-stages")
+async def confirm_pipeline_stages(pipeline_id: str, request: ConfirmStagesRequest):
+    """确认阶段配置并标记 pipeline 为可启动。必须在 start 之前调用。"""
+    from app.services.project.workspace_manager import workspace_manager
+
+    success = await pipeline_orchestrator.confirm_stages(pipeline_id, request.stages)
+    if not success:
+        raise HTTPException(status_code=400, detail="无法确认阶段（pipeline 可能不存在或已在运行）")
+
+    # Also persist to workspace project.json
+    if request.project_id:
+        try:
+            workspace_manager.update_stages(request.project_id, request.stages)
+        except Exception:
+            pass
+
+    return {"status": "confirmed", "stages": request.stages}
+
+
+class RespondToAgentRequest(BaseModel):
+    task_id: Optional[str] = None
+    question_index: int = 0
+    answer: str
+
+
+@router.post("/{pipeline_id}/respond-to-agent")
+async def respond_to_agent(pipeline_id: str, request: RespondToAgentRequest):
+    """用户答复 Agent 的提问，恢复任务执行。"""
+    success = await pipeline_orchestrator.respond_to_agent(
+        pipeline_id=pipeline_id,
+        answer=request.answer,
+        task_id=request.task_id,
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail="无法答复（pipeline 不存在或不在等待状态）")
+    return {"status": "answered", "task_id": request.task_id}
+
+
+class ApproveTaskRequest(BaseModel):
+    task_id: str
+
+
+@router.post("/{pipeline_id}/approve-task")
+async def approve_task(pipeline_id: str, request: ApproveTaskRequest):
+    """人工审批通过一个 REVIEW 状态的任务。"""
+    success = await pipeline_orchestrator.approve_task(
+        pipeline_id=pipeline_id,
+        task_id=request.task_id,
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail="审批失败：pipeline 不存在或任务不是 REVIEW 状态")
+    return {"status": "approved", "task_id": request.task_id}
+
+
 # ========== /{pipeline_id} routes (MUST be after all static routes) ==========
 
 @router.get("/{pipeline_id}")
@@ -255,6 +314,39 @@ async def get_pipeline_logs(pipeline_id: str, limit: int = 50):
     if not pipeline:
         raise HTTPException(status_code=404, detail="Pipeline not found")
     return {"logs": pipeline.get("logs", [])[-limit:]}
+
+
+@router.get("/{pipeline_id}/tasks")
+async def get_pipeline_tasks(pipeline_id: str):
+    """获取流水线的所有任务（含状态、分配、标签）。"""
+    from app.services.collaboration.task_board import task_board
+
+    pipeline = pipeline_orchestrator.get_pipeline(pipeline_id)
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    project_id = pipeline.get("project_id", "")
+    task_ids = pipeline.get("task_ids", [])
+
+    tasks = task_board.list_tasks(project_id=project_id) if project_id else []
+    filtered = [t for t in tasks if t.id in task_ids]
+
+    return {
+        "pipeline_id": pipeline_id,
+        "project_id": project_id,
+        "task_count": len(filtered),
+        "tasks": [
+            {
+                "id": t.id,
+                "title": t.title,
+                "status": t.status.value if hasattr(t.status, 'value') else str(t.status),
+                "priority": t.priority.value if hasattr(t.priority, 'value') else str(t.priority),
+                "assigned_agents": t.assigned_agents,
+                "tags": t.tags,
+            }
+            for t in filtered
+        ],
+    }
 
 
 @router.get("/{pipeline_id}/status")

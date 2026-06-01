@@ -278,10 +278,8 @@ class SpeakingController:
     def cleanup_project_sessions(self, project_id: str) -> None:
         """清理与项目相关的所有会话（通过 session_id 前缀匹配 project:{project_id}）"""
         prefix = f"project:{project_id}"
-        for session_id in list(self._queues.keys()):
-            if session_id.startswith(prefix) or session_id == project_id:
-                self.cleanup_session(session_id)
-        for session_id in list(self._token_budgets.keys()):
+        all_sessions = set(self._queues.keys()) | set(self._token_budgets.keys()) | set(self._speaking_mode.keys())
+        for session_id in all_sessions:
             if session_id.startswith(prefix) or session_id == project_id:
                 self.cleanup_session(session_id)
 

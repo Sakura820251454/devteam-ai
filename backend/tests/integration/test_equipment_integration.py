@@ -46,7 +46,7 @@ class TestToolRegistry:
             "seconds": 5
         }
 
-        response = await client.post("/equipment/tools", json=tool_data)
+        response = await client.post("/api/equipment/tools", json=tool_data)
         assert response.status_code == 200
         result = response.json()
         assert "tool" in result
@@ -61,10 +61,10 @@ class TestToolRegistry:
             "description": "MCP工具"
         }
 
-        response = await client.post("/equipment/tools", json=tool_data)
+        response = await client.post("/api/equipment/tools", json=tool_data)
         if response.status_code == 200:
             tool_id = response.json()["tool"]["id"]
-            get_response = await client.get(f"/equipment/tools/{tool_id}")
+            get_response = await client.get(f"/api/equipment/tools/{tool_id}")
             assert get_response.status_code == 200
             tool = get_response.json()
             assert tool["name"] == "获取测试工具"
@@ -72,7 +72,7 @@ class TestToolRegistry:
     @pytest.mark.asyncio
     async def test_list_tools(self, client):
         """测试列出所有工具"""
-        response = await client.get("/equipment/tools")
+        response = await client.get("/api/equipment/tools")
         assert response.status_code == 200
         data = response.json()
         assert "tools" in data
@@ -82,19 +82,19 @@ class TestToolRegistry:
     @pytest.mark.asyncio
     async def test_list_tools_by_type(self, client):
         """测试按类型列出工具"""
-        response = await client.get("/equipment/tools", params={"tool_type": "mcp"})
+        response = await client.get("/api/equipment/tools", params={"tool_type": "mcp"})
         assert response.status_code == 200
 
     @pytest.mark.asyncio
     async def test_list_tools_by_capability(self, client):
         """测试按能力列出工具"""
-        response = await client.get("/equipment/tools", params={"capability": "coding"})
+        response = await client.get("/api/equipment/tools", params={"capability": "coding"})
         assert response.status_code == 200
 
     @pytest.mark.asyncio
     async def test_list_tools_by_task(self, client):
         """测试按任务类型列出工具"""
-        response = await client.get("/equipment/tools", params={"task_type": "testing"})
+        response = await client.get("/api/equipment/tools", params={"task_type": "testing"})
         assert response.status_code == 200
 
     @pytest.mark.asyncio
@@ -106,13 +106,13 @@ class TestToolRegistry:
             "description": "将被删除的工具"
         }
 
-        response = await client.post("/equipment/tools", json=tool_data)
+        response = await client.post("/api/equipment/tools", json=tool_data)
         if response.status_code == 200:
             tool_id = response.json()["tool"]["id"]
-            delete_response = await client.delete(f"/equipment/tools/{tool_id}")
+            delete_response = await client.delete(f"/api/equipment/tools/{tool_id}")
             assert delete_response.status_code == 200
 
-            get_response = await client.get(f"/equipment/tools/{tool_id}")
+            get_response = await client.get(f"/api/equipment/tools/{tool_id}")
             assert get_response.status_code == 404
 
 
@@ -128,11 +128,10 @@ class TestToolUsageTracking:
             "description": "用于测试使用统计"
         }
 
-        response = await client.post("/equipment/tools", json=tool_data)
+        response = await client.post("/api/equipment/tools", json=tool_data)
         if response.status_code == 200:
             tool_id = response.json()["tool"]["id"]
-            usage_response = await client.post(
-                f"/equipment/tools/{tool_id}/usage",
+            usage_response = await client.post(f"/api/equipment/tools/{tool_id}/usage",
                 params={
                     "agent_id": "test_agent",
                     "success": True,
@@ -146,7 +145,7 @@ class TestToolUsageTracking:
     @pytest.mark.asyncio
     async def test_tool_stats(self, client):
         """测试获取工具统计"""
-        response = await client.get("/equipment/stats")
+        response = await client.get("/api/equipment/stats")
         assert response.status_code == 200
         stats = response.json()
         assert "total_tools" in stats
@@ -159,8 +158,7 @@ class TestTaskAnalysis:
     @pytest.mark.asyncio
     async def test_analyze_task(self, client, test_agent_id):
         """测试分析任务需求"""
-        response = await client.post(
-            f"/equipment/agent/{test_agent_id}/analyze",
+        response = await client.post(f"/api/equipment/agent/{test_agent_id}/analyze",
             params={"task_description": "开发一个Python Web应用"}
         )
         assert response.status_code == 200
@@ -176,8 +174,7 @@ class TestEquipmentManagement:
     @pytest.mark.asyncio
     async def test_equip_tools(self, client, test_agent_id):
         """测试装备工具"""
-        response = await client.post(
-            f"/equipment/agent/{test_agent_id}/equip",
+        response = await client.post(f"/api/equipment/agent/{test_agent_id}/equip",
             params={"task_description": "编写单元测试"}
         )
         assert response.status_code == 200
@@ -188,7 +185,7 @@ class TestEquipmentManagement:
     @pytest.mark.asyncio
     async def test_get_agent_equipment(self, client, test_agent_id):
         """测试获取 Agent 装备状态"""
-        response = await client.get(f"/equipment/agent/{test_agent_id}/equipment")
+        response = await client.get(f"/api/equipment/agent/{test_agent_id}/equipment")
         assert response.status_code == 200
         equipment = response.json()
         assert "equipped_tools" in equipment
@@ -197,31 +194,27 @@ class TestEquipmentManagement:
     @pytest.mark.asyncio
     async def test_unequip_tool(self, client, test_agent_id):
         """测试卸载指定工具"""
-        await client.post(
-            f"/equipment/agent/{test_agent_id}/equip",
+        await client.post(f"/api/equipment/agent/{test_agent_id}/equip",
             params={"task_description": "测试任务"}
         )
 
-        equipment_response = await client.get(f"/equipment/agent/{test_agent_id}/equipment")
+        equipment_response = await client.get(f"/api/equipment/agent/{test_agent_id}/equipment")
         equipped_tools = equipment_response.json().get("equipped_tools", [])
 
         if equipped_tools:
             tool_id = equipped_tools[0]["id"]
-            unequip_response = await client.post(
-                f"/equipment/agent/{test_agent_id}/unequip/{tool_id}"
+            unequip_response = await client.post(f"/api/equipment/agent/{test_agent_id}/unequip/{tool_id}"
             )
             assert unequip_response.status_code == 200
 
     @pytest.mark.asyncio
     async def test_unequip_all_tools(self, client, test_agent_id):
         """测试卸载所有工具"""
-        await client.post(
-            f"/equipment/agent/{test_agent_id}/equip",
+        await client.post(f"/api/equipment/agent/{test_agent_id}/equip",
             params={"task_description": "先装备工具"}
         )
 
-        unequip_all_response = await client.post(
-            f"/equipment/agent/{test_agent_id}/unequip-all"
+        unequip_all_response = await client.post(f"/api/equipment/agent/{test_agent_id}/unequip-all"
         )
         assert unequip_all_response.status_code == 200
 
@@ -243,29 +236,27 @@ class TestEquipmentServiceIntegration:
             "memory_mb": 100,
             "seconds": 10
         }
-        create_response = await client.post("/equipment/tools", json=tool_data)
+        create_response = await client.post("/api/equipment/tools", json=tool_data)
         assert create_response.status_code == 200
         tool_id = create_response.json()["tool"]["id"]
 
-        get_response = await client.get(f"/equipment/tools/{tool_id}")
+        get_response = await client.get(f"/api/equipment/tools/{tool_id}")
         assert get_response.status_code == 200
 
-        analyze_response = await client.post(
-            f"/equipment/agent/{test_agent_id}/analyze",
+        analyze_response = await client.post(f"/api/equipment/agent/{test_agent_id}/analyze",
             params={"task_description": "数据分析和转换"}
         )
         assert analyze_response.status_code == 200
 
-        equip_response = await client.post(
-            f"/equipment/agent/{test_agent_id}/equip",
+        equip_response = await client.post(f"/api/equipment/agent/{test_agent_id}/equip",
             params={"task_description": "数据分析任务"}
         )
         assert equip_response.status_code == 200
 
-        status_response = await client.get(f"/equipment/agent/{test_agent_id}/equipment")
+        status_response = await client.get(f"/api/equipment/agent/{test_agent_id}/equipment")
         assert status_response.status_code == 200
 
-        stats_response = await client.get("/equipment/stats")
+        stats_response = await client.get("/api/equipment/stats")
         assert stats_response.status_code == 200
 
 
@@ -278,18 +269,16 @@ class TestEquipmentWithAgent:
         agent1_id = "test_agent_equipment_multi_1"
         agent2_id = "test_agent_equipment_multi_2"
 
-        await client.post(
-            f"/equipment/agent/{agent1_id}/equip",
+        await client.post(f"/api/equipment/agent/{agent1_id}/equip",
             params={"task_description": "Agent1的任务"}
         )
 
-        await client.post(
-            f"/equipment/agent/{agent2_id}/equip",
+        await client.post(f"/api/equipment/agent/{agent2_id}/equip",
             params={"task_description": "Agent2的任务"}
         )
 
-        equipment1 = await client.get(f"/equipment/agent/{agent1_id}/equipment")
-        equipment2 = await client.get(f"/equipment/agent/{agent2_id}/equipment")
+        equipment1 = await client.get(f"/api/equipment/agent/{agent1_id}/equipment")
+        equipment2 = await client.get(f"/api/equipment/agent/{agent2_id}/equipment")
 
         assert equipment1.status_code == 200
         assert equipment2.status_code == 200
@@ -308,10 +297,10 @@ class TestToolCapabilities:
             "suitable_tasks": ["development", "refactoring"]
         }
 
-        create_response = await client.post("/equipment/tools", json=tool_data)
+        create_response = await client.post("/api/equipment/tools", json=tool_data)
         if create_response.status_code == 200:
             tool_id = create_response.json()["tool"]["id"]
-            get_response = await client.get(f"/equipment/tools/{tool_id}")
+            get_response = await client.get(f"/api/equipment/tools/{tool_id}")
             if get_response.status_code == 200:
                 tool = get_response.json()
                 assert "code_generation" in tool["capabilities"]
@@ -332,7 +321,7 @@ class TestResourceCost:
             "seconds": 60
         }
 
-        response = await client.post("/equipment/tools", json=tool_data)
+        response = await client.post("/api/equipment/tools", json=tool_data)
         assert response.status_code == 200
         tool = response.json()["tool"]
         assert tool["resource_cost"]["tokens"] == 1000
@@ -346,7 +335,7 @@ class TestEquipmentErrorHandling:
     @pytest.mark.asyncio
     async def test_get_nonexistent_tool(self, client):
         """测试获取不存在的工具"""
-        response = await client.get("/equipment/tools/nonexistent_tool_12345")
+        response = await client.get("/api/equipment/tools/nonexistent_tool_12345")
         assert response.status_code == 404
 
     @pytest.mark.asyncio
@@ -358,14 +347,13 @@ class TestEquipmentErrorHandling:
             "description": "使用无效类型"
         }
 
-        response = await client.post("/equipment/tools", json=tool_data)
+        response = await client.post("/api/equipment/tools", json=tool_data)
         assert response.status_code == 400
 
     @pytest.mark.asyncio
     async def test_unequip_nonexistent_tool(self, client, test_agent_id):
         """测试卸载不存在的工具"""
-        response = await client.post(
-            f"/equipment/agent/{test_agent_id}/unequip/nonexistent_tool"
+        response = await client.post(f"/api/equipment/agent/{test_agent_id}/unequip/nonexistent_tool"
         )
         assert response.status_code == 404
 

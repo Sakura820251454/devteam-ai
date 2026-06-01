@@ -80,7 +80,7 @@ class TestAgentServiceLLMConfig:
         templates = self.service.get_all_templates()
         agent = self.service.create_agent(
             templates[0]["id"], "Clear-Test",
-            {"provider": "deepseek", "model": "deepseek-chat"}
+            {"provider": "deepseek", "model": "deepseek-v4-flash"}
         )
         assert agent["llm_config"] is not None
 
@@ -112,7 +112,7 @@ class TestAgentServiceLLMConfig:
     def test_list_agents_includes_llm_config(self):
         """list_agents 返回的列表应包含 llm_config"""
         templates = self.service.get_all_templates()
-        llm_cfg = {"provider": "deepseek", "model": "deepseek-chat"}
+        llm_cfg = {"provider": "deepseek", "model": "deepseek-v4-flash"}
         self.service.create_agent(templates[0]["id"], "List-Test", llm_cfg)
 
         agents = self.service.list_agents()
@@ -175,7 +175,7 @@ class TestAgentServiceLLMConfig:
             mock_chat.return_value = LLMResponse(
                 content="Mock response",
                 usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-                model="deepseek-chat",
+                model="deepseek-v4-flash",
                 finish_reason="stop"
             )
 
@@ -243,7 +243,7 @@ class TestLLMServiceAgentConfig:
             mock_provider.chat = AsyncMock(return_value=LLMResponse(
                 content="OK",
                 usage={"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
-                model="deepseek-chat",
+                model="deepseek-v4-flash",
                 finish_reason="stop"
             ))
             mock_get_provider.return_value = mock_provider
@@ -276,7 +276,7 @@ class TestLLMServiceAgentConfig:
             mock_provider.chat = AsyncMock(return_value=LLMResponse(
                 content="OK",
                 usage={"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
-                model="deepseek-chat",
+                model="deepseek-v4-flash",
                 finish_reason="stop"
             ))
             mock_get_provider.return_value = mock_provider
@@ -382,7 +382,7 @@ class TestLLMServiceAgentConfig:
             mock_provider.chat = AsyncMock(return_value=LLMResponse(
                 content="Default cost",
                 usage={"prompt_tokens": 50, "completion_tokens": 25, "total_tokens": 75},
-                model="deepseek-chat",
+                model="deepseek-v4-flash",
                 finish_reason="stop"
             ))
             mock_get_provider.return_value = mock_provider
@@ -488,7 +488,7 @@ class TestLLMConfigModel:
         """LLMConfig 默认值"""
         cfg = LLMConfig()
         assert cfg.provider == "deepseek"
-        assert cfg.model == "deepseek-chat"
+        assert cfg.model == "deepseek-v4-flash"
         assert cfg.temperature == 0.7
         assert cfg.max_tokens is None
 

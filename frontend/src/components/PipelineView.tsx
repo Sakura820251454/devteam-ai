@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { useStore } from '../lib/store'
 import type { PipelineStage, Agent, Pipeline } from '../lib/store'
-import { adjustPipelineTemplate, applyPipelineAdjustment, updatePipelineStages } from '../lib/api'
-import type { AdjustmentSuggestions } from '../lib/api'
+import { gsap, useGSAP } from '../lib/gsap'
 import TaskBoard from './TaskBoard'
+import AgentQuestions from './AgentQuestions'
+import ParticleField from './ParticleField'
 
 const STAGE_ICONS: Record<string, { icon: string; desc: string }> = {
   requirement_analysis: { icon: '🔍', desc: 'Agent 分析需求、澄清模糊点、产出需求文档' },
@@ -31,12 +32,35 @@ const STAGE_STATUS_STYLES: Record<string, { bg: string; border: string; dot: str
 }
 
 function StageConnector({ status }: { status: string }) {
+  const lineRef = useRef<HTMLDivElement>(null)
+
+  // active 状态的连接线 — 光点流动效果
+  useGSAP(
+    () => {
+      if (!lineRef.current || status !== 'active') return
+      gsap.to(lineRef.current, {
+        backgroundPosition: '0% 200%',
+        duration: 1.5,
+        repeat: -1,
+        ease: 'none',
+      })
+    },
+    { dependencies: [status] },
+  )
+
   return (
     <div className="flex justify-center py-1">
-      <div className={`w-0.5 h-8 rounded-full transition-all duration-700 ${
-        status === 'active' ? 'bg-gradient-to-b from-accent-cyan to-surface-600' :
-        status === 'completed' ? 'bg-accent-green' : 'bg-surface-700'
-      }`} />
+      <div
+        ref={lineRef}
+        className={`w-0.5 h-8 rounded-full transition-all duration-700 ${
+          status === 'active'
+            ? 'bg-gradient-to-b from-accent-cyan via-accent-teal to-accent-cyan'
+            : status === 'completed'
+              ? 'bg-accent-green'
+              : 'bg-surface-700'
+        }`}
+        style={status === 'active' ? { backgroundSize: '100% 200%', willChange: 'background-position' } : undefined}
+      />
     </div>
   )
 }
@@ -54,13 +78,15 @@ function AgentAvatar({ agent }: { agent: Agent }) {
 }
 
 function StageCard({
-  stage, isSelected, onClick, agents, compact,
+  stage, isSelected, onClick, agents, compact, index,
 }: {
-  stage: PipelineStage; isSelected: boolean; onClick: () => void; agents: Agent[]; compact?: boolean
+  stage: PipelineStage; isSelected: boolean; onClick: () => void; agents: Agent[]; compact?: boolean; index?: number
 }) {
+  const cardRef = useRef<HTMLDivElement>(null)
   const meta = getStageMeta(stage.key)
   const styles = STAGE_STATUS_STYLES[stage.status] || STAGE_STATUS_STYLES.pending
   const stageAgents = agents.filter((a) => stage.assignedAgents.includes(a.id))
+  const prevStatusRef = useRef(stage.status)
 
   const formatDuration = (start?: string, end?: string) => {
     if (!start) return null
@@ -72,9 +98,58 @@ function StageCard({
 
   const duration = formatDuration(stage.startedAt, stage.completedAt)
 
+  // 入场动画 — 交错从左滑入
+  useGSAP(
+    () => {
+      if (!cardRef.current || compact) return
+      gsap.from(cardRef.current, {
+        opacity: 0,
+        x: -30,
+        duration: 0.5,
+        delay: (index ?? 0) * 0.1,
+        ease: 'power2.out',
+      })
+    },
+    { dependencies: [compact] },
+  )
+
+  // 状态变化动画 — 弹性缩放 + 光弧闪过
+  useGSAP(
+    () => {
+      if (!cardRef.current) return
+      const prev = prevStatusRef.current
+      const curr = stage.status
+      if (prev !== curr) {
+        prevStatusRef.current = curr
+        // 弹性缩放
+        gsap.fromTo(
+          cardRef.current,
+          { scale: 0.97 },
+          { scale: 1, duration: 0.4, ease: 'back.out(2)' },
+        )
+        // 完成时绿色光弧闪过
+        if (curr === 'completed') {
+          gsap.fromTo(
+            cardRef.current,
+            { boxShadow: '0 0 0px rgba(63,185,80,0)' },
+            {
+              boxShadow: '0 0 20px rgba(63,185,80,0.5)',
+              duration: 0.6,
+              yoyo: true,
+              repeat: 1,
+              ease: 'power2.inOut',
+            },
+          )
+        }
+      }
+    },
+    { dependencies: [stage.status] },
+  )
+
   if (compact) {
     return (
       <div
+        ref={cardRef}
         onClick={onClick}
         className={`rounded-lg border px-3 py-2.5 cursor-pointer transition-all duration-200 group ${
           styles.bg} ${styles.border} ${
@@ -100,11 +175,13 @@ function StageCard({
 
   return (
     <div
+      ref={cardRef}
       onClick={onClick}
       className={`relative rounded-xl border p-5 cursor-pointer transition-all duration-300 group ${
         styles.bg} ${styles.border} ${
         isSelected ? 'shadow-glow-cyan' : 'hover:border-white/10 hover:bg-white/[0.02]'
       }`}
+      style={{ willChange: 'transform' }}
     >
       <div className="flex items-center gap-3 mb-3">
         <div className={`w-3 h-3 rounded-full shrink-0 ${styles.dot} relative`}>
@@ -151,7 +228,218 @@ function StageCard({
   )
 }
 
+/** 科技感空状态 — 粒子背景 + 打字机标题 + 按钮交错入场 */
+function EmptyState({
+  onCreateProject,
+  onOpenExample,
+  onOpenExisting,
+}: {
+  onCreateProject: () => void
+  onOpenExample: () => void
+  onOpenExisting: () => void
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const titleRef = useRef<HTMLHeadingElement>(null)
+  const iconRef = useRef<HTMLDivElement>(null)
+  const buttonsRef = useRef<HTMLDivElement>(null)
+
+  useGSAP(
+    () => {
+      // 图标浮动 + 光晕呼吸
+      gsap.to(iconRef.current, {
+        y: -8,
+        duration: 2.5,
+        repeat: -1,
+        yoyo: true,
+        ease: 'sine.inOut',
+      })
+      gsap.to(iconRef.current, {
+        boxShadow: '0 0 40px rgba(88,166,255,0.4)',
+        duration: 2,
+        repeat: -1,
+        yoyo: true,
+        ease: 'sine.inOut',
+      })
+
+      // 标题打字机效果
+      const titleText = '等待项目启动'
+      if (titleRef.current) {
+        titleRef.current.textContent = ''
+        const chars = titleText.split('')
+        const tl = gsap.timeline({ delay: 0.3 })
+        chars.forEach((_char, i) => {
+          tl.to(
+            titleRef.current,
+            {
+              duration: 0.05,
+              onComplete: () => {
+                if (titleRef.current) {
+                  titleRef.current.textContent = titleText.slice(0, i + 1)
+                }
+              },
+            },
+            i * 0.08,
+          )
+        })
+        // 光标闪烁
+        tl.to(titleRef.current, {
+          duration: 0.5,
+          repeat: 3,
+          yoyo: true,
+          onComplete: () => {
+            if (titleRef.current) {
+              titleRef.current.textContent = titleText
+            }
+          },
+        })
+      }
+
+      // 按钮交错入场
+      if (buttonsRef.current) {
+        const buttons = buttonsRef.current.querySelectorAll('.action-btn')
+        gsap.from(buttons, {
+          opacity: 0,
+          y: 30,
+          duration: 0.5,
+          stagger: 0.15,
+          delay: 0.6,
+          ease: 'back.out(1.4)',
+        })
+      }
+    },
+    { scope: containerRef },
+  )
+
+  // 按钮悬停效果 — 霓虹扫光
+  const handleBtnEnter = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const btn = e.currentTarget
+    gsap.to(btn, { scale: 1.03, duration: 0.2, ease: 'power2.out' })
+    // 添加扫光伪元素动画
+    btn.style.setProperty('--sweep', '0%')
+    gsap.to(btn, {
+      duration: 0.6,
+      onUpdate: function () {
+        const progress = this.progress() * 100
+        btn.style.setProperty('--sweep', `${progress}%`)
+      },
+    })
+  }
+
+  const handleBtnLeave = (e: React.MouseEvent<HTMLButtonElement>) => {
+    gsap.to(e.currentTarget, { scale: 1, duration: 0.2, ease: 'power2.out' })
+  }
+
+  // 按钮点击 — 涟漪 + 弹性缩放
+  const handleBtnClick = (cb: () => void) => (e: React.MouseEvent<HTMLButtonElement>) => {
+    const btn = e.currentTarget
+    gsap.to(btn, {
+      scale: 0.95,
+      duration: 0.1,
+      yoyo: true,
+      repeat: 1,
+      ease: 'power2.inOut',
+      onComplete: cb,
+    })
+  }
+
+  return (
+    <div ref={containerRef} className="relative flex flex-col items-center justify-center h-full text-surface-500 p-8 overflow-hidden">
+      {/* 粒子背景 */}
+      <ParticleField />
+
+      {/* 内容层 */}
+      <div className="relative z-10 flex flex-col items-center">
+        {/* 浮动图标 */}
+        <div
+          ref={iconRef}
+          className="text-6xl mb-6 opacity-30 rounded-2xl p-4"
+          style={{ willChange: 'transform' }}
+        >
+          ⚙️
+        </div>
+
+        {/* 打字机标题 */}
+        <h2 ref={titleRef} className="text-xl font-semibold text-surface-300 mb-2 min-h-[1.75rem]">
+          &nbsp;
+        </h2>
+
+        <p className="text-sm text-surface-500 mb-6">创建一个项目，Agent 团队将自动接管开发流程</p>
+
+        {/* 按钮组 */}
+        <div ref={buttonsRef} className="flex gap-3">
+          <button
+            onClick={handleBtnClick(onCreateProject)}
+            onMouseEnter={handleBtnEnter}
+            onMouseLeave={handleBtnLeave}
+            className="action-btn relative px-5 py-2.5 bg-accent-cyan text-white rounded-lg font-medium text-sm shadow-glow-cyan overflow-hidden"
+            style={{ willChange: 'transform' }}
+          >
+            <span className="relative z-10">🚀 启动新项目</span>
+            {/* 霓虹扫光层 */}
+            <div
+              className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent"
+              style={{ transform: 'translateX(calc(-100% + var(--sweep, 0%) * 2))' }}
+            />
+          </button>
+          <button
+            onClick={handleBtnClick(onOpenExisting)}
+            onMouseEnter={handleBtnEnter}
+            onMouseLeave={handleBtnLeave}
+            className="action-btn relative px-5 py-2.5 bg-accent-cyan/20 text-accent-cyan rounded-lg font-medium text-sm overflow-hidden"
+            style={{ willChange: 'transform' }}
+          >
+            <span className="relative z-10">📂 打开已有项目</span>
+            <div
+              className="absolute inset-0 bg-gradient-to-r from-transparent via-accent-cyan/10 to-transparent"
+              style={{ transform: 'translateX(calc(-100% + var(--sweep, 0%) * 2))' }}
+            />
+          </button>
+          <button
+            onClick={handleBtnClick(onOpenExample)}
+            onMouseEnter={handleBtnEnter}
+            onMouseLeave={handleBtnLeave}
+            className="action-btn relative px-5 py-2.5 bg-surface-600 text-surface-300 rounded-lg font-medium text-sm overflow-hidden"
+            style={{ willChange: 'transform' }}
+          >
+            <span className="relative z-10">📂 打开示例项目</span>
+            <div
+              className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent"
+              style={{ transform: 'translateX(calc(-100% + var(--sweep, 0%) * 2))' }}
+            />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** 数字滚动动画组件 */
+function AnimatedNumber({ value, className }: { value: number; className?: string }) {
+  const ref = useRef<HTMLSpanElement>(null)
+
+  useGSAP(
+    () => {
+      if (!ref.current) return
+      const obj = { value: 0 }
+      gsap.to(obj, {
+        value,
+        duration: 1,
+        ease: 'power2.out',
+        onUpdate: () => {
+          if (ref.current) {
+            ref.current.textContent = Math.round(obj.value).toString()
+          }
+        },
+      })
+    },
+    { dependencies: [value] },
+  )
+
+  return <span ref={ref} className={className}>0</span>
+}
+
 function ProjectStats({ pipeline }: { pipeline: Pipeline }) {
+  const containerRef = useRef<HTMLDivElement>(null)
   const completed = pipeline.stages.filter((s) => s.status === 'completed').length
   const total = pipeline.stages.length
   const inProgress = pipeline.stages.filter((s) => s.status === 'active').length
@@ -160,29 +448,49 @@ function ProjectStats({ pipeline }: { pipeline: Pipeline }) {
     ? Math.round((Date.now() - new Date(pipeline.stages[0].startedAt).getTime()) / 60000)
     : 0
 
+  // 卡片交错入场
+  useGSAP(
+    () => {
+      if (!containerRef.current) return
+      const cards = containerRef.current.querySelectorAll('.stat-card')
+      gsap.from(cards, {
+        opacity: 0,
+        y: 15,
+        duration: 0.4,
+        stagger: 0.1,
+        ease: 'power2.out',
+      })
+    },
+    { scope: containerRef },
+  )
+
   return (
-    <div className="grid grid-cols-2 gap-3">
-      <div className="bg-background-card border border-white/5 rounded-lg p-4">
+    <div ref={containerRef} className="grid grid-cols-2 gap-3">
+      <div className="stat-card bg-background-card border border-white/5 rounded-lg p-4">
         <div className="text-xs text-surface-500 mb-1">阶段进度</div>
-        <div className="text-2xl font-bold text-surface-100 font-mono">{completed}/{total}</div>
+        <div className="text-2xl font-bold text-surface-100 font-mono">
+          <AnimatedNumber value={completed} />/{total}
+        </div>
         <div className="text-xs text-surface-500 mt-1">已完成阶段</div>
       </div>
-      <div className="bg-background-card border border-white/5 rounded-lg p-4">
+      <div className="stat-card bg-background-card border border-white/5 rounded-lg p-4">
         <div className="text-xs text-surface-500 mb-1">已用时间</div>
         <div className="text-2xl font-bold text-surface-100 font-mono">
           {elapsed < 60 ? `${elapsed}m` : `${Math.floor(elapsed / 60)}h ${elapsed % 60}m`}
         </div>
         <div className="text-xs text-surface-500 mt-1">自项目启动</div>
       </div>
-      <div className="bg-background-card border border-white/5 rounded-lg p-4">
+      <div className="stat-card bg-background-card border border-white/5 rounded-lg p-4">
         <div className="text-xs text-surface-500 mb-1">进行中</div>
-        <div className="text-2xl font-bold text-accent-orange font-mono">{inProgress}</div>
+        <div className="text-2xl font-bold text-accent-orange font-mono">
+          <AnimatedNumber value={inProgress} />
+        </div>
         <div className="text-xs text-surface-500 mt-1">个阶段正在执行</div>
       </div>
-      <div className="bg-background-card border border-white/5 rounded-lg p-4">
+      <div className="stat-card bg-background-card border border-white/5 rounded-lg p-4">
         <div className="text-xs text-surface-500 mb-1">阻塞</div>
         <div className={`text-2xl font-bold font-mono ${blocked > 0 ? 'text-accent-red' : 'text-surface-100'}`}>
-          {blocked}
+          <AnimatedNumber value={blocked} />
         </div>
         <div className="text-xs text-surface-500 mt-1">{blocked > 0 ? '需关注' : '无阻塞'}</div>
       </div>
@@ -203,57 +511,9 @@ export default function PipelineView({ projectId, onCreateProject, onOpenExample
   const agents = useStore((s) => s.agentsByProject[pid] ?? [])
   const workspacePath = useStore((s) => s.workspacePaths[pid] ?? null)
   const addLog = useStore((s) => s.addLog)
+  const questions = useStore((s) => s.questionsByProject[pid] ?? [])
+  const setQuestions = useStore((s) => s.setQuestions)
   const [selectedStage, setSelectedStage] = useState<string | null>(null)
-  const [showAdjust, setShowAdjust] = useState(false)
-  const [adjustLoading, setAdjustLoading] = useState(false)
-  const [adjustResult, setAdjustResult] = useState<AdjustmentSuggestions | null>(null)
-  const [adjustApplied, setAdjustApplied] = useState(false)
-  const [applyLoading, setApplyLoading] = useState(false)
-
-  const setPipeline = useStore((s) => s.setPipeline)
-
-  // Reset adjustment state when switching projects
-  useEffect(() => {
-    setAdjustResult(null)
-    setShowAdjust(false)
-    setAdjustApplied(false)
-  }, [pid])
-
-  const handleApplyAdjustment = async () => {
-    if (!pipeline || !adjustResult?.final_stages?.length) return
-    setApplyLoading(true)
-    try {
-      // Call backend to validate/normalize the stages
-      const result = await applyPipelineAdjustment('custom', adjustResult as unknown as Record<string, unknown>)
-      const newStages: PipelineStage[] = result.stages.map((s, i) => ({
-        key: s.key,
-        label: s.label,
-        status: (i === 0 ? 'active' : 'pending') as PipelineStage['status'],
-        assignedAgents: pipeline.stages[0]?.assignedAgents || agents.map(a => a.id),
-        artifacts: s.expected_artifact ? [s.expected_artifact] : [],
-        startedAt: i === 0 ? new Date().toISOString() : undefined,
-      }))
-      const updatedPipeline: Pipeline = {
-        ...pipeline,
-        currentStage: newStages[0]?.key || pipeline.currentStage,
-        stages: newStages,
-        progress: 0,
-      }
-      setPipeline(pid, updatedPipeline)
-      // Persist adjusted stages to backend (DB + workspace)
-      try {
-        await updatePipelineStages(pipeline.id, result.stages, pid)
-      } catch {
-        addLog(pid, { level: 'warn', source: 'pipeline', message: '后端保存阶段失败，页面刷新后需重新调整' })
-      }
-      addLog(pid, { level: 'success', source: 'pipeline', message: `已应用 AI 建议: Pipeline 阶段调整为 ${newStages.map(s => s.label).join(' → ')}` })
-      setAdjustApplied(true)
-    } catch (err) {
-      addLog(pid, { level: 'error', source: 'pipeline', message: `应用阶段调整失败: ${err instanceof Error ? err.message : '未知错误'}` })
-    } finally {
-      setApplyLoading(false)
-    }
-  }
 
   const handleStageClick = (stageKey: string) => {
     if (selectedStage === stageKey) {
@@ -266,33 +526,7 @@ export default function PipelineView({ projectId, onCreateProject, onOpenExample
   }
 
   if (!pipeline) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-surface-500 p-8">
-        <div className="text-6xl mb-6 opacity-30">⚙️</div>
-        <h2 className="text-xl font-semibold text-surface-300 mb-2">等待项目启动</h2>
-        <p className="text-sm text-surface-500 mb-6">创建一个项目，Agent 团队将自动接管开发流程</p>
-        <div className="flex gap-3">
-          <button
-            onClick={onCreateProject}
-            className="px-5 py-2.5 bg-accent-cyan text-white rounded-lg font-medium text-sm hover:bg-accent-cyan/90 transition-all shadow-glow-cyan"
-          >
-            🚀 启动新项目
-          </button>
-          <button
-            onClick={onOpenExisting}
-            className="px-5 py-2.5 bg-accent-cyan/20 text-accent-cyan rounded-lg font-medium text-sm hover:bg-accent-cyan/30 transition-all"
-          >
-            📂 打开已有项目
-          </button>
-          <button
-            onClick={onOpenExample}
-            className="px-5 py-2.5 bg-surface-600 text-surface-300 rounded-lg font-medium text-sm hover:bg-surface-500 transition-all"
-          >
-            📂 打开示例项目
-          </button>
-        </div>
-      </div>
-    )
+    return <EmptyState onCreateProject={onCreateProject} onOpenExample={onOpenExample} onOpenExisting={onOpenExisting} />
   }
 
   const activeStageIdx = pipeline.stages.findIndex((s) => s.key === pipeline.currentStage)
@@ -311,6 +545,11 @@ export default function PipelineView({ projectId, onCreateProject, onOpenExample
           <span className="text-sm font-medium text-surface-200">{pipeline.name}</span>
           <span className="text-surface-600">·</span>
           <span className="text-sm text-surface-500">阶段 {activeStageIdx + 1}/{pipeline.stages.length}</span>
+          {questions.length > 0 && (
+            <span className="text-xs px-1.5 py-0.5 rounded bg-accent-red/20 text-accent-red font-medium">
+              {questions.length} 个待答复
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3">
           {workspacePath && (
@@ -340,99 +579,18 @@ export default function PipelineView({ projectId, onCreateProject, onOpenExample
               ▶ 恢复执行
             </button>
           )}
-          {pipeline.currentStage === pipeline.stages[0]?.key && (
-            <button
-              onClick={async () => {
-                setShowAdjust(!showAdjust)
-                if (!adjustResult && !adjustLoading) {
-                  setAdjustLoading(true)
-                  try {
-                    const result = await adjustPipelineTemplate(
-                      pipeline.name,
-                      `Pipeline stages: ${pipeline.stages.map(s => s.label).join(' → ')}`,
-                      pipeline.stages.length > 0 ? 'custom' : 'web_application',
-                    )
-                    setAdjustResult(result)
-                  } catch {
-                    setAdjustResult(null)
-                  } finally {
-                    setAdjustLoading(false)
-                  }
-                }
-              }}
-              className="text-xs px-2 py-1 rounded bg-accent-purple/20 text-accent-purple hover:bg-accent-purple/30 transition-colors"
-            >
-              {adjustLoading ? '分析中...' : showAdjust ? '收起建议' : 'AI 建议调整阶段'}
-            </button>
-          )}
         </div>
       </div>
 
-      {/* LLM Adjustment Panel */}
-      {showAdjust && (
-        <div className="px-5 py-3 border-b border-white/5 bg-accent-purple/5">
-          {adjustLoading ? (
-            <div className="flex items-center gap-2 text-sm text-surface-400">
-              <div className="animate-spin w-4 h-4 border-2 border-accent-purple border-t-transparent rounded-full" />
-              AI 正在分析项目需求，建议 Pipeline 阶段调整...
-            </div>
-          ) : adjustResult ? (
-            <div className="text-sm space-y-2">
-              <div className="text-surface-200 font-medium">
-                AI 建议：{adjustResult.analysis}
-              </div>
-              {adjustResult.changes && (
-                <div className="flex flex-wrap gap-1.5 text-xs">
-                  {adjustResult.changes.add?.length > 0 && (
-                    <span className="text-accent-green">+{adjustResult.changes.add.length} 新增阶段</span>
-                  )}
-                  {adjustResult.changes.remove?.length > 0 && (
-                    <span className="text-accent-red">-{adjustResult.changes.remove.length} 移除阶段</span>
-                  )}
-                  {adjustResult.changes.reorder?.length > 0 && (
-                    <span className="text-accent-cyan">↔ {adjustResult.changes.reorder.length} 调整顺序</span>
-                  )}
-                  {adjustResult.changes.rename?.length > 0 && (
-                    <span className="text-accent-orange">✎ {adjustResult.changes.rename.length} 重命名</span>
-                  )}
-                  {!adjustResult.changes.add?.length && !adjustResult.changes.remove?.length && !adjustResult.changes.reorder?.length && !adjustResult.changes.rename?.length && (
-                    <span className="text-surface-400">无需调整，当前阶段已是最佳方案</span>
-                  )}
-                </div>
-              )}
-              {adjustResult.final_stages?.length > 0 && (
-                <div className="flex items-center gap-1.5 flex-wrap mt-1">
-                  <span className="text-xs text-surface-500">建议阶段：</span>
-                  {adjustResult.final_stages.map((s, i) => (
-                    <span key={s.key} className="inline-flex items-center gap-1">
-                      {i > 0 && <span className="text-surface-600">→</span>}
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-surface-600/50 text-surface-300">
-                        {s.label}
-                      </span>
-                    </span>
-                  ))}
-                </div>
-              )}
-              {adjustApplied ? (
-                <span className="text-xs text-accent-green">已应用 AI 建议，Pipeline 阶段已更新。</span>
-              ) : (
-                <div className="flex items-center gap-2 mt-1">
-                  <button
-                    onClick={handleApplyAdjustment}
-                    disabled={applyLoading || !adjustResult?.final_stages?.length}
-                    className="text-xs px-2.5 py-1 rounded bg-accent-cyan/20 text-accent-cyan hover:bg-accent-cyan/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {applyLoading ? '应用中...' : '应用建议'}
-                  </button>
-                  <span className="text-xs text-surface-500">点击将 AI 建议的阶段应用到当前 Pipeline</span>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="text-sm text-surface-400">LLM 分析失败，请稍后重试</div>
-          )}
-        </div>
-      )}
+      {/* Agent Questions */}
+      <AgentQuestions
+        projectId={pid}
+        pipelineId={pipeline.id}
+        questions={questions}
+        onResponded={() => {
+          setQuestions(pid, [])
+        }}
+      />
 
       {/* Content */}
       <div className="flex-1 overflow-hidden flex">
@@ -481,6 +639,7 @@ export default function PipelineView({ projectId, onCreateProject, onOpenExample
                       isSelected={false}
                       onClick={() => handleStageClick(stage.key)}
                       agents={agents}
+                      index={idx}
                     />
                     {idx < pipeline.stages.length - 1 && <StageConnector status={stage.status} />}
                   </div>

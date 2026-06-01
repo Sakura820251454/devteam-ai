@@ -636,6 +636,12 @@ export async function getActivePipeline(projectId: string): Promise<Record<strin
   return data.pipeline || null
 }
 
+export async function listPipelines(projectId: string): Promise<{ pipelines: Array<Record<string, unknown>> }> {
+  const response = await fetch(`${API_BASE}/pipelines/?project_id=${encodeURIComponent(projectId)}`)
+  if (!response.ok) throw new Error('获取流水线列表失败')
+  return response.json()
+}
+
 export async function getPipeline(pipelineId: string): Promise<Record<string, unknown>> {
   const response = await fetch(`${API_BASE}/pipelines/${pipelineId}`)
   if (!response.ok) throw new Error('获取流水线失败')
@@ -814,6 +820,20 @@ export async function updatePipelineStages(
   return response.json()
 }
 
+export async function confirmPipelineStages(
+  pipelineId: string,
+  stages: StageAdjustment[],
+  projectId?: string,
+): Promise<{ status: string; stages: StageAdjustment[] }> {
+  const response = await fetch(`${API_BASE}/pipelines/${pipelineId}/confirm-stages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stages, project_id: projectId || undefined }),
+  })
+  if (!response.ok) throw new Error('确认流水线阶段失败')
+  return response.json()
+}
+
 export async function retryTaskWithFeedback(taskId: string, agentId: string): Promise<{ status: string; error?: string }> {
   const response = await fetch(`${API_BASE}/execution/tasks/${taskId}/retry-with-feedback?agent_id=${encodeURIComponent(agentId)}`, {
     method: 'POST',
@@ -829,6 +849,51 @@ export async function getArtifactStatus(projectId: string, stages: Array<Record<
     body: JSON.stringify({ stages }),
   })
   if (!response.ok) throw new Error('获取产出物状态失败')
+  return response.json()
+}
+
+export interface InterventionItem {
+  type: string
+  task_id?: string | null
+  task_title?: string
+  agent_name?: string
+  question?: string
+  context?: string
+  options?: string
+  risk_level?: string
+  message?: string
+  agent_id?: string | null
+  timestamp: string
+}
+
+export interface AgentQuestion {
+  type: 'question_for_user'
+  task_id: string | null
+  task_title: string
+  agent_name: string
+  question: string
+  context: string
+  options: string
+  timestamp: string
+}
+
+export async function getInterventionQueue(): Promise<{ queue: InterventionItem[] }> {
+  const response = await fetch(`${API_BASE}/pipelines/interventions/queue`)
+  if (!response.ok) throw new Error('获取干预队列失败')
+  return response.json()
+}
+
+export async function respondToAgent(
+  pipelineId: string,
+  taskId: string | null,
+  answer: string,
+): Promise<{ status: string; task_id: string | null }> {
+  const response = await fetch(`${API_BASE}/pipelines/${pipelineId}/respond-to-agent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId, answer }),
+  })
+  if (!response.ok) throw new Error('答复Agent失败')
   return response.json()
 }
 
