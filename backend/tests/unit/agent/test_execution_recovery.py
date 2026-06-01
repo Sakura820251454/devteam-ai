@@ -322,6 +322,7 @@ class TestPauseCancel:
         self.executor = AgentExecutor()
         self.task_board = task_board
         self.task = asyncio.run(task_board.create_task(
+            project_id="test-project",
             title="Pause Test Task",
             priority=Priority.MEDIUM
         ))
@@ -380,7 +381,7 @@ class TestPauseCancel:
     @pytest.mark.asyncio
     async def test_pause_all_pauses_running_tasks(self):
         """pause_all should pause all RUNNING tasks."""
-        task2 = await self.task_board.create_task(title="Task 2", priority=Priority.MEDIUM)
+        task2 = await self.task_board.create_task(project_id="test-project", title="Task 2", priority=Priority.MEDIUM)
         await self.task_board.change_status(task2.id, TaskStatus.TODO)
         await self.task_board.change_status(task2.id, TaskStatus.IN_PROGRESS)
 
@@ -402,6 +403,63 @@ class TestPauseCancel:
         assert self.executor._running_tasks[self.task.id]["status"] == ExecutionStatus.PAUSED
         assert self.executor._running_tasks[task2.id]["status"] == ExecutionStatus.PAUSED
         assert self.executor.is_global_paused() is True
+
+    @pytest.mark.asyncio
+    async def test_pause_project_only_pauses_project_tasks(self):
+        """pause_project should only pause tasks belonging to the specified project."""
+        # 创建另一个项目的任务
+        other_task = await self.task_board.create_task(project_id="other-project", title="Other Task")
+        await self.task_board.change_status(other_task.id, TaskStatus.TODO)
+        await self.task_board.change_status(other_task.id, TaskStatus.IN_PROGRESS)
+
+        self._setup_running_task("agent1", ExecutionStatus.RUNNING)
+        self.executor._running_tasks[other_task.id] = {
+            "agent_id": "agent2",
+            "status": ExecutionStatus.RUNNING,
+            "started_at": datetime.now(),
+            "last_heartbeat": datetime.now(),
+            "current_step": 0,
+            "total_steps": 1,
+        }
+        self.executor._agent_tasks["agent2"] = other_task.id
+        self.executor._cancellation_tokens[self.task.id] = asyncio.Event()
+        self.executor._cancellation_tokens[other_task.id] = asyncio.Event()
+
+        await self.executor.pause_project("test-project")
+
+        # test-project 的任务应该被暂停
+        assert self.executor._running_tasks[self.task.id]["status"] == ExecutionStatus.PAUSED
+        assert self.executor.is_project_paused("test-project") is True
+
+        # other-project 的任务不应该被暂停
+        assert self.executor._running_tasks[other_task.id]["status"] == ExecutionStatus.RUNNING
+        assert self.executor.is_project_paused("other-project") is False
+
+    @pytest.mark.asyncio
+    async def test_pause_all_changes_task_board_status(self):
+        """pause_all should change task board status to PAUSED."""
+        self._setup_running_task()
+        self.executor._cancellation_tokens[self.task.id] = asyncio.Event()
+
+        await self.executor.pause_all()
+
+        # 验证 task_board 中的任务状态已更改
+        task = self.task_board.get_task(self.task.id)
+        assert task.status == TaskStatus.PAUSED
+
+    @pytest.mark.asyncio
+    async def test_cancel_execution_changes_task_board_status(self):
+        """cancel_execution should change task board status to CANCELLED."""
+        self._setup_running_task()
+        self.executor._cancellation_tokens[self.task.id] = asyncio.Event()
+        self.executor._async_task_handles[self.task.id] = asyncio.create_task(asyncio.sleep(0))
+
+        result = await self.executor.cancel_execution(self.task.id)
+        assert result is True
+
+        # 验证 task_board 中的任务状态已更改
+        task = self.task_board.get_task(self.task.id)
+        assert task.status == TaskStatus.CANCELLED
 
 
 # ============================================================
@@ -486,6 +544,7 @@ class TestResumeExecution:
         self.executor = AgentExecutor()
         self.task_board = task_board
         self.task = asyncio.run(task_board.create_task(
+            project_id="test-project",
             title="Resume Test Task",
             priority=Priority.MEDIUM
         ))
@@ -536,6 +595,7 @@ class TestFallbackExecution:
         self.executor = AgentExecutor()
         self.task_board = task_board
         self.task = asyncio.run(task_board.create_task(
+            project_id="test-project",
             title="Fallback Test",
             description="Test fallback execution",
             priority=Priority.MEDIUM
@@ -613,6 +673,7 @@ class TestExecuteTaskWithSteps:
         self.executor._step_timeout = 1.0
         self.task_board = task_board
         self.task = asyncio.run(task_board.create_task(
+            project_id="test-project",
             title="Multi-step Test",
             description="Test multi-step execution",
             priority=Priority.MEDIUM
@@ -766,6 +827,7 @@ class TestExecuteTaskWithAgent:
         self.executor = AgentExecutor()
         self.task_board = task_board
         self.task = asyncio.run(task_board.create_task(
+            project_id="test-project",
             title="Integration Test Task",
             description="Full integration test",
             priority=Priority.MEDIUM
@@ -783,6 +845,7 @@ class TestExecuteTaskWithAgent:
                 "name": "Test Agent",
                 "system_prompt": "You are helpful.",
             }
+            mock_agent_svc.get_agent_project.return_value = None
 
             self.executor._running_tasks = {}
 
@@ -822,6 +885,7 @@ class TestExecuteTaskWithAgent:
                 "name": "Test Agent",
                 "system_prompt": "You are helpful.",
             }
+            mock_agent_svc.get_agent_project.return_value = None
 
             self.executor._running_tasks = {}
 
