@@ -38,7 +38,7 @@
 | # | 标记内容 |
 |---|---------|
 | 10 | self-learning.md：模式发现 ❌、复盘流程 ⚠️、SKILL.md 路径 ⚠️ |
-| 11 | collaboration.md：Agent 间纠错建议 ❌ |
+| 11 | collaboration.md：Agent 间纠错建议 ✅ 已修复（2026-06-01） |
 | 12 | memory-system.md：复盘手动触发 ✅ 已修复（2026-06-01） |
 
 ### P3 — 目录结构

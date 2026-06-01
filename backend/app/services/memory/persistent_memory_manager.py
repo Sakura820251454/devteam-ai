@@ -287,7 +287,59 @@ class PersistentMemoryManager:
                 logger.warning("晋升后更新向量索引失败: %s", memory_id, exc_info=True)
 
         return True
-    
+
+    async def store_shared_memory(
+        self,
+        content: str,
+        tags: List[str] = None,
+        source: str = "review",
+        metadata: Dict[str, Any] = None,
+    ) -> PydanticMemoryEntry:
+        """
+        存储共享记忆 — 跨 Agent 可检索。
+
+        用于存储复盘产出、技术知识、最佳实践等，
+        任何 Agent 都可以通过 search_shared_memories 检索。
+        """
+        return await self.add_memory(
+            agent_id="shared",
+            content=content,
+            level=MemoryLevel.LONG_TERM,
+            tags=tags or [],
+            source=source,
+            metadata=metadata,
+        )
+
+    async def search_shared_memories(
+        self,
+        query: str,
+        max_results: int = 5,
+    ) -> List[PydanticMemoryEntry]:
+        """
+        搜索共享记忆。
+
+        从 agent_id="shared" 的记忆中检索相关内容。
+        """
+        # 先尝试语义检索
+        if self.use_semantic_search:
+            try:
+                retriever = await get_semantic_retriever()
+                results = await retriever.search(query, max_results=max_results)
+                if results:
+                    ids = [r.memory_id for r in results]
+                    memories = []
+                    for mid in ids:
+                        mem = await self.get_memory(mid)
+                        if mem and mem.agent_id == "shared":
+                            memories.append(mem)
+                    if memories:
+                        return memories
+            except Exception:
+                logger.warning("共享记忆语义检索失败，回退到关键词", exc_info=True)
+
+        # 回退到关键词检索
+        return await self._keyword_retrieve("shared", query, None, max_results)
+
     async def _keyword_retrieve(
         self,
         agent_id: str,

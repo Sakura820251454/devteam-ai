@@ -102,7 +102,7 @@ Agent 执行出错时，系统自动提供：
 
 不瞎猜，基于共享上下文修正。
 
-> **⚠️ 实现状态**：前三项已实现（`_build_upstream_manifest` 方法）。"其他 Agent 的纠错建议"未实现。
+> **✅ 实现状态**：四项全部实现。前三项通过 `_build_upstream_manifest` 方法，纠错建议通过 `_collect_correction_suggestions` 方法（任务失败时向其他 Agent 收集修正建议，存入任务评论）。
 
 ---
 

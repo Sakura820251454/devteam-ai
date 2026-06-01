@@ -222,7 +222,133 @@ class IntelligentLearningService:
             )
         
         return skill
-    
+
+    async def analyze_with_llm(
+        self,
+        agent_id: str,
+        task_description: str,
+        execution_logs: str,
+        success: str = "success",
+    ) -> Optional[Dict[str, Any]]:
+        """
+        用 LLM 分析执行轨迹，提取深层经验教训。
+
+        Args:
+            agent_id: Agent ID
+            task_description: 任务描述
+            execution_logs: 执行日志文本
+            success: 成功状态
+
+        Returns:
+            LLM 分析结果，包含 success_factors, pitfalls, key_decisions,
+            improvement_suggestions, reusable_pattern
+        """
+        try:
+            from app.services.shared.prompt_registry import registry
+            from app.services.llm.llm_service import llm_service
+            from app.core.llm import Message as LLMMessage
+
+            success_map = {"success": "成功", "failure": "失败", "partial": "部分成功"}
+            prompt = registry.render("learning.trajectory_analysis", {
+                "task_description": task_description[:500],
+                "success_status": success_map.get(success, success),
+                "agent_id": agent_id,
+                "execution_logs": execution_logs[:3000],
+            })
+
+            messages = [LLMMessage(role="user", content=prompt)]
+            resp = await llm_service.chat(messages, temperature=0.3, max_tokens=800)
+
+            import json
+            result = json.loads(resp.content.strip())
+            return result
+
+        except Exception as e:
+            logger.warning("LLM 轨迹分析失败: %s", e)
+            return None
+
+    async def generate_soul_suggestion(
+        self,
+        agent_id: str,
+        agent_name: str,
+        recent_trajectories: List[Dict[str, Any]],
+        soul_summary: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """
+        生成 soul.md 优化建议。
+
+        Args:
+            agent_id: Agent ID
+            agent_name: Agent 名称
+            recent_trajectories: 近期执行记录
+            soul_summary: 当前 soul.md 摘要
+
+        Returns:
+            LLM 生成的优化建议
+        """
+        try:
+            from app.services.shared.prompt_registry import registry
+            from app.services.llm.llm_service import llm_service
+            from app.core.llm import Message as LLMMessage
+
+            trajectories_text = "\n".join(
+                f"- [{t.get('status', '?')}] {t.get('task', '')[:100]}: {t.get('error', '')[:200]}"
+                for t in recent_trajectories[-10:]
+            )
+
+            prompt = registry.render("learning.soul_optimization", {
+                "agent_name": agent_name,
+                "recent_trajectories": trajectories_text[:2000],
+                "soul_summary": soul_summary[:1000] if soul_summary else "（无摘要）",
+            })
+
+            messages = [LLMMessage(role="user", content=prompt)]
+            resp = await llm_service.chat(messages, temperature=0.3, max_tokens=800)
+
+            import json
+            result = json.loads(resp.content.strip())
+            return result
+
+        except Exception as e:
+            logger.warning("生成 soul 优化建议失败: %s", e)
+            return None
+
+    async def generate_skill_markdown(
+        self,
+        experience: 'ExtractedExperience',
+    ) -> Optional[str]:
+        """
+        生成 SKILL.md 文件格式内容。
+
+        Args:
+            experience: 提取的经验
+
+        Returns:
+            SKILL.md 文件内容
+        """
+        try:
+            from app.services.shared.prompt_registry import registry
+            from app.services.llm.llm_service import llm_service
+            from app.core.llm import Message as LLMMessage
+
+            prompt = registry.render("learning.skill_markdown", {
+                "title": experience.title,
+                "description": experience.description[:500],
+                "category": experience.category,
+                "steps": "\n".join(f"{i+1}. {s}" for i, s in enumerate(experience.steps[:8])),
+                "success_factors": "\n".join(f"- {f}" for f in experience.success_factors[:5]),
+                "pitfalls": "\n".join(f"- {p}" for p in experience.pitfalls[:5]),
+            })
+
+            messages = [LLMMessage(role="user", content=prompt)]
+            resp = await llm_service.chat(messages, temperature=0.3, max_tokens=1000)
+
+            return resp.content.strip()
+
+        except Exception as e:
+            logger.warning("生成 SKILL.md 失败: %s", e)
+            return None
+
     async def recommend_skills(
         self,
         task_description: str,

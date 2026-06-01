@@ -1292,6 +1292,16 @@ class PipelineOrchestrator:
                         f"✓ 任务「{task.title}」完成 → REVIEW (Agent: {agent_name})")
                 else:
                     err_msg = result.get('error', 'Unknown')
+                    # 收集其他 Agent 的纠错建议
+                    suggestions = await self._collect_correction_suggestions(
+                        pipeline, task, agent_id, err_msg)
+                    if suggestions:
+                        suggestion_text = "\n".join(f"  - {s}" for s in suggestions)
+                        await task_board.add_comment(task_id,
+                            f"纠错建议:\n{suggestion_text}", "pipeline")
+                        pipeline.add_log("task_execution",
+                            f"收集到 {len(suggestions)} 条纠错建议 — 任务「{task.title}」")
+
                     await task_board.change_status(task_id, TaskStatus.CANCELLED, agent_id)
                     await task_board.add_comment(task_id,
                         f"执行失败: {err_msg}", "pipeline")
@@ -1391,6 +1401,46 @@ class PipelineOrchestrator:
         return registry.render("agent.executor.upstream_manifest", {
             "upstream_items": "\n\n".join(items),
         })
+
+    async def _collect_correction_suggestions(
+        self, pipeline: Pipeline, task, failed_agent_id: str, error_msg: str
+    ) -> List[str]:
+        """
+        Agent 间纠错建议：任务失败时，向同项目其他 Agent 收集修正建议。
+
+        每个 Agent 基于任务描述和错误信息给出简短建议，
+        存入任务评论供后续重试或重新分配时参考。
+        """
+        suggestions: List[str] = []
+        other_agents = [aid for aid in pipeline.agents if aid != failed_agent_id]
+
+        if not other_agents:
+            return suggestions
+
+        task_title = getattr(task, 'title', '未知任务')
+        task_desc = (getattr(task, 'description', '') or '')[:500]
+
+        for agent_id in other_agents[:3]:  # 最多问 3 个 Agent
+            agent_info = agent_service.get_agent(agent_id)
+            agent_name = agent_info.get("name", agent_id) if agent_info else agent_id
+
+            try:
+                prompt = (
+                    f"任务「{task_title}」执行失败，错误信息: {error_msg[:300]}\n\n"
+                    f"任务描述: {task_desc}\n\n"
+                    f"请用 1-2 句话给出你的修正建议。只说最关键的点，不要重复错误信息。"
+                )
+                from app.core.llm import Message as LLMMessage
+                llm_messages = [LLMMessage(role="user", content=prompt)]
+                resp = await llm_service.chat(llm_messages, temperature=0.3, max_tokens=200)
+                suggestion = resp.content.strip()
+
+                if suggestion:
+                    suggestions.append(f"[{agent_name}] {suggestion}")
+            except Exception as e:
+                logger.debug("获取 Agent %s 纠错建议失败: %s", agent_id, e)
+
+        return suggestions
 
     async def _assign_task_to_agent(self, task, pipeline: Pipeline) -> Optional[str]:
         """策略感知的 Agent 分配。核心流程：trait 匹配优先 → 队列兜底。"""
@@ -1901,20 +1951,32 @@ class PipelineOrchestrator:
             pipeline.add_log("learning", "学习服务不可用，跳过", "info")
             return
 
+        project = project_service.get_project(pipeline.project_id)
+        task_description = project.name if project else pipeline.name
+
+        # 统筹 Agent 汇总：如果有 coordinator，先由其生成全局复盘摘要
+        coordinator_id = pipeline.team_config.get("coordinatorId") or pipeline.context.get("elected_coordinator")
+        coordinator_summary = ""
+        if coordinator_id and coordinator_id in pipeline.agents:
+            coordinator_summary = await self._coordinator_review_summary(pipeline, coordinator_id)
+            if coordinator_summary:
+                pipeline.add_log("learning", f"统筹 Agent 复盘摘要已生成（{len(coordinator_summary)} 字）")
+
         for agent_id in pipeline.agents:
             agent = agent_service.get_agent(agent_id)
             if not agent:
                 continue
 
+            agent_name = agent.get("name", agent_id)
             decisions = self._extract_decisions_for_agent(pipeline, agent_id)
             if not decisions:
                 continue
 
-            project = project_service.get_project(pipeline.project_id)
+            # 1. 基础学习（原有流程）
             try:
                 skill = await learning.learn_from_task(
                     agent_id=agent_id,
-                    task_description=project.name if project else pipeline.name,
+                    task_description=task_description,
                     decisions=decisions,
                     outcomes={
                         "project_id": pipeline.project_id,
@@ -1933,6 +1995,41 @@ class PipelineOrchestrator:
                         pipeline.add_log("learning", f"growth.json 更新失败: {e}", "warning")
             except Exception as e:
                 pipeline.add_log("learning", f"Agent {agent_id} 学习失败: {e}", "warning")
+
+            # 2. LLM 轨迹分析 — 提取深层经验教训
+            try:
+                logs_text = "\n".join(
+                    f"[{getattr(entry, 'timestamp', '')}] {getattr(entry, 'message', str(entry))}"
+                    for entry in pipeline.logs[-30:]
+                )
+                llm_analysis = await learning.analyze_with_llm(
+                    agent_id=agent_id,
+                    task_description=task_description,
+                    execution_logs=logs_text,
+                    success="success",
+                )
+                if llm_analysis:
+                    pattern = llm_analysis.get("reusable_pattern", "")
+                    if pattern:
+                        pipeline.add_log("learning", f"[{agent_name}] 可复用模式: {pattern[:100]}")
+
+                    # 存入共享向量库
+                    await self._store_review_to_shared_memory(
+                        pipeline, agent_id, task_description, llm_analysis)
+            except Exception as e:
+                pipeline.add_log("learning", f"LLM 轨迹分析失败: {e}", "warning")
+
+        # 3. 生成 SKILL.md 文件（如果有成功经验）
+        try:
+            await self._generate_skill_files(pipeline, learning)
+        except Exception as e:
+            pipeline.add_log("learning", f"SKILL.md 生成失败: {e}", "warning")
+
+        # 4. 模式发现 — 从历史轨迹中发现可复用模式
+        try:
+            await self._discover_patterns(pipeline)
+        except Exception as e:
+            pipeline.add_log("learning", f"模式发现失败: {e}", "warning")
 
         # 手动晋升：将本次任务中高频使用的记忆晋升到更高层级
         await self._promote_key_memories(pipeline)
@@ -1997,6 +2094,187 @@ class PipelineOrchestrator:
                     "reasoning": "",
                 })
         return decisions
+
+    async def _coordinator_review_summary(
+        self, pipeline: Pipeline, coordinator_id: str
+    ) -> str:
+        """统筹 Agent 复盘汇总：由 coordinator 汇总整个项目的执行情况。"""
+        try:
+            from app.services.llm.llm_service import llm_service
+            from app.core.llm import Message as LLMMessage
+
+            # 构建任务执行摘要
+            task_summaries = []
+            for task_id in pipeline.task_ids:
+                task = task_board.get_task(task_id)
+                if task:
+                    status = task.status.value
+                    title = task.title
+                    task_summaries.append(f"- [{status}] {title}")
+
+            tasks_text = "\n".join(task_summaries) if task_summaries else "无任务记录"
+            logs_text = "\n".join(
+                f"- {getattr(entry, 'message', str(entry))[:150]}"
+                for entry in pipeline.logs[-20:]
+            )
+
+            prompt = (
+                f"你是项目的统筹 Agent。项目「{pipeline.name}」已执行完成，请汇总复盘。\n\n"
+                f"任务执行情况:\n{tasks_text}\n\n"
+                f"执行日志摘要:\n{logs_text}\n\n"
+                f"请用 3-5 句话总结：\n"
+                f"1. 整体执行效果\n"
+                f"2. 做得好的地方\n"
+                f"3. 需要改进的地方\n"
+                f"4. 对后续项目的建议"
+            )
+
+            messages = [LLMMessage(role="user", content=prompt)]
+            resp = await llm_service.chat(messages, temperature=0.3, max_tokens=500)
+            return resp.content.strip()
+
+        except Exception as e:
+            logger.warning("统筹 Agent 复盘汇总失败: %s", e)
+            return ""
+
+    async def _store_review_to_shared_memory(
+        self, pipeline: Pipeline, agent_id: str,
+        task_description: str, llm_analysis: Dict[str, Any]
+    ) -> None:
+        """将复盘产出存入共享向量库，供后续 Agent 检索。"""
+        try:
+            from app.services.memory.persistent_memory_manager import PersistentMemoryManager
+            manager = PersistentMemoryManager()
+
+            # 构建共享记忆内容
+            parts = [f"项目: {task_description}"]
+
+            pattern = llm_analysis.get("reusable_pattern", "")
+            if pattern:
+                parts.append(f"可复用模式: {pattern}")
+
+            factors = llm_analysis.get("success_factors", [])
+            if factors:
+                parts.append(f"成功因素: {', '.join(factors[:3])}")
+
+            pitfalls = llm_analysis.get("pitfalls", [])
+            if pitfalls:
+                parts.append(f"陷阱: {', '.join(pitfalls[:3])}")
+
+            suggestions = llm_analysis.get("improvement_suggestions", [])
+            if suggestions:
+                parts.append(f"改进建议: {', '.join(suggestions[:3])}")
+
+            content = "\n".join(parts)
+
+            await manager.store_shared_memory(
+                content=content,
+                tags=["review", "auto_generated"],
+                source="review",
+                metadata={
+                    "pipeline_id": pipeline.id,
+                    "project_id": pipeline.project_id,
+                    "agent_id": agent_id,
+                },
+            )
+            pipeline.add_log("learning", "复盘产出已存入共享向量库")
+        except Exception as e:
+            logger.warning("存入共享向量库失败: %s", e)
+
+    async def _discover_patterns(self, pipeline: Pipeline) -> None:
+        """从历史轨迹中发现可复用模式"""
+        from app.services.learning.pattern_discovery import pattern_discovery
+
+        # 构建轨迹数据（当前 pipeline + 历史数据）
+        trajectories = []
+
+        # 当前 pipeline 的任务
+        for task_id in pipeline.task_ids:
+            task = task_board.get_task(task_id)
+            if task:
+                trajectories.append({
+                    "task": task.title,
+                    "status": "success" if task.status == TaskStatus.DONE else "failure",
+                    "agent_id": task.metadata.get("assigned_agent", "") if task.metadata else "",
+                    "decisions": [],
+                    "error": "",
+                })
+
+        if len(trajectories) < 2:
+            return
+
+        patterns = await pattern_discovery.discover_patterns(trajectories)
+
+        if patterns:
+            for p in patterns:
+                pipeline.add_log("learning",
+                    f"[模式发现] {p.pattern_type}: {p.title} (置信度: {p.confidence:.0%})")
+
+            # 存入共享记忆
+            try:
+                from app.services.memory.persistent_memory_manager import PersistentMemoryManager
+                manager = PersistentMemoryManager()
+
+                for p in patterns:
+                    await manager.store_shared_memory(
+                        content=f"[{p.pattern_type}] {p.title}: {p.description}",
+                        tags=["pattern", p.pattern_type],
+                        source="pattern_discovery",
+                        metadata={"confidence": p.confidence},
+                    )
+            except Exception as e:
+                logger.warning("模式存入共享记忆失败: %s", e)
+
+    async def _generate_skill_files(self, pipeline: Pipeline, learning) -> None:
+        """生成 SKILL.md 文件 — 从 pipeline 经验中提取可复用技能文档"""
+        from pathlib import Path
+
+        project = project_service.get_project(pipeline.project_id)
+        task_description = project.name if project else pipeline.name
+
+        # 从 pipeline 日志构建简要经验
+        steps = []
+        for entry in pipeline.logs:
+            msg = getattr(entry, 'message', str(entry))
+            if msg and len(msg) > 10:
+                steps.append(msg[:150])
+            if len(steps) >= 8:
+                break
+
+        if not steps:
+            return
+
+        # 构造经验对象
+        from app.services.learning.extractor import ExtractedExperience
+        experience = ExtractedExperience(
+            id=f"exp_pipeline_{pipeline.id}",
+            title=task_description[:50],
+            description=f"项目 {task_description} 的执行经验",
+            category="general",
+            steps=steps,
+            key_decisions=[],
+            success_factors=["任务完成"],
+            pitfalls=[],
+            keywords=[],
+            source_trajectory_id=pipeline.id,
+        )
+
+        # 用 LLM 生成 SKILL.md 内容
+        skill_md = await learning.generate_skill_markdown(experience)
+        if not skill_md:
+            return
+
+        # 写入工作区
+        try:
+            from app.services.project.workspace_manager import workspace_manager
+            safe_name = re.sub(r'[\s\\/:*?"<>|]+', '_', task_description)[:30].strip('_')
+            workspace_manager.add_artifact(
+                pipeline.project_id, "skills",
+                f"SKILL_{safe_name}.md", skill_md,
+            )
+            pipeline.add_log("learning", f"生成 SKILL.md: SKILL_{safe_name}.md")
+        except Exception as e:
+            logger.warning("保存 SKILL.md 失败: %s", e)
 
     def _update_growth_file(self, agent: dict, skill, pipeline: Pipeline) -> None:
         """更新 agent 的 growth.json 文件"""
