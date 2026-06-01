@@ -24,7 +24,9 @@
 | **sequential** | 1-2 Agent 按序执行，无分工 | 简单线性任务 | "写 CSV 导出脚本"、"查 BGP 协议原理并总结" |
 | **hierarchical** | 统筹 Agent 拆解委派 → 工人执行 → 统筹 review 合并 | 复杂多模块项目 | "企业级 SaaS 平台"、"微服务系统重构" |
 | **discussion** | 圆桌讨论 → 达成共识 → 按结论执行 | 技术决策/方案设计 | "MySQL vs PostgreSQL 选型"、"前后端分离方案设计" |
-| **auto** | LLM 根据需求描述自动推荐 | 用户不确定时 | 需求分析阶段输出推荐策略 + 理由 |
+| **auto** | LLM 推荐整体策略（sequential/hierarchical/discussion），任务分配使用 FIFO 队列 | 用户不确定时 | 需求分析阶段输出推荐策略 + 理由 |
+
+**auto 策略说明**：LLM 分析需求后推荐使用哪种整体策略，但具体的任务分配（哪个 Agent 执行哪个任务）使用 FIFO 轮询队列，而非 LLM 逐个决策。
 
 ### hierarchical 模式下的统筹 Agent
 

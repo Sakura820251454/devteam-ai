@@ -1,7 +1,7 @@
 # 任务模型
 
-**版本**: v2.1
-**最后更新**: 2026-05-27
+**版本**: v3.0.0
+**最后更新**: 2026-05-29
 
 ---
 
@@ -40,13 +40,16 @@
 class TaskStatus(str, Enum):
     BACKLOG = "backlog"
     TODO = "todo"
+    BLOCKED = "blocked"                    # 等待依赖任务完成
     IN_PROGRESS = "in_progress"
     REVIEW = "review"
     DONE = "done"
     PAUSED = "paused"
     CANCELLED = "cancelled"
-    WAITING_FOR_USER = "waiting_for_user"  # v2.1: Agent 主动提问等待用户答复
+    WAITING_FOR_USER = "waiting_for_user"  # Agent 主动提问等待用户答复
 ```
+
+共 9 种状态。
 
 ---
 
@@ -66,14 +69,15 @@ class Priority(str, Enum):
 
 | 当前状态 | 可转换到 |
 |----------|----------|
-| BACKLOG | TODO, CANCELLED |
-| TODO | IN_PROGRESS, BACKLOG, CANCELLED |
-| IN_PROGRESS | REVIEW, PAUSED, TODO, WAITING_FOR_USER |
+| BACKLOG | TODO, BLOCKED, CANCELLED |
+| TODO | IN_PROGRESS, BLOCKED, BACKLOG, CANCELLED |
+| BLOCKED | TODO, IN_PROGRESS, CANCELLED, WAITING_FOR_USER |
+| IN_PROGRESS | REVIEW, PAUSED, BLOCKED, CANCELLED, WAITING_FOR_USER |
 | REVIEW | DONE, IN_PROGRESS |
-| PAUSED | IN_PROGRESS, TODO |
-| WAITING_FOR_USER | IN_PROGRESS, CANCELLED, BACKLOG |
+| PAUSED | IN_PROGRESS, CANCELLED |
 | DONE | REVIEW |
 | CANCELLED | BACKLOG |
+| WAITING_FOR_USER | IN_PROGRESS, CANCELLED, BACKLOG |
 
 ### WAITING_FOR_USER 状态说明（v2.1 新增）
 
