@@ -157,10 +157,10 @@ Reasonix 在 **单 Agent 场景下的缓存优化和成本控制方面** 达到�
 
 ## 相关文档
 
-- [Prompt 架构设计](./prompt-architecture.md)
-- [Pipeline 编排器模块](../../04-modules/backend/pipeline-orchestrator.md)
-- [LLM 服务模块](../../04-modules/backend/llm-service.md)
-- [执行流程设计](./execution-flow.md)
+- [Prompt 架构设计](../02-design/prompt-architecture.md)
+- [Pipeline 编排器模块](../04-modules/backend/pipeline-orchestrator.md)
+- [LLM 服务模块](../04-modules/backend/llm-service.md)
+- [执行流程设计](../02-design/execution-flow.md)
 
 ## 外部参考
 

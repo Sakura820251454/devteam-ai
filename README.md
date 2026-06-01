@@ -137,48 +137,45 @@ devteam-ai/
 │   ├── app/
 │   │   ├── api/          # API 路由
 │   │   ├── core/         # 核心配置
+│   │   ├── database/     # 数据库连接
 │   │   ├── models/       # 数据模型
+│   │   ├── prompts/      # Prompt 模板
 │   │   ├── services/     # 业务服务
 │   │   └── main.py       # 应用入口
-│   ├── agents/           # Agent 人才库（soul.md 文件）
-│   ├── tests/            # 单元测试
-│   ├── pyproject.toml    # Python 项目配置
-│   └── .env.example      # 环境变量示例
+│   ├── agents/           # Agent 人才库（soul.md + growth.json）
+│   ├── tests/            # 测试（unit/integration/e2e/scenarios）
+│   └── data/             # 运行时数据（audit、vector_index）
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── api/          # API 调用
 │   │   ├── components/   # React 组件
 │   │   ├── hooks/        # 自定义 Hooks
-│   │   ├── lib/          # 工具库
-│   │   └── pages/        # 页面
+│   │   ├── lib/          # API 客户端和工具函数
+│   │   ├── pages/        # 页面组件
+│   │   └── types/        # TypeScript 类型
 │   ├── package.json
 │   └── vite.config.ts
 │
-└── docs/                  # 文档中心
-    ├── README.md          # 文档入口
-    ├── CONTRIBUTING.md    # 贡献指南
-    ├── design/            # 设计文档
-    │   ├── 01-overview/   # 系统概述
-    │   ├── 02-core-concepts/  # 核心概念
-    │   ├── 03-features/   # 功能设计
-    │   └── 04-roadmap/    # 路线图
-    └── development/       # 开发文档
-        ├── 01-setup/      # 环境搭建
-        ├── 02-backend/    # 后端开发
-        ├── 03-frontend/   # 前端开发
-        ├── 04-testing/    # 测试
-        └── 05-deployment/ # 部署
+└── docs/                  # AI 项目记忆（不是产品文档）
+    ├── 01-project/        # 项目概览（vision、architecture）
+    ├── 02-design/         # 设计文档（任务、协作、记忆、学习）
+    ├── 03-development/    # 开发指南
+    ├── 04-modules/        # 模块文档
+    ├── 05-api/            # API 文档
+    ├── 06-roadmap/        # 路线图
+    ├── 07-contributing/   # 贡献指南
+    ├── 08-tracker/        # 差异追踪
+    └── process/           # 过程文档（决策、调研、变更）
 ```
 
 ## 📚 文档中心
 
-项目文档分为两大类：
+docs/ 是 Claude Code 的**项目记忆**，不是产品文档。分两类：
 
-| 文档类型 | 路径 | 用途 |
-|---------|------|------|
-| **设计文档** | `docs/design/` | 回答「为什么」和「是什么」，面向产品经理和架构师 |
-| **开发文档** | `docs/development/` | 回答「怎么做」，面向开发者 |
+| 文档类型 | 说明 | 更新规则 |
+|---------|------|---------|
+| **结果文档** | 反映当前状态（架构、模块、API） | 随代码同步更新 |
+| **过程文档** | 记录演进过程（决策、调研、变更） | 只增不改，保留历史 |
 
 详细文档请访问：[docs/README.md](docs/README.md)
 

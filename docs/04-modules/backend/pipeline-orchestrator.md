@@ -1,13 +1,13 @@
 # Pipeline 编排器模块
 
 **版本**: v3.0
-**最后更新**: 2026-05-28
+**最后更新**: 2026-05-29
 
 ---
 
 ## 概述
 
-- **功能定位**：项目 Pipeline 全生命周期编排，从需求分析到最终 Review。v2.2 新增阶段确认门控（Stage Review Gate）和 Agent 主动提问机制。
+- **功能定位**：项目 Pipeline 全生命周期编排，从需求分析到最终 Review。包含阶段确认门控（Stage Review Gate）和 Agent 主动提问机制。
 - **所属层级**：backend
 - **代码路径**：`backend/app/services/collaboration/pipeline_orchestrator.py`
 

@@ -1,8 +1,8 @@
 # 团队协作设计
 
-**版本**: v3.0  
-**日期**: 2026-05-19  
-**状态**: 设计阶段（Phase 1 已实现，Phase 2-4 待实现）
+**版本**: v3.1  
+**日期**: 2026-05-27  
+**状态**: Phase 1-4 已实现（v3.1 新增阶段确认门控和 Agent 主动提问机制）
 
 ---
 
@@ -28,9 +28,10 @@
 
 ### hierarchical 模式下的统筹 Agent
 
-- 从团队中选择一个 Agent 作为固定统筹者
-- 统筹 Agent 负责：任务拆解、角色分配、进度把控、成果集成
-- 未来自我进化模块中，统筹 Agent 的 soul.md 会根据项目经验持续更新
+- 统筹 Agent 不是固定角色，是协作模式下分配给某个 Agent 的任务
+- 从团队中选择一个 Agent 临时承担统筹职责
+- 统筹 Agent 负责：任务拆解、分配、进度把控、成果集成
+- 任务完成后回归普通 Agent 状态
 
 ---
 
@@ -99,6 +100,8 @@ Agent 执行出错时，系统自动提供：
 
 不瞎猜，基于共享上下文修正。
 
+> **⚠️ 实现状态**：前三项已实现（`_build_upstream_manifest` 方法）。"其他 Agent 的纠错建议"未实现。
+
 ---
 
 ## 6. 冲突仲裁
@@ -112,6 +115,75 @@ Agent 执行出错时，系统自动提供：
 
 ---
 
+## 7. Agent 主动提问机制（v3.1 新增）
+
+Agent 在讨论或任务执行中发现以下情况时，主动暂停并向用户提问：
+
+- 需求信息不完整（缺少公司背景、品牌色、目标用户等）
+- Agent 之间无法达成共识（分歧无法解决）
+- 缺少关键素材（Logo、文案、数据等）
+- 多种方案各有优劣，需要用户决策
+
+### 实现机制
+
+1. **标记解析**：Agent 输出中使用 `[ASK_USER]`（任务执行中）或 `[NEEDS_CLARIFICATION]`（讨论中）标记
+2. **状态转换**：相关任务自动转为 `WAITING_FOR_USER` 状态，Pipeline 暂停
+3. **前端展示**：问题出现在干预队列（`question_for_user` 类型），通过 `AgentQuestions` 组件渲染
+4. **用户答复**：通过 `POST /api/pipelines/{id}/respond-to-agent` API 答复，任务恢复执行
+
+### 提示词注入
+
+- 任务步骤提示词（`agent.executor.step_prompt.*`）：注入 `[ASK_USER]` 使用说明
+- 讨论发言提示词（`collaboration.discussion.agent_speak`）：注入 `[NEEDS_CLARIFICATION]` 指令
+- 需求合并提示词（`collaboration.pipeline.merge_analysis`）：注入"需要用户澄清"检测指令
+
+详见 [Agent 执行器](../04-modules/backend/agent-executor.md) 和 [Pipeline 编排器](../04-modules/backend/pipeline-orchestrator.md)。
+
+---
+
+## 8. 阶段确认门控（v3.1 新增）
+
+Pipeline 启动前，用户必须经过 **Stage Review** 确认阶段：
+
+1. 用户选择模板并配置 Agent 团队
+2. `StageReviewModal` 展示模板阶段，支持 AI 建议调整
+3. 用户确认后调用 `confirm-stages` API（设置 `stages_confirmed` 标记）
+4. `start_pipeline()` 检查确认标记后才允许启动
+
+这确保了用户在 Pipeline 执行前有机会审核和调整阶段结构，而非执行中途被动干预。
+
+---
+
+## 9. Token 预算管理
+
+SpeakingController 提供 token 使用量控制，防止单个会话消耗过多 token。
+
+### 核心机制
+
+- 每个会话设置 token 总预算（`total_budget`）
+- 实时追踪已使用 token 数量
+- 达到警告阈值（默认 80%）时发出警告
+- 预算耗尽时阻止继续发言
+
+代码位置：`backend/app/services/collaboration/speaking_controller.py`
+
+---
+
+## 10. Coordinator 选举机制
+
+在 hierarchical 协作模式下，系统通过讨论选举 Coordinator（统筹者）。
+
+### 选举流程
+
+1. 各 Agent 自荐，说明自己适合统筹的理由
+2. LLM 评估讨论记录，选出最佳 Coordinator
+3. 选出的 Coordinator 负责任务拆解、分配、进度把控
+4. 任务完成后回归普通 Agent 状态
+
+代码位置：`backend/app/services/collaboration/discussion_orchestrator.py`
+
+---
+
 ## 实现阶段
 
 | Phase | 内容 | 状态 |
@@ -120,6 +192,7 @@ Agent 执行出错时，系统自动提供：
 | Phase 2 | 协作策略 + Pipeline 模板后端模型 | ✅ 完成 |
 | Phase 3 | MetaGPT 三项增强（产出物、发布-订阅、反馈） | ✅ 完成 |
 | Phase 4 | LLM 动态调整 Pipeline 阶段 | ✅ 完成 |
+| Phase 5 | 阶段确认门控 + Agent 主动提问机制 | ✅ 完成 |
 
 ---
 
@@ -129,9 +202,11 @@ Agent 执行出错时，系统自动提供：
 - [通信机制](./communication.md)
 - [任务模型](./task-model.md)
 - [干预系统](./intervention.md)
-- [Agent 配置弹窗](../../04-modules/frontend/agent-config-modal.md)
+- [Agent 配置弹窗](/04-modules/frontend/agent-config-modal.md)
+- [Agent 执行器](/04-modules/backend/agent-executor.md)
+- [Pipeline 编排器](/04-modules/backend/pipeline-orchestrator.md)
 
 ---
 
-**最后更新**: 2026-05-19  
-**版本**: v3.0
+**最后更新**: 2026-05-27  
+**版本**: v3.1

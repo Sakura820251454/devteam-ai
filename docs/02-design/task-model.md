@@ -1,24 +1,26 @@
 # 任务模型与调度
 
-**版本**: v2.0  
-**日期**: 2026-05-15  
+**版本**: v3.0
+**日期**: 2026-05-29
 **状态**: 正式版  
 
 ---
 
-## 1. 灰盒模型
+## 1. 白盒模型
 
-任务调度整体是一个灰盒结构：
+任务调度整体是一个白盒结构：
 
 - **用户**：发布任务、验收最终结果
 - **框架 + Agent**：自行完成计划生成、任务拆解、分配和执行
-- **透明但默认不看**：用户可以随时查看内部执行细节，但频率极低
+- **内部细节用户都能掌控**：用户可以随时查看内部执行细节
 
 ---
 
 ## 2. Pipeline 流水线
 
-每个任务经过五个阶段：
+系统预设标准的 Pipeline 阶段，用户可直接使用预设阶段，也可让 LLM 根据任务特点调整后使用调整后的阶段。
+
+### 标准阶段
 
 ```
 需求分析 → 任务拆解 → DAG 并行执行 → Agent 互审 → 完成
@@ -32,7 +34,14 @@
 | **Agent 互审** | 执行 Agent 互相评估任务完成情况 | 执行 Agent |
 | **完成** | 用户验收最终结果 | 用户 |
 
-不同复杂程度的任务，Agent 可自行调整流程细节。
+### LLM 动态调整
+
+用户选择模板后，LLM 在需求分析阶段可以：
+- 增加/删除/重排阶段
+- 修改产出物
+- 模板是起点而非终点
+
+阶段间不一定需要用文档来传递信息，只是当文档传递信息的效率高时，可以通过文档传递信息。
 
 ---
 
@@ -42,10 +51,11 @@
 |------|------|----------|
 | `backlog` | 待排期 | todo, blocked, cancelled |
 | `todo` | 待执行 | in_progress, blocked, backlog, cancelled |
-| `blocked` | 等待依赖任务完成 | todo, in_progress, cancelled |
-| `in_progress` | 执行中 | review, paused, blocked, todo |
+| `blocked` | 等待依赖任务完成 | todo, in_progress, cancelled, waiting_for_user |
+| `in_progress` | 执行中 | review, paused, blocked, cancelled, waiting_for_user |
+| `waiting_for_user` | 等待用户确认 | in_progress, todo, cancelled |
 | `review` | 待互审 | done, in_progress |
-| `paused` | 已暂停 | in_progress, todo |
+| `paused` | 已暂停 | in_progress, cancelled |
 | `done` | 已完成 | review |
 | `cancelled` | 已取消 | backlog |
 
@@ -58,7 +68,7 @@
 | `id` | string | 任务唯一标识 |
 | `title` | string | 任务标题 |
 | `description` | string | 任务描述 |
-| `status` | enum | 任务状态（8 种） |
+| `status` | enum | 任务状态（9 种） |
 | `priority` | enum | 优先级（low/medium/high/urgent） |
 | `risk_level` | enum | 风险等级（low/medium/high/critical） |
 | `assigned_agents` | list | 分配的 Agent ID 列表 |
@@ -123,6 +133,35 @@
 
 ---
 
+## 9. Pipeline 状态机
+
+Pipeline 本身也有状态管理，用于控制整个流水线的生命周期。
+
+### Pipeline 状态
+
+| 状态 | 说明 |
+|------|------|
+| `IDLE` | 空闲，尚未启动 |
+| `RUNNING` | 执行中 |
+| `PAUSED` | 已暂停（用户干预或等待确认） |
+| `COMPLETED` | 已完成 |
+| `FAILED` | 执行失败 |
+| `CANCELLED` | 已取消 |
+
+### 状态转移
+
+```
+IDLE → RUNNING → COMPLETED
+           ↓
+         PAUSED → RUNNING
+           ↓
+         FAILED/CANCELLED
+```
+
+代码位置：`backend/app/services/collaboration/pipeline_orchestrator.py`
+
+---
+
 ## 相关文档
 
 - [Agent 模型](./agent-model.md)
@@ -132,5 +171,5 @@
 
 ---
 
-**最后更新**: 2026-05-15  
-**版本**: v2.1
+**最后更新**: 2026-05-29
+**版本**: v3.0

@@ -66,14 +66,6 @@ export default withMermaid(
           ]
         },
         {
-          text: '调研与规格',
-          items: [
-            { text: '记忆系统调研', link: '/02-design/memory-system-research' },
-            { text: 'Reasonix 调研', link: '/02-design/reasonix-research' },
-            { text: '设计规格书', link: '/02-design/design-spec' }
-          ]
-        },
-        {
           text: '架构决策',
           items: [
             { text: 'ADR 索引', link: '/02-design/decisions/' },

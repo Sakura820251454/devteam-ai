@@ -25,7 +25,7 @@ features:
     details: L1/L2/L3 三层私有记忆 + 独立共享向量存储。参考 CrewAI Cognitive Memory 模型，框架自动管理记忆编码、合并、检索、提取和遗忘。跨 Agent 知识共享需经讨论或统筹决策
   - icon: 📋
     title: 任务调度流水线
-    details: 需求分析 → 任务拆解 → DAG 并行执行 → Agent 互审 → 用户验收。统筹 Agent 决策分配，多维风险评级，灰盒模型让用户只需关注任务输入和结果验收
+    details: 需求分析 → 任务拆解 → DAG 并行执行 → Agent 互审 → 用户验收。统筹 Agent 决策分配，多维风险评级，白盒模型让用户掌控内部细节
   - icon: 🔄
     title: 多 Agent 协作
     details: 统筹 Agent 主持讨论、控制发言权，Agent 可举手请求发言。全员可见公共讨论，分歧先互相说服再上报用户裁决，机制上设定辩论轮次上限防止 Token 爆炸

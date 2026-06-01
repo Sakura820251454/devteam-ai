@@ -18,7 +18,7 @@
 ## 功能特性
 
 - 项目 CRUD
-- 五阶段流转（需求 → 设计 → 开发 → 测试 → 部署）
+- 阶段流转（预设标准阶段，LLM 可动态调整）
 - 团队配置管理
 - 任务拆解 Prompt 管理
 - 物理工作区创建与管理（v2.2 新增）
@@ -89,9 +89,13 @@ devteam-workspaces/{project_id}/
 
 ### ProjectPhase 枚举
 
+项目支持预设阶段模板，LLM 可根据任务特点动态调整。标准阶段：
+
 ```
 REQUIREMENT → DESIGN → DEVELOPMENT → TESTING → DEPLOYMENT
 ```
+
+用户也可选择其他模板或让 LLM 自定义阶段。
 
 ---
 
