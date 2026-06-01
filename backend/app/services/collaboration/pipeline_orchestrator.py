@@ -1013,18 +1013,24 @@ class PipelineOrchestrator:
         execution_levels = self._topological_sort(all_tasks)
 
         # 恢复时：预填充已完成/失败的任务
+        # 注意：必须用 pipeline 全部任务来填充，因为依赖可能跨阶段
         completed_tasks: set = set()
         failed_tasks: set = set()
         pre_completed = 0
         pre_failed = 0
-        for task_id, task in all_tasks.items():
+        for task_id in pipeline.task_ids:
+            task = task_board.get_task(task_id)
+            if not task:
+                continue
             status = getattr(task, 'status', None)
             if status in (TaskStatus.DONE, TaskStatus.REVIEW):
                 completed_tasks.add(task_id)
-                pre_completed += 1
+                if task_id in all_tasks:
+                    pre_completed += 1
             elif status == TaskStatus.CANCELLED:
                 failed_tasks.add(task_id)
-                pre_failed += 1
+                if task_id in all_tasks:
+                    pre_failed += 1
 
         pipeline.add_log("task_execution",
             f"DAG 任务执行启动 — 总任务: {len(pipeline.task_ids)}, "
