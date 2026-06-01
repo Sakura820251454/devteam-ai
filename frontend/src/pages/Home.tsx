@@ -38,6 +38,7 @@ export default function Home() {
   const switchProject = useStore((s) => s.switchProject)
   const fetchLlmMode = useStore((s) => s.fetchLlmMode)
   const fetchTeamSuggestion = useStore((s) => s.fetchTeamSuggestion)
+  const storeError = useStore((s) => s.error)
 
   const [activeTab, setActiveTab] = useState<SideTab>('agents')
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -52,9 +53,19 @@ export default function Home() {
   const [showStageReview, setShowStageReview] = useState(false)
   const [pendingAgents, setPendingAgents] = useState<Agent[]>([])
   const [pendingTeamConfig, setPendingTeamConfig] = useState<{ strategy: string; coordinatorId?: string }>({ strategy: 'sequential' })
+  const [toastError, setToastError] = useState<string | null>(null)
   const stopSimRefs = useRef<Record<string, () => void>>({})
   const headerRef = useRef<HTMLElement>(null)
   const mainRef = useRef<HTMLDivElement>(null)
+
+  // 显示 store 中的错误（自动消失）
+  useEffect(() => {
+    if (storeError) {
+      setToastError(storeError)
+      const timer = setTimeout(() => setToastError(null), 8000)
+      return () => clearTimeout(timer)
+    }
+  }, [storeError])
 
   // Detect backend LLM mode on mount
   useEffect(() => {
@@ -480,6 +491,28 @@ export default function Home() {
 
       {/* Intervention FAB */}
       <InterventionPanel projectId={activeProjectId} />
+
+      {/* Error Toast */}
+      {toastError && (
+        <div className="fixed bottom-4 right-4 z-50 max-w-md bg-accent-red/90 text-white px-4 py-3 rounded-lg shadow-lg animate-slide-up">
+          <div className="flex items-start gap-2">
+            <span className="text-sm mt-0.5">⚠️</span>
+            <div className="flex-1">
+              <div className="text-sm font-medium">启动失败</div>
+              <div className="text-xs text-white/80 mt-1">{toastError}</div>
+            </div>
+            <button
+              onClick={() => {
+                setToastError(null)
+                useStore.getState().error = null
+              }}
+              className="text-white/60 hover:text-white text-xs"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
