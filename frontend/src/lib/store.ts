@@ -962,25 +962,43 @@ export const useStore = create<WorkspaceState>((set) => ({
 
         const backendStage = pipelineData.current_stage as string || 'requirement_analysis'
 
-        set((s) => ({
-          pipelines: {
-            ...s.pipelines,
-            [projectId]: {
-              ...(s.pipelines[projectId] || {}),
-              id: pipelineId,
-              status: frontendStatus,
-              currentStage: backendStage,
-              progress: (pipelineData.progress as number) || s.pipelines[projectId]?.progress || 0,
-              stages: (s.pipelines[projectId]?.stages || []).map((stage) => ({
+        set((s) => {
+          // 优先使用后端返回的阶段列表（confirm_stages 后可能与前端不同）
+          const backendStages = (pipelineData.stages as Array<{ key: string; label: string; expected_artifact?: string; parallel_group?: string | null }>) || []
+          const frontendStages = s.pipelines[projectId]?.stages || []
+          // 后端有阶段数据时，以后端为准；否则保留前端的
+          const baseStages = backendStages.length > 0
+            ? backendStages.map((bs, i) => ({
+                key: bs.key,
+                label: bs.label,
+                assignedAgents: frontendStages.find(fs => fs.key === bs.key)?.assignedAgents || [],
+                artifacts: bs.expected_artifact ? [bs.expected_artifact] : (frontendStages.find(fs => fs.key === bs.key)?.artifacts || []),
+                status: (backendStage === bs.key ? 'active' :
+                  backendStatus === 'completed' ? 'completed' :
+                  frontendStages.find(fs => fs.key === bs.key)?.status || 'pending') as PipelineStage['status'],
+              }))
+            : frontendStages.map((stage) => ({
                 ...stage,
                 status: (backendStage === stage.key ? 'active' :
                   backendStatus === 'completed' ? 'completed' : stage.status) as PipelineStage['status'],
-              })),
-              name: (pipelineData.name as string) || s.pipelines[projectId]?.name || '',
-              createdAt: (pipelineData.created_at as string) || s.pipelines[projectId]?.createdAt || '',
-            } as Pipeline,
-          },
-        }))
+              }))
+
+          return {
+            pipelines: {
+              ...s.pipelines,
+              [projectId]: {
+                ...(s.pipelines[projectId] || {}),
+                id: pipelineId,
+                status: frontendStatus,
+                currentStage: backendStage,
+                progress: (pipelineData.progress as number) || s.pipelines[projectId]?.progress || 0,
+                stages: baseStages,
+                name: (pipelineData.name as string) || s.pipelines[projectId]?.name || '',
+                createdAt: (pipelineData.created_at as string) || s.pipelines[projectId]?.createdAt || '',
+              } as Pipeline,
+            },
+          }
+        })
 
         // Convert pipeline logs to terminal logs and timeline events
         const logs = (pipelineData.logs as Array<{ stage: string; message: string; level: string; timestamp: string }>) || []
