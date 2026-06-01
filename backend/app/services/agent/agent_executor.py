@@ -601,11 +601,28 @@ class AgentExecutor:
     def _build_task_execution_prompt(self, task: Task, agent: Dict[str, Any]) -> str:
         task_tags = ", ".join(task.tags) if task.tags else "无"
         upstream_context = self._build_upstream_context(task)
+
+        # 注入项目原始需求，让 Agent 知道全局上下文
+        project_requirement = ""
+        project_id = getattr(task, 'project_id', '')
+        if project_id:
+            try:
+                from app.services.collaboration.project_service import project_service
+                project = project_service.get_project(project_id)
+                if project:
+                    desc = getattr(project, 'description', '') or ''
+                    name = getattr(project, 'name', '') or ''
+                    if desc:
+                        project_requirement = f"项目名称: {name}\n项目原始需求: {desc}"
+            except Exception:
+                pass
+
         return registry.render("agent.executor.task_execution", {
             "task_title": task.title,
             "task_description": task.description,
             "task_tags": task_tags,
             "upstream_context": upstream_context,
+            "project_requirement": project_requirement,
         })
 
     def _build_upstream_context(self, task: Task) -> str:

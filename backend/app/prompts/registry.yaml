@@ -125,6 +125,8 @@ prompts:
     template: |
       请执行以下任务:
 
+      {project_requirement}
+
       任务标题: {task_title}
       任务描述: {task_description}
 
@@ -155,6 +157,7 @@ prompts:
       问题: <具体、明确的问题>
       上下文: <为什么需要问这个问题>
     variables:
+      - name: project_requirement
       - name: task_title
       - name: task_description
       - name: task_tags
