@@ -60,7 +60,8 @@ export default function StageReviewModal({
 
   const handleAiSuggest = async () => {
     setShowAdjust(true)
-    if (adjustResult || adjustLoading) return
+    if (adjustLoading) return
+    setAdjustResult(null)
     setAdjustLoading(true)
     try {
       const result = await adjustPipelineTemplate(
