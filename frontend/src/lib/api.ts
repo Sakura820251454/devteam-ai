@@ -80,7 +80,7 @@ export interface ChatResponse {
 }
 
 export async function listAgents(): Promise<Agent[]> {
-  const response = await fetch(`${API_BASE}/agents`)
+  const response = await fetch(`${API_BASE}/agents/`)
   if (!response.ok) {
     throw new Error(`获取Agent列表失败: ${response.statusText}`)
   }
@@ -395,7 +395,7 @@ export async function getWorkspace(projectId: string): Promise<WorkspaceInfo> {
 }
 
 export async function listWorkspaces(): Promise<WorkspaceInfo[]> {
-  const response = await fetch(`${API_BASE}/workspaces`)
+  const response = await fetch(`${API_BASE}/workspaces/`)
   if (!response.ok) {
     throw new Error(`获取工作区列表失败: ${response.statusText}`)
   }
@@ -493,7 +493,7 @@ export interface AppSettings {
 }
 
 export async function getSettings(): Promise<AppSettings> {
-  const response = await fetch(`${API_BASE}/settings`)
+  const response = await fetch(`${API_BASE}/settings/`)
   if (!response.ok) {
     throw new Error(`获取设置失败: ${response.statusText}`)
   }

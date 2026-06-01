@@ -22,7 +22,7 @@ describe('API 模块', () => {
 
       const result = await api.listAgents()
 
-      expect(mockFetch).toHaveBeenCalledWith('/api/agents')
+      expect(mockFetch).toHaveBeenCalledWith('/api/agents/')
       expect(result).toEqual(mockAgents)
     })
   })
