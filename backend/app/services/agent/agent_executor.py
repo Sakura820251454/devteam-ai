@@ -208,6 +208,15 @@ class AgentExecutor:
             )
 
             elapsed = (datetime.now() - self._running_tasks[task_id]["started_at"]).total_seconds()
+
+            # Agent 向用户提问 — 不算失败，保持等待状态
+            if result.get("waiting_for_user", False):
+                self._running_tasks[task_id]["status"] = ExecutionStatus.PAUSED
+                if project_id:
+                    workspace_manager.add_log(project_id, "warning", "agent_executor",
+                        f"Agent [{agent.get('name', agent_id)}] 向用户提问，任务等待答复 (耗时{elapsed:.1f}s)")
+                return result
+
             if result.get("success", False):
                 await task_board.change_status(task_id, TaskStatus.REVIEW, agent_id)
                 self._running_tasks[task_id]["status"] = ExecutionStatus.COMPLETED

@@ -1259,11 +1259,11 @@ class PipelineOrchestrator:
                 waiting_for_user = result.get("waiting_for_user", False)
 
                 if waiting_for_user:
-                    # Agent 向用户提问，任务已由 agent_executor 设为 WAITING_FOR_USER
+                    # Agent 向用户提问，任务已由 agent_executor._handle_ask_user 设为 WAITING_FOR_USER
+                    # 流水线也已在 _handle_ask_user 中暂停，此处无需重复暂停
                     pipeline.add_log("task_execution",
                         f"⏸ 任务「{task.title}」→ WAITING_FOR_USER — Agent [{agent_name}] 需要用户澄清",
                         "warning")
-                    self.transition(pipeline, PipelineStatus.PAUSED)
                     last_error = None
                     break  # 退出重试循环，等待用户答复
 
