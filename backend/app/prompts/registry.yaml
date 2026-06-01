@@ -890,7 +890,7 @@ prompts:
         "analysis": "简短的分析说明（1-2句话）",
         "recommended_strategy": "sequential|hierarchical|discussion|pipeline",
         "changes": {{
-          "add": [{{"label": "阶段名", "description": "做什么", "expected_artifact": "产出物.md", "position": 0}}],
+          "add": [{{"key": "stage_key", "label": "阶段名", "description": "做什么", "expected_artifact": "产出物.md", "parallel_group": null}}],
           "remove": ["stage_key_to_remove"],
           "reorder": [{{"key": "stage_key", "new_position": 0}}],
           "rename": [{{"key": "old_key", "new_label": "新阶段名"}}]
