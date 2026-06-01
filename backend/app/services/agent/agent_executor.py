@@ -68,7 +68,7 @@ class AgentExecutor:
                 "total_steps": 1,
             }
 
-            task_board.assign_agents(task_id, [agent_id])
+            await task_board.assign_agents(task_id, [agent_id])
             return True
 
     async def start_execution(self, task_id: str) -> bool:
@@ -827,7 +827,7 @@ class AgentExecutor:
 
             task = task_board.get_task(task_id)
             if task:
-                task_board.change_status(task_id, TaskStatus.PAUSED, "system")
+                await task_board.change_status(task_id, TaskStatus.PAUSED, "system")
             return True
 
     async def resume_execution(self, task_id: str) -> bool:
@@ -880,11 +880,11 @@ class AgentExecutor:
             task = task_board.get_task(task_id)
             if task:
                 try:
-                    task_board.change_status(task_id, TaskStatus.CANCELLED, "system")
+                    await task_board.change_status(task_id, TaskStatus.CANCELLED, "system")
                 except ValueError:
                     try:
-                        task_board.change_status(task_id, TaskStatus.BLOCKED, "system")
-                        task_board.change_status(task_id, TaskStatus.CANCELLED, "system")
+                        await task_board.change_status(task_id, TaskStatus.BLOCKED, "system")
+                        await task_board.change_status(task_id, TaskStatus.CANCELLED, "system")
                     except ValueError:
                         pass
 
@@ -908,7 +908,7 @@ class AgentExecutor:
                             self._cancellation_tokens[task_id].set()
                         if task_id in self._async_task_handles:
                             self._async_task_handles[task_id].cancel()
-                        task_board.change_status(task_id, TaskStatus.PAUSED, "system")
+                        await task_board.change_status(task_id, TaskStatus.PAUSED, "system")
 
     async def resume_project(self, project_id: str) -> None:
         async with self._lock:
@@ -933,7 +933,7 @@ class AgentExecutor:
                     if task_id in self._async_task_handles:
                         self._async_task_handles[task_id].cancel()
                     if task:
-                        task_board.change_status(task_id, TaskStatus.PAUSED, "system")
+                        await task_board.change_status(task_id, TaskStatus.PAUSED, "system")
 
     async def resume_all(self) -> None:
         """向后兼容：恢复所有项目的执行"""
