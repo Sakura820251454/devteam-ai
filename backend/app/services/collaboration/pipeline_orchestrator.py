@@ -2689,7 +2689,11 @@ class PipelineOrchestrator:
         ]
 
     def get_intervention_queue(self) -> List[Dict[str, Any]]:
-        return self._human_intervention_queue.copy()
+        # 合并 orchestrator 级队列和所有 pipeline 实例级队列
+        queue = self._human_intervention_queue.copy()
+        for pipeline in self._pipelines.values():
+            queue.extend(pipeline._human_intervention_queue)
+        return queue
 
     def add_log(self, message: str, stage: str = "general", level: str = "info") -> None:
         for pipeline in self._pipelines.values():
