@@ -619,7 +619,11 @@ export async function createPipeline(projectId: string, name: string, agentIds: 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ project_id: projectId, name, agent_ids: agentIds, team_config: teamConfig || {} }),
   })
-  if (!response.ok) throw new Error('创建流水线失败')
+  if (!response.ok) {
+    const err = await response.json().catch(() => null)
+    const detail = err?.detail || '创建流水线失败'
+    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
+  }
   return response.json()
 }
 

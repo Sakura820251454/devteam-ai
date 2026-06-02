@@ -393,6 +393,10 @@ class PipelineOrchestrator:
                     pipeline.current_stage = "completed"
                     pipeline.progress = 1.0
                     await project_service.update_project(pipeline.project_id, status="completed")
+                    # 立即释放 agent，不等 finally
+                    released = self._cleanup_pipeline_agents(pipeline)
+                    if released:
+                        pipeline.add_log("cleanup", f"已释放 {released} 个 agent", "info")
                 if self._db:
                     await self._db.save(pipeline)
 
@@ -421,9 +425,13 @@ class PipelineOrchestrator:
                 self._active_pipelines.pop(pipeline.project_id, None)
             self._execution_tasks.pop(pipeline_id, None)
 
-    def _cleanup_pipeline_agents(self, pipeline: Pipeline) -> None:
+    def _cleanup_pipeline_agents(self, pipeline: Pipeline) -> int:
+        """释放 pipeline 占用的 agent，返回释放数量"""
+        released = 0
         for agent_id in pipeline.agents:
-            agent_service.release_agent_from_project(agent_id, pipeline.project_id)
+            if agent_service.release_agent_from_project(agent_id, pipeline.project_id):
+                released += 1
+        return released
 
     async def _stage_requirement_analysis(self, pipeline: Pipeline) -> None:
         pipeline.current_stage = STAGE_REQUIREMENT_ANALYSIS
