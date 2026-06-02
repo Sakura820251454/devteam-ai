@@ -26,10 +26,17 @@ class TaskBreakdownItem(BaseModel):
 
 
 class TaskBreakdownResult(BaseModel):
-    """任务拆解结果（来自 LLM 响应）。"""
+    """任务拆解结果（来自 LLM 响应）。
+
+    两种模式：
+    - 简单项目: simple=True, direct_answer 有值, tasks 为空
+    - 复杂项目: simple=False, tasks 非空
+    """
 
     tasks: List[TaskBreakdownItem] = Field(default_factory=list)
     summary: str = ""
+    simple: bool = False
+    direct_answer: str = ""
 
 
 # ========== task_analyzer ==========
@@ -146,7 +153,7 @@ class TaskStepPlan(BaseModel):
 
 
 class StageAdjustment(BaseModel):
-    """阶段调整条目。"""
+    """阶段调整条目（用于 add / final_stages）。"""
 
     key: str
     label: str
@@ -155,16 +162,33 @@ class StageAdjustment(BaseModel):
     parallel_group: Optional[str] = None
 
 
+class StageReorder(BaseModel):
+    """阶段重排序条目。"""
+
+    key: str
+    new_position: int = 0
+
+
+class StageRename(BaseModel):
+    """阶段重命名条目。"""
+
+    key: str
+    new_label: str = ""
+
+
 class StageAdjustmentChanges(BaseModel):
+    """阶段变更集 — 字段类型严格匹配 prompt 输出格式。"""
+
     add: List[StageAdjustment] = Field(default_factory=list)
-    remove: List[StageAdjustment] = Field(default_factory=list)
-    reorder: List[StageAdjustment] = Field(default_factory=list)
-    rename: List[StageAdjustment] = Field(default_factory=list)
+    remove: List[str] = Field(default_factory=list)         # ["stage_key_to_remove"]
+    reorder: List[StageReorder] = Field(default_factory=list)  # [{"key","new_position"}]
+    rename: List[StageRename] = Field(default_factory=list)    # [{"key","new_label"}]
 
 
 class StageAdjustmentResult(BaseModel):
     """阶段调整结果（来自 pipeline_templates LLM 响应）。"""
 
     analysis: str = ""
+    recommended_strategy: str = ""
     changes: StageAdjustmentChanges = Field(default_factory=StageAdjustmentChanges)
     final_stages: List[StageAdjustment] = Field(default_factory=list)

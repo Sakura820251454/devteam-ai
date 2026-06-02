@@ -600,12 +600,9 @@ class PipelineOrchestrator:
             )
 
         try:
-            # 直接用项目类型感知的角色和结构，不依赖 registry 变量渲染
-            system_content = (
-                f"你是一位{analyst_role}。请将以下多 Agent 讨论合并为一份完整的需求分析报告。"
-                f"保留所有有价值的分歧和不同视角。"
-                f"遵循第一性原理：分析角度要与项目类型匹配，不做过度分析。"
-            )
+            system_content = registry.render("collaboration.pipeline.merge_analysis_system", {
+                "analyst_role": analyst_role,
+            })
 
             response = await llm_service.chat(
                 messages=[
@@ -908,8 +905,10 @@ class PipelineOrchestrator:
         # 优先使用统一的 JSON 提取 + Pydantic 校验
         try:
             result = extract_and_validate(breakdown_text, TaskBreakdownResult)
+            # 传递 simple/direct_answer 标志给调用方
+            raw = {"simple": result.simple, "direct_answer": result.direct_answer}
             tasks = [t.model_dump() for t in result.tasks]
-            return self._fixup_task_phases(tasks, valid_phases), {}
+            return self._fixup_task_phases(tasks, valid_phases), raw
         except (JSONExtractionError, JSONValidationError):
             pass  # 回退到手动 JSON 解析
 

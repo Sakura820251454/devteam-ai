@@ -259,8 +259,8 @@ class IntelligentLearningService:
             messages = [LLMMessage(role="user", content=prompt)]
             resp = await llm_service.chat(messages, temperature=0.3, max_tokens=800)
 
-            import json
-            result = json.loads(resp.content.strip())
+            from app.services.shared.json_extractor import extract_json
+            result = extract_json(resp.content)
             return result
 
         except Exception as e:
@@ -305,8 +305,8 @@ class IntelligentLearningService:
             messages = [LLMMessage(role="user", content=prompt)]
             resp = await llm_service.chat(messages, temperature=0.3, max_tokens=800)
 
-            import json
-            result = json.loads(resp.content.strip())
+            from app.services.shared.json_extractor import extract_json
+            result = extract_json(resp.content)
             return result
 
         except Exception as e:
