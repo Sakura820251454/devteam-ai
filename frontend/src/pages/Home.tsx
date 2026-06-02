@@ -37,6 +37,7 @@ export default function Home() {
   const setWorkspacePath = useStore((s) => s.setWorkspacePath)
   const switchProject = useStore((s) => s.switchProject)
   const fetchLlmMode = useStore((s) => s.fetchLlmMode)
+  const initFromBackend = useStore((s) => s.initFromBackend)
   const fetchTeamSuggestion = useStore((s) => s.fetchTeamSuggestion)
   const storeError = useStore((s) => s.error)
 
@@ -71,6 +72,11 @@ export default function Home() {
   useEffect(() => {
     fetchLlmMode()
   }, [fetchLlmMode])
+
+  // 页面加载时从后端恢复项目列表和当前项目数据（刷新后保持状态）
+  useEffect(() => {
+    initFromBackend()
+  }, [initFromBackend])
 
   // 页面加载入场动画
   useGSAP(() => {

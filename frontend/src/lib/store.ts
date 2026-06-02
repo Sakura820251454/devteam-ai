@@ -153,6 +153,7 @@ interface WorkspaceState {
   setError: (error: string | null) => void
 
   // Project management
+  initFromBackend: () => Promise<void>
   createProject: (id: string, name: string, description: string) => void
   switchProject: (projectId: string) => void
   closeProject: (projectId: string, skipBackend?: boolean) => Promise<void>
@@ -213,7 +214,9 @@ const pollIntervals: Record<string, ReturnType<typeof setInterval>> = {}
 
 export const useStore = create<WorkspaceState>((set) => ({
   projects: [],
-  activeProjectId: null,
+  activeProjectId: (() => {
+    try { return localStorage.getItem('devteam_active_project') || null } catch { return null }
+  })(),
   pipelines: {},
   tasksByProject: {},
   agentsByProject: {},
@@ -281,6 +284,48 @@ export const useStore = create<WorkspaceState>((set) => ({
   setError: (error) => set({ error }),
 
   // --- Project management ---
+
+  // 页面加载时从后端恢复项目列表和当前项目数据
+  initFromBackend: async () => {
+    try {
+      const { listProjects, listTasks, listAgents, getActivePipeline, getInterventionQueue } = await import('./api')
+      const backendProjects = await listProjects()
+      const projects: ProjectSummary[] = backendProjects.map(p => ({
+        id: p.id,
+        name: p.name,
+        description: p.description,
+        status: p.status,
+        progress: 0,
+        taskCount: 0,
+        agentCount: 0,
+        createdAt: p.created_at,
+      }))
+      set({ projects })
+
+      // 恢复 activeProjectId 对应项目的数据
+      const activeId = useStore.getState().activeProjectId
+      if (activeId && projects.some(p => p.id === activeId)) {
+        const [tasks, agents, pipeline, interventions] = await Promise.all([
+          listTasks(activeId).catch(() => []),
+          listAgents().catch(() => []),
+          getActivePipeline(activeId).catch(() => null),
+          getInterventionQueue().catch(() => ({ queue: [] })),
+        ])
+        set(state => ({
+          tasksByProject: { ...state.tasksByProject, [activeId]: tasks as Task[] },
+          agentsByProject: { ...state.agentsByProject, [activeId]: agents as Agent[] },
+          pipelines: { ...state.pipelines, [activeId]: pipeline as Pipeline | null },
+          interventionsByProject: { ...state.interventionsByProject, [activeId]: (interventions as { queue: { project_id?: string }[] }).queue?.find((i: { project_id?: string }) => i.project_id === activeId) ? 'whisper' : null },
+        }))
+        // 启动轮询
+        if (pipeline && typeof pipeline === 'object' && 'id' in pipeline) {
+          useStore.getState().startPolling(activeId, (pipeline as { id: string }).id)
+        }
+      }
+    } catch (err) {
+      console.error('从后端恢复状态失败:', err)
+    }
+  },
 
   createProject: (id, name, description) =>
     set((state) => ({
@@ -1203,3 +1248,16 @@ export const useStore = create<WorkspaceState>((set) => ({
     }
   },
 }))
+
+// 持久化 activeProjectId 到 localStorage（刷新后恢复）
+useStore.subscribe((state, prevState) => {
+  if (state.activeProjectId !== prevState.activeProjectId) {
+    try {
+      if (state.activeProjectId) {
+        localStorage.setItem('devteam_active_project', state.activeProjectId)
+      } else {
+        localStorage.removeItem('devteam_active_project')
+      }
+    } catch { /* localStorage 不可用时静默失败 */ }
+  }
+})
