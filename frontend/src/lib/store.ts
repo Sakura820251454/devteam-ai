@@ -289,7 +289,14 @@ export const useStore = create<WorkspaceState>((set) => ({
   initFromBackend: async () => {
     try {
       const { listProjects, listTasks, listAgents, getActivePipeline, getInterventionQueue } = await import('./api')
-      const backendProjects = await listProjects()
+
+      // 1. 加载项目列表
+      let backendProjects: Awaited<ReturnType<typeof listProjects>> = []
+      try {
+        backendProjects = await listProjects()
+      } catch (e) {
+        console.warn('加载项目列表失败:', e)
+      }
       const projects: ProjectSummary[] = backendProjects.map(p => ({
         id: p.id,
         name: p.name,
@@ -302,33 +309,38 @@ export const useStore = create<WorkspaceState>((set) => ({
       }))
       set({ projects })
 
-      // 恢复 activeProjectId 对应项目的数据
+      // 2. 验证 activeProjectId 是否有效
       let activeId = useStore.getState().activeProjectId
       if (activeId && !projects.some(p => p.id === activeId)) {
-        // 项目不存在，清除无效的 activeProjectId
         activeId = null
         set({ activeProjectId: null })
         try { localStorage.removeItem('devteam_active_project') } catch {}
       }
-      if (activeId) {
-        const [tasks, agents, pipeline, interventions] = await Promise.all([
-          listTasks(activeId).catch(() => []),
-          listAgents().catch(() => []),
-          getActivePipeline(activeId).catch(() => null),
-          getInterventionQueue().catch(() => ({ queue: [] })),
-        ])
-        set(state => ({
-          tasksByProject: { ...state.tasksByProject, [activeId]: tasks as Task[] },
-          agentsByProject: { ...state.agentsByProject, [activeId]: agents as Agent[] },
-          pipelines: { ...state.pipelines, [activeId]: pipeline as Pipeline | null },
-          interventionsByProject: { ...state.interventionsByProject, [activeId]: (interventions as { queue: { project_id?: string }[] }).queue?.find((i: { project_id?: string }) => i.project_id === activeId) ? 'whisper' : null },
-        }))
-        // 启动轮询（仅在 pipeline 存在且正在运行时）
-        if (pipeline && typeof pipeline === 'object' && 'id' in pipeline) {
-          const p = pipeline as { id: string; status?: string }
-          if (p.status === 'running' || p.status === 'paused') {
-            useStore.getState().startPolling(activeId, p.id)
-          }
+      if (!activeId) return
+
+      // 3. 恢复当前项目数据（逐个 try/catch，一个失败不影响其他）
+      const [tasks, agents, pipeline, interventions] = await Promise.all([
+        listTasks(activeId).catch((e) => { console.warn('加载任务失败:', e); return [] }),
+        listAgents().catch((e) => { console.warn('加载Agent失败:', e); return [] }),
+        getActivePipeline(activeId).catch((e) => { console.warn('加载Pipeline失败:', e); return null }),
+        getInterventionQueue().catch((e) => { console.warn('加载干预队列失败:', e); return { queue: [] } }),
+      ])
+
+      set(state => ({
+        tasksByProject: { ...state.tasksByProject, [activeId!]: tasks as Task[] },
+        agentsByProject: { ...state.agentsByProject, [activeId!]: agents as Agent[] },
+        pipelines: { ...state.pipelines, [activeId!]: pipeline as Pipeline | null },
+        interventionsByProject: {
+          ...state.interventionsByProject,
+          [activeId!]: Array.isArray(interventions) && interventions.find((i: { project_id?: string }) => i.project_id === activeId) ? 'whisper' : null,
+        },
+      }))
+
+      // 4. 启动轮询（仅在 pipeline 运行中/暂停时）
+      if (pipeline && typeof pipeline === 'object' && 'id' in pipeline) {
+        const p = pipeline as { id: string; status?: string }
+        if (p.status === 'running' || p.status === 'paused') {
+          useStore.getState().startPolling(activeId, p.id)
         }
       }
     } catch (err) {
