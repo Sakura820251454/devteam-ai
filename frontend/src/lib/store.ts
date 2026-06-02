@@ -303,8 +303,14 @@ export const useStore = create<WorkspaceState>((set) => ({
       set({ projects })
 
       // 恢复 activeProjectId 对应项目的数据
-      const activeId = useStore.getState().activeProjectId
-      if (activeId && projects.some(p => p.id === activeId)) {
+      let activeId = useStore.getState().activeProjectId
+      if (activeId && !projects.some(p => p.id === activeId)) {
+        // 项目不存在，清除无效的 activeProjectId
+        activeId = null
+        set({ activeProjectId: null })
+        try { localStorage.removeItem('devteam_active_project') } catch {}
+      }
+      if (activeId) {
         const [tasks, agents, pipeline, interventions] = await Promise.all([
           listTasks(activeId).catch(() => []),
           listAgents().catch(() => []),
@@ -317,9 +323,12 @@ export const useStore = create<WorkspaceState>((set) => ({
           pipelines: { ...state.pipelines, [activeId]: pipeline as Pipeline | null },
           interventionsByProject: { ...state.interventionsByProject, [activeId]: (interventions as { queue: { project_id?: string }[] }).queue?.find((i: { project_id?: string }) => i.project_id === activeId) ? 'whisper' : null },
         }))
-        // 启动轮询
+        // 启动轮询（仅在 pipeline 存在且正在运行时）
         if (pipeline && typeof pipeline === 'object' && 'id' in pipeline) {
-          useStore.getState().startPolling(activeId, (pipeline as { id: string }).id)
+          const p = pipeline as { id: string; status?: string }
+          if (p.status === 'running' || p.status === 'paused') {
+            useStore.getState().startPolling(activeId, p.id)
+          }
         }
       }
     } catch (err) {
