@@ -3,7 +3,7 @@ import logging
 import traceback
 import uuid
 from datetime import datetime
-from typing import List, Optional, Dict, Callable, Any
+from typing import List, Optional, Dict, Callable, Any, Tuple
 from enum import Enum
 
 from app.models.agent import Agent
@@ -324,6 +324,18 @@ class PipelineOrchestrator:
                     await self._db.save(pipeline)
 
             # Iterate through confirmed stages
+            # 兜底：如果有任务但没有执行阶段，自动补一个执行阶段
+            exec_stage_keys = {
+                s.get("key") for s in confirmed_stages
+                if s.get("key") not in (STAGE_REQUIREMENT_ANALYSIS, STAGE_TASK_BREAKDOWN)
+            }
+            if pipeline.task_ids and not exec_stage_keys:
+                fallback_stage = {"key": "execution", "label": "执行", "status": "pending"}
+                confirmed_stages.append(fallback_stage)
+                pipeline.stages = confirmed_stages
+                pipeline.add_log("execution",
+                    f"有 {len(pipeline.task_ids)} 个任务但无执行阶段，自动补充「执行」阶段", "warning")
+
             total_stages = len(confirmed_stages)
             for i in range(start_idx, total_stages):
                 if pipeline.stop_requested or pipeline.status == PipelineStatus.PAUSED:
@@ -660,7 +672,29 @@ class PipelineOrchestrator:
                 s for s in (pipeline.stages or [])
                 if s.get("key") not in (STAGE_REQUIREMENT_ANALYSIS, STAGE_TASK_BREAKDOWN)
             ]
-            tasks = self._parse_task_breakdown(breakdown_result, exec_stages)
+            tasks, raw_parsed = self._parse_task_breakdown(breakdown_result, exec_stages)
+
+            # 检查是否为简单项目（AI 判断可直接回答）
+            if raw_parsed.get("simple", False):
+                direct_answer = raw_parsed.get("direct_answer", "")
+                pipeline.context["simple_project"] = True
+                pipeline.context["direct_answer"] = direct_answer
+                pipeline.add_log("task_breakdown",
+                    "项目简单，AI 将直接回答，跳过多阶段拆解", "info")
+                # 创建一个单一任务，标记为 execution 阶段
+                task = await task_board.create_task(
+                    project_id=pipeline.project_id,
+                    title="直接回答用户问题",
+                    description=f"请直接回答以下问题：\n{project.description or project.name}\n\n参考信息：{direct_answer}",
+                    priority=Priority.HIGH,
+                    created_by="pipeline",
+                    tags=["直接回答", "execution"],
+                )
+                pipeline.task_ids.append(task.id)
+                pipeline.context["task_breakdown"] = breakdown_result
+                pipeline.add_log("task_breakdown",
+                    f"已创建 1 个直接回答任务 (task_id={task.id})", "success")
+                return
 
             # 诊断：记录被自动修正 phase 的任务
             auto_fixed = [t for t in tasks if t.pop("_phase_auto_fixed", None)]
@@ -860,7 +894,9 @@ class PipelineOrchestrator:
                 "按标准开发流程拆解：需求分析→设计→编码→测试→部署。"
             )
 
-    def _parse_task_breakdown(self, breakdown_text: str, valid_exec_stages: List[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def _parse_task_breakdown(self, breakdown_text: str, valid_exec_stages: List[Dict[str, Any]] = None) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """解析任务拆解结果。返回 (tasks_list, raw_parsed_dict)。
+        raw_parsed_dict 可能包含 simple/direct_answer 标志。"""
         import re
         from app.services.shared.json_extractor import extract_and_validate, JSONExtractionError, JSONValidationError
         from app.services.shared.validation import TaskBreakdownResult
@@ -873,11 +909,41 @@ class PipelineOrchestrator:
         try:
             result = extract_and_validate(breakdown_text, TaskBreakdownResult)
             tasks = [t.model_dump() for t in result.tasks]
-            return self._fixup_task_phases(tasks, valid_phases)
+            return self._fixup_task_phases(tasks, valid_phases), {}
         except (JSONExtractionError, JSONValidationError):
-            pass  # 回退到正则分块解析
+            pass  # 回退到手动 JSON 解析
 
-        # Fallback: 按编号分块解析（保留对非标准格式的兼容）
+        # Fallback: 先尝试手动 JSON 解析（捕获 simple 标志）
+        try:
+            import json as _json
+            # 尝试从文本中提取 JSON 块
+            json_match = re.search(r'\{[\s\S]*\}', breakdown_text)
+            if json_match:
+                raw = _json.loads(json_match.group())
+                if isinstance(raw, dict):
+                    # 检查简单项目标志
+                    if raw.get("simple"):
+                        return [], raw
+                    # 正常任务列表
+                    tasks_raw = raw.get("tasks", [])
+                    if tasks_raw:
+                        tasks = []
+                        for td in tasks_raw:
+                            tasks.append({
+                                "title": td.get("title", "未命名任务"),
+                                "description": td.get("description", td.get("title", "")),
+                                "assigned_role": td.get("assigned_role", ""),
+                                "priority": td.get("priority", "medium"),
+                                "phase": td.get("phase", "execution"),
+                                "dependencies": td.get("dependencies", []),
+                                "acceptance_criteria": td.get("acceptance_criteria", []),
+                                "required_skills": td.get("required_skills", []),
+                            })
+                        return self._fixup_task_phases(tasks, valid_phases), raw
+        except Exception:
+            pass
+
+        # 最终 Fallback: 按编号分块解析（保留对非标准格式的兼容）
         task_blocks = re.split(r'\n\d+\.\s+', breakdown_text)
         tasks = []
 
@@ -913,7 +979,7 @@ class PipelineOrchestrator:
 
             tasks.append(task)
 
-        return self._fixup_task_phases(tasks, valid_phases)
+        return self._fixup_task_phases(tasks, valid_phases), {}
 
     def _infer_phase_from_text(
         self, text: str, valid_phases: List[str], valid_stages: List[Dict[str, Any]] = None
